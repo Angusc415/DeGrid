@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:math' as math;
 import 'viewport.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../../core/geometry/room.dart';
+import '../../core/units/unit_converter.dart';
 
 
 class PlanCanvas extends StatefulWidget {
@@ -25,6 +27,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
   
   // Counter for default room names
   int _roomCounter = 1;
+  
+  // Unit system: false = metric (mm/cm), true = imperial (ft/in)
+  bool _useImperial = false;
   
   // Selected room index for editing (null = no selection)
   int? _selectedRoomIndex;
@@ -114,11 +119,26 @@ class _PlanCanvasState extends State<PlanCanvas> {
               }
               break;
             case LogicalKeyboardKey.escape:
-              // Cancel current draft room
-              if (_draftRoomVertices != null) {
-                setState(() {
+              // Cancel current draft room or deselect room
+              setState(() {
+                if (_draftRoomVertices != null) {
                   _draftRoomVertices = null;
                   _hoverPositionWorldMm = null;
+                } else {
+                  _selectedRoomIndex = null; // Deselect room
+                }
+              });
+              break;
+            case LogicalKeyboardKey.delete:
+            case LogicalKeyboardKey.backspace:
+              // Delete selected room
+              if (_selectedRoomIndex != null && _draftRoomVertices == null) {
+                setState(() {
+                  if (_selectedRoomIndex! >= 0 && 
+                      _selectedRoomIndex! < _completedRooms.length) {
+                    _completedRooms.removeAt(_selectedRoomIndex!);
+                    _selectedRoomIndex = null;
+                  }
                 });
               }
               break;
@@ -231,7 +251,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
           }
         },
         
-        // Single tap: check if clicking on room name/button to edit
+        // Single tap: select room or edit name if clicking center
         onTapDown: (d) {
           if (_draftRoomVertices == null) {
             // Only handle clicks when not drawing
@@ -243,10 +263,33 @@ class _PlanCanvasState extends State<PlanCanvas> {
               final centerScreen = _vp.worldToScreen(center);
               final distance = (d.localPosition - centerScreen).distance;
               
-              // Click area: 40px radius (covers button or name text)
-              if (distance < 40) {
-                _editRoomName(clickedRoomIndex);
-              }
+              setState(() {
+                // Click area: 40px radius (covers button or name text)
+                if (distance < 40) {
+                  // Click on center = edit name
+                  _editRoomName(clickedRoomIndex);
+                  _selectedRoomIndex = clickedRoomIndex; // Keep selected after editing
+                } else {
+                  // Click elsewhere on room = select it
+                  _selectedRoomIndex = clickedRoomIndex;
+                }
+              });
+            } else {
+              // Click outside any room = deselect
+              setState(() {
+                _selectedRoomIndex = null;
+              });
+            }
+          }
+        },
+        
+        // Right-click (or long-press on mobile): show delete option
+        onSecondaryTapDown: (d) {
+          if (_draftRoomVertices == null) {
+            final worldPos = _vp.screenToWorld(d.localPosition);
+            final clickedRoomIndex = _findRoomAtPosition(worldPos);
+            if (clickedRoomIndex != null) {
+              _showDeleteRoomDialog(clickedRoomIndex);
             }
           }
         },
@@ -261,6 +304,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
                   ? List<Offset>.from(_draftRoomVertices!) 
                   : null,
               hoverPositionWorldMm: _hoverPositionWorldMm,
+              useImperial: _useImperial,
+              isDragging: _isDragging,
+              selectedRoomIndex: _selectedRoomIndex,
             ),
           ),
         ),
@@ -504,6 +550,50 @@ class _PlanCanvasState extends State<PlanCanvas> {
     return inside;
   }
   
+  /// Show a confirmation dialog to delete a room.
+  Future<void> _showDeleteRoomDialog(int roomIndex) async {
+    if (roomIndex < 0 || roomIndex >= _completedRooms.length) return;
+    
+    final room = _completedRooms[roomIndex];
+    final roomName = room.name ?? 'Room ${roomIndex + 1}';
+    
+    final context = this.context;
+    if (!context.mounted) return;
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Room'),
+        content: Text('Are you sure you want to delete "$roomName"?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    
+    if (!mounted) return;
+    
+    if (confirmed == true) {
+      setState(() {
+        _completedRooms.removeAt(roomIndex);
+        if (_selectedRoomIndex == roomIndex) {
+          _selectedRoomIndex = null;
+        } else if (_selectedRoomIndex != null && _selectedRoomIndex! > roomIndex) {
+          // Adjust selection index if room before it was deleted
+          _selectedRoomIndex = _selectedRoomIndex! - 1;
+        }
+      });
+    }
+  }
+
   /// Edit the name of an existing room.
   Future<void> _editRoomName(int roomIndex) async {
     if (roomIndex < 0 || roomIndex >= _completedRooms.length) return;
@@ -530,12 +620,18 @@ class _PlanPainter extends CustomPainter {
   final List<Room> completedRooms;
   final List<Offset>? draftRoomVertices;
   final Offset? hoverPositionWorldMm;
+  final bool useImperial;
+  final bool isDragging;
+  final int? selectedRoomIndex;
 
   _PlanPainter({
     required this.vp,
     List<Room>? completedRooms,
     required this.draftRoomVertices,
     required this.hoverPositionWorldMm,
+    required this.useImperial,
+    required this.isDragging,
+    required this.selectedRoomIndex,
   }) : completedRooms = completedRooms ?? [];
 
   @override
@@ -568,7 +664,8 @@ class _PlanPainter extends CustomPainter {
                 try {
                   final room = completedRooms[i];
                   if (room != null && room.vertices.isNotEmpty) {
-                    _drawRoom(canvas, room, isDraft: false);
+                    // Pass selection state to highlight selected room
+                    _drawRoom(canvas, room, isDraft: false, isSelected: i == selectedRoomIndex);
                   }
                 } catch (e) {
                   // Skip invalid rooms during hot reload
@@ -580,10 +677,12 @@ class _PlanPainter extends CustomPainter {
             // If we can't access length, try for-in as fallback
             debugPrint('Indexed access failed, trying for-in: $e');
             try {
+              int index = 0;
               for (final room in completedRooms) {
                 try {
                   if (room != null && room.vertices.isNotEmpty) {
-                    _drawRoom(canvas, room, isDraft: false);
+                    _drawRoom(canvas, room, isDraft: false, isSelected: index == selectedRoomIndex);
+                    index++;
                   }
                 } catch (e) {
                   debugPrint('Error drawing room: $e');
@@ -634,36 +733,41 @@ class _PlanPainter extends CustomPainter {
   }
 
   /// Draw a completed room as a filled polygon with outline.
-  void _drawRoom(Canvas canvas, Room room, {required bool isDraft}) {
+  void _drawRoom(Canvas canvas, Room room, {required bool isDraft, bool isSelected = false}) {
     if (room.vertices.isEmpty) return;
 
     final screenPoints = room.vertices
         .map((v) => vp.worldToScreen(v))
         .toList();
 
-    // Fill
+    // Fill - highlight selected room
     final fillPath = Path();
     fillPath.addPolygon(screenPoints, true); // true = closed
     canvas.drawPath(
       fillPath,
       Paint()
-        ..color = Colors.blue.withOpacity(0.2)
+        ..color = isSelected 
+            ? Colors.blue.withOpacity(0.3) // More visible when selected
+            : Colors.blue.withOpacity(0.2)
         ..style = PaintingStyle.fill,
     );
 
-    // Outline
+    // Outline - thicker and different color when selected
     final outlinePath = Path();
     outlinePath.addPolygon(screenPoints, true);
     canvas.drawPath(
       outlinePath,
       Paint()
-        ..color = Colors.blue
+        ..color = isSelected ? Colors.orange : Colors.blue
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
+        ..strokeWidth = isSelected ? 3 : 2,
     );
     
     // Draw room name/label or name button centered on the room
     _drawRoomLabel(canvas, room, screenPoints);
+    
+    // Draw wall measurements/dimensions
+    _drawWallMeasurements(canvas, room, screenPoints);
   }
   
   /// Draw the room name/label or name button centered on the room.
@@ -692,10 +796,13 @@ class _PlanPainter extends CustomPainter {
     final center = Offset(centerX, centerY);
     
     if (room.name != null && room.name!.isNotEmpty) {
-      // Draw room name
+      // Draw room name with area below it
+      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
+      final nameText = '${room.name!}\n$areaText';
+      
       final textPainter = TextPainter(
         text: TextSpan(
-          text: room.name!,
+          text: nameText,
           style: const TextStyle(
             color: Colors.blue,
             fontSize: 16,
@@ -724,7 +831,32 @@ class _PlanPainter extends CustomPainter {
       );
     } else {
       // Draw name button (icon) when room has no name
+      // Also show area below button
       _drawNameButton(canvas, center);
+      
+      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
+      final areaPainter = TextPainter(
+        text: TextSpan(
+          text: areaText,
+          style: TextStyle(
+            color: Colors.grey.shade600,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            backgroundColor: Colors.white.withOpacity(0.7),
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+      );
+      
+      areaPainter.layout();
+      areaPainter.paint(
+        canvas,
+        Offset(
+          center.dx - areaPainter.width / 2,
+          center.dy + 25, // Below the button
+        ),
+      );
     }
   }
   
@@ -763,6 +895,105 @@ class _PlanPainter extends CustomPainter {
     );
   }
 
+  /// Draw measurements on each wall segment of the room.
+  void _drawWallMeasurements(Canvas canvas, Room room, List<Offset> screenPoints) {
+    if (room.vertices.length < 2) return;
+    
+    // Get unique vertices (skip closing vertex if duplicate)
+    final uniqueVertices = room.vertices.length > 1 && 
+                           room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    
+    final uniqueScreenPoints = screenPoints.length > 1 && 
+                                screenPoints.first == screenPoints.last
+        ? screenPoints.sublist(0, screenPoints.length - 1)
+        : screenPoints;
+    
+    if (uniqueVertices.length < 2) return;
+    
+    // Draw dimension for each wall segment
+    for (int i = 0; i < uniqueVertices.length; i++) {
+      final j = (i + 1) % uniqueVertices.length;
+      final startWorld = uniqueVertices[i];
+      final endWorld = uniqueVertices[j];
+      final startScreen = uniqueScreenPoints[i];
+      final endScreen = uniqueScreenPoints[j];
+      
+      // Calculate distance in mm
+      final distanceMm = (endWorld - startWorld).distance;
+      
+      // Only draw if wall is long enough to display measurement
+      final screenDistance = (endScreen - startScreen).distance;
+      if (screenDistance < 50) continue; // Skip very short walls
+      
+      _drawDimension(canvas, startScreen, endScreen, distanceMm);
+    }
+  }
+  
+  /// Draw a dimension line with measurement text for a wall segment.
+  void _drawDimension(Canvas canvas, Offset start, Offset end, double distanceMm) {
+    // Calculate midpoint and perpendicular offset for dimension line
+    final midpoint = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
+    final wallVector = end - start;
+    final wallLength = wallVector.distance;
+    if (wallLength == 0) return;
+    
+    // Perpendicular direction (rotate 90 degrees)
+    final perp = Offset(-wallVector.dy / wallLength, wallVector.dx / wallLength);
+    
+    // Offset distance from wall (20 pixels)
+    final offsetDistance = 20.0;
+    final dimensionLineStart = midpoint + perp * offsetDistance;
+    final dimensionLineEnd = midpoint - perp * offsetDistance;
+    
+    // Draw dimension line (perpendicular to wall)
+    final dimLinePaint = Paint()
+      ..color = Colors.grey.withOpacity(0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawLine(dimensionLineStart, dimensionLineEnd, dimLinePaint);
+    
+    // Draw extension lines (from wall to dimension line)
+    final extLinePaint = Paint()
+      ..color = Colors.grey.withOpacity(0.4)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.5;
+    canvas.drawLine(start, dimensionLineStart, extLinePaint);
+    canvas.drawLine(end, dimensionLineStart, extLinePaint);
+    
+    // Format measurement text
+    final measurementText = UnitConverter.formatDistance(distanceMm, useImperial: useImperial);
+    
+    // Draw measurement text
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: measurementText,
+        style: TextStyle(
+          color: Colors.grey.shade700,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          backgroundColor: Colors.white.withOpacity(0.8),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+    
+    textPainter.layout();
+    
+    // Position text at dimension line, rotated to match wall angle
+    final wallAngle = math.atan2(wallVector.dy, wallVector.dx);
+    final textOffset = dimensionLineStart - Offset(textPainter.width / 2, textPainter.height / 2);
+    
+    canvas.save();
+    canvas.translate(textOffset.dx + textPainter.width / 2, textOffset.dy + textPainter.height / 2);
+    canvas.rotate(wallAngle);
+    canvas.translate(-textPainter.width / 2, -textPainter.height / 2);
+    textPainter.paint(canvas, Offset.zero);
+    canvas.restore();
+  }
+
   /// Draw the draft room with vertices, lines, and preview line to cursor.
   void _drawDraftRoom(Canvas canvas) {
     if (draftRoomVertices == null || draftRoomVertices!.isEmpty) return;
@@ -786,8 +1017,12 @@ class _PlanPainter extends CustomPainter {
     // Draw preview line from last vertex to cursor (if hovering or dragging)
     // During drag, show line from drag start; when hovering, show from last vertex
     if (hoverPositionWorldMm != null && vertices.isNotEmpty) {
-      final lastScreen = vp.worldToScreen(vertices.last);
+      final lastWorld = vertices.last;
+      final lastScreen = vp.worldToScreen(lastWorld);
       final hoverScreen = vp.worldToScreen(hoverPositionWorldMm!);
+      
+      // Calculate distance of current segment in mm
+      final distanceMm = (hoverPositionWorldMm! - lastWorld).distance;
       
       final previewPaint = Paint()
         ..color = Colors.blue.withOpacity(0.5) // More visible during drag
@@ -797,6 +1032,46 @@ class _PlanPainter extends CustomPainter {
       
       // Solid preview line (more visible than dashed)
       canvas.drawLine(lastScreen, hoverScreen, previewPaint);
+      
+      // Draw live measurement on the preview line
+      if (isDragging && distanceMm > 10) {
+        // Only show if dragging and segment is meaningful length
+        final measurementText = UnitConverter.formatDistance(distanceMm, useImperial: useImperial);
+        
+        // Calculate midpoint of preview line
+        final midpoint = Offset(
+          (lastScreen.dx + hoverScreen.dx) / 2,
+          (lastScreen.dy + hoverScreen.dy) / 2,
+        );
+        
+        // Draw measurement text with background
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: measurementText,
+            style: TextStyle(
+              color: Colors.blue.shade700,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              backgroundColor: Colors.white.withOpacity(0.9),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+          textAlign: TextAlign.center,
+        );
+        
+        textPainter.layout();
+        
+        // Position text at midpoint, rotated to match line angle
+        final lineVector = hoverScreen - lastScreen;
+        final lineAngle = math.atan2(lineVector.dy, lineVector.dx);
+        
+        canvas.save();
+        canvas.translate(midpoint.dx, midpoint.dy);
+        canvas.rotate(lineAngle);
+        canvas.translate(-textPainter.width / 2, -textPainter.height / 2);
+        textPainter.paint(canvas, Offset.zero);
+        canvas.restore();
+      }
       
       // Draw visual feedback for snapped grid point
       // Outer highlight circle (subtle)
