@@ -10,6 +10,8 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback onToggleGrid;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
+  final bool hasSelectedRoom;
+  final VoidCallback? onDeleteRoom;
 
   const PlanToolbar({
     super.key,
@@ -17,6 +19,8 @@ class PlanToolbar extends StatelessWidget {
     required this.showGrid,
     required this.canUndo,
     required this.canRedo,
+    this.hasSelectedRoom = false,
+    this.onDeleteRoom,
     required this.onToggleUnit,
     required this.onToggleGrid,
     required this.onUndo,
@@ -83,6 +87,21 @@ class PlanToolbar extends StatelessWidget {
               onPressed: canRedo ? onRedo : null,
             ),
           ),
+          
+          if (hasSelectedRoom && onDeleteRoom != null) ...[
+            const VerticalDivider(width: 8),
+            
+            // Delete room button
+            Tooltip(
+              message: 'Delete Selected Room (Delete/Backspace)',
+              child: IconButton(
+                icon: const Icon(Icons.delete),
+                tooltip: 'Delete Room',
+                color: Colors.red,
+                onPressed: onDeleteRoom,
+              ),
+            ),
+          ],
         ],
       ),
     );

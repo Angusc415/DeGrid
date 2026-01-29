@@ -437,16 +437,14 @@ class _PlanCanvasState extends State<PlanCanvas> {
               
               setState(() {
                 _selectedVertex = null; // Deselect vertex when clicking room
-                // Click area: 40px radius (covers button or name text)
-                if (distance < 40) {
-                  // Click on center = edit name
-                  _editRoomName(clickedRoomIndex);
-                  _selectedRoomIndex = clickedRoomIndex; // Keep selected after editing
-                } else {
-                  // Click elsewhere on room = select it
-                  _selectedRoomIndex = clickedRoomIndex;
-                }
+                _selectedRoomIndex = clickedRoomIndex;
               });
+              
+              // Click area: 40px radius (covers button or name text)
+              if (distance < 40) {
+                // Click on center = edit name (call async function outside setState)
+                _editRoomName(clickedRoomIndex);
+              }
             } else {
               // Click outside any room = deselect
           setState(() {
@@ -499,6 +497,10 @@ class _PlanCanvasState extends State<PlanCanvas> {
             showGrid: _showGrid,
             canUndo: _canUndo,
             canRedo: _canRedo,
+            hasSelectedRoom: _selectedRoomIndex != null,
+            onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
+                ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
+                : null,
             onToggleUnit: _toggleUnit,
             onToggleGrid: _toggleGrid,
             onUndo: _undo,
@@ -592,6 +594,14 @@ class _PlanCanvasState extends State<PlanCanvas> {
 
   /// Handle pan start: begin drawing a wall segment or start editing a vertex.
   void _handlePanStart(Offset screenPosition) {
+    // Don't start drawing if Shift is held (Shift+drag is for panning)
+    if (HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftLeft) ||
+        HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftRight)) {
+      return;
+    }
+    
     // First check if clicking on a vertex to edit
     final clickedVertex = _findVertexAtPosition(screenPosition);
     
@@ -647,6 +657,14 @@ class _PlanCanvasState extends State<PlanCanvas> {
 
   /// Handle pan update: update preview line as user drags, or move vertex if editing.
   void _handlePanUpdate(Offset screenPosition) {
+    // Don't update drawing if Shift is held (Shift+drag is for panning)
+    if (HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftLeft) ||
+        HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftRight)) {
+      return;
+    }
+    
     // If editing a vertex, move it
     if (_isEditingVertex && _selectedVertex != null) {
       final worldPosition = _vp.screenToWorld(screenPosition);
@@ -703,6 +721,20 @@ class _PlanCanvasState extends State<PlanCanvas> {
 
   /// Handle pan end: place the wall segment (add vertex) or finish editing vertex.
   void _handlePanEnd(Offset screenPosition) {
+    // Don't finish drawing if Shift was held (Shift+drag is for panning)
+    if (HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftLeft) ||
+        HardwareKeyboard.instance.logicalKeysPressed
+        .contains(LogicalKeyboardKey.shiftRight)) {
+      // Reset dragging state if we were drawing
+      if (_isDragging) {
+        setState(() {
+          _isDragging = false;
+        });
+      }
+      return;
+    }
+    
     // Finish editing vertex
     if (_isEditingVertex) {
       setState(() {
