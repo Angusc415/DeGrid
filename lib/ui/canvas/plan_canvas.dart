@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../../core/geometry/room.dart';
 import '../../core/units/unit_converter.dart';
+import 'plan_toolbar.dart';
 
 
 class PlanCanvas extends StatefulWidget {
@@ -31,8 +32,25 @@ class _PlanCanvasState extends State<PlanCanvas> {
   // Unit system: false = metric (mm/cm), true = imperial (ft/in)
   bool _useImperial = false;
   
+  // Grid visibility toggle
+  bool _showGrid = true;
+  
+  // Undo/Redo history
+  // Each history entry contains both completed rooms and draft room vertices
+  final List<({List<Room> rooms, List<Offset>? draftVertices})> _history = [];
+  int _historyIndex = -1; // -1 means at initial state, 0 means after first action
+  static const int _maxHistorySize = 50;
+  
   // Selected room index for editing (null = no selection)
   int? _selectedRoomIndex;
+  
+  // Selected vertex for editing: (roomIndex, vertexIndex)
+  // null = no vertex selected
+  ({int roomIndex, int vertexIndex})? _selectedVertex;
+  
+  // Hovered vertex for visual feedback: (roomIndex, vertexIndex)
+  // null = no vertex hovered
+  ({int roomIndex, int vertexIndex})? _hoveredVertex;
   
   // Currently drawing a room (null = not drawing)
   List<Offset>? _draftRoomVertices;
@@ -43,6 +61,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
   // Drag state: track if we're currently dragging to draw a wall
   bool _isDragging = false;
   Offset? _dragStartPositionWorldMm;
+  
+  // Vertex editing state: true when dragging a vertex to reshape room
+  bool _isEditingVertex = false;
 
   double _startMmPerPx = 5.0;
   
@@ -52,21 +73,133 @@ class _PlanCanvasState extends State<PlanCanvas> {
   // Screen-space tolerance for "clicking near start vertex" to close room
   static const double _closeTolerancePx = 20.0;
   
+  // Screen-space tolerance for clicking on a vertex (in pixels)
+  static const double _vertexSelectTolerancePx = 12.0;
+  
   // Grid spacing in millimeters (matches grid drawing)
   static const double _gridSpacingMm = 100.0; // 10cm = 100mm
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize history with empty state
+    _saveHistoryState();
+  }
 
   @override
   void dispose() {
     _focusNode.dispose();
     super.dispose();
   }
+  
+  /// Save current state to history for undo/redo
+  void _saveHistoryState() {
+    // Remove any future history if we're not at the end
+    if (_historyIndex < _history.length - 1) {
+      _history.removeRange(_historyIndex + 1, _history.length);
+    }
+    
+    // Create a deep copy of current rooms
+    final roomsCopy = _completedRooms.map((r) => Room(
+      vertices: List<Offset>.from(r.vertices),
+      name: r.name,
+    )).toList();
+    
+    // Create a deep copy of draft room vertices (if any)
+    final draftCopy = _draftRoomVertices != null
+        ? List<Offset>.from(_draftRoomVertices!)
+        : null;
+    
+    _history.add((rooms: roomsCopy, draftVertices: draftCopy));
+    _historyIndex = _history.length - 1;
+    
+    // Limit history size
+    if (_history.length > _maxHistorySize) {
+      _history.removeAt(0);
+      _historyIndex--;
+    }
+  }
+  
+  /// Undo the last action
+  void _undo() {
+    if (_historyIndex > 0) {
+      setState(() {
+        _historyIndex--;
+        final state = _history[_historyIndex];
+        
+        // Restore completed rooms
+        _completedRooms.clear();
+        _completedRooms.addAll(state.rooms.map((r) => Room(
+          vertices: List<Offset>.from(r.vertices),
+          name: r.name,
+        )));
+        
+        // Restore draft room vertices
+        _draftRoomVertices = state.draftVertices != null
+            ? List<Offset>.from(state.draftVertices!)
+            : null;
+        
+        // Clear selection and hover state
+        _selectedRoomIndex = null;
+        _hoverPositionWorldMm = null;
+      });
+    }
+  }
+  
+  /// Redo the last undone action
+  void _redo() {
+    if (_historyIndex < _history.length - 1) {
+      setState(() {
+        _historyIndex++;
+        final state = _history[_historyIndex];
+        
+        // Restore completed rooms
+        _completedRooms.clear();
+        _completedRooms.addAll(state.rooms.map((r) => Room(
+          vertices: List<Offset>.from(r.vertices),
+          name: r.name,
+        )));
+        
+        // Restore draft room vertices
+        _draftRoomVertices = state.draftVertices != null
+            ? List<Offset>.from(state.draftVertices!)
+            : null;
+        
+        // Clear selection and hover state
+        _selectedRoomIndex = null;
+        _hoverPositionWorldMm = null;
+      });
+    }
+  }
+  
+  /// Check if undo is available
+  bool get _canUndo => _historyIndex > 0;
+  
+  /// Check if redo is available
+  bool get _canRedo => _historyIndex < _history.length - 1;
+  
+  /// Toggle between metric and imperial units
+  void _toggleUnit() {
+    setState(() {
+      _useImperial = !_useImperial;
+    });
+  }
+  
+  /// Toggle grid visibility
+  void _toggleGrid() {
+    setState(() {
+      _showGrid = !_showGrid;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: (event) {
+    return Stack(
+      children: [
+        KeyboardListener(
+          focusNode: _focusNode,
+          autofocus: true,
+          onKeyEvent: (event) {
         if (event is KeyDownEvent) {
           const panSpeed = 50.0; // pixels per key press
           const zoomFactor = 1.2;
@@ -120,14 +253,18 @@ class _PlanCanvasState extends State<PlanCanvas> {
               break;
             case LogicalKeyboardKey.escape:
               // Cancel current draft room or deselect room
-              setState(() {
-                if (_draftRoomVertices != null) {
+              if (_draftRoomVertices != null) {
+                // Save state before canceling draft room (so undo can restore it)
+                _saveHistoryState();
+                setState(() {
                   _draftRoomVertices = null;
                   _hoverPositionWorldMm = null;
-                } else {
+                });
+              } else {
+                setState(() {
                   _selectedRoomIndex = null; // Deselect room
-                }
-              });
+                });
+              }
               break;
             case LogicalKeyboardKey.delete:
             case LogicalKeyboardKey.backspace:
@@ -138,26 +275,48 @@ class _PlanCanvasState extends State<PlanCanvas> {
                       _selectedRoomIndex! < _completedRooms.length) {
                     _completedRooms.removeAt(_selectedRoomIndex!);
                     _selectedRoomIndex = null;
+                    // Save state to history after room deletion
+                    _saveHistoryState();
                   }
                 });
+              }
+              break;
+            case LogicalKeyboardKey.keyZ:
+              // Undo (Ctrl+Z) or Redo (Ctrl+Shift+Z)
+              if (HardwareKeyboard.instance.isControlPressed ||
+                  HardwareKeyboard.instance.isMetaPressed) {
+                if (HardwareKeyboard.instance.isShiftPressed) {
+                  // Redo
+                  _redo();
+                } else {
+                  // Undo
+                  _undo();
+                }
               }
               break;
             default:
               break;
           }
         }
-      },
-      child: Listener(
+          },
+          child: Listener(
       behavior: HitTestBehavior.opaque,
 
-        // PAN (web): Shift + left-drag OR right-click drag
-        // Also track hover position for preview line (when not actively dragging to draw)
+            // PAN (web): Shift + left-drag OR right-click drag
+            // Also track hover position for preview line (when not actively dragging to draw)
       onPointerMove: (e) {
           // Update hover position for preview line (only when not dragging to draw walls)
           // Pan gestures are handled separately
-          if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging) {
+          if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging && !_isEditingVertex) {
             setState(() {
               _hoverPositionWorldMm = _vp.screenToWorld(e.localPosition);
+            });
+          }
+          
+          // Update hovered vertex for visual feedback (when not drawing or editing)
+          if (e.buttons == 0 && _draftRoomVertices == null && !_isEditingVertex) {
+            setState(() {
+              _hoveredVertex = _findVertexAtPosition(e.localPosition);
             });
           }
           
@@ -253,8 +412,21 @@ class _PlanCanvasState extends State<PlanCanvas> {
         
         // Single tap: select room or edit name if clicking center
         onTapDown: (d) {
-          if (_draftRoomVertices == null) {
-            // Only handle clicks when not drawing
+          if (_draftRoomVertices == null && !_isEditingVertex) {
+            // Only handle clicks when not drawing or editing
+            // Check if clicking on a vertex first
+            final clickedVertex = _findVertexAtPosition(d.localPosition);
+            
+            if (clickedVertex != null) {
+              // Click on vertex = select it (but don't start editing until drag)
+              setState(() {
+                _selectedVertex = clickedVertex;
+                _selectedRoomIndex = clickedVertex.roomIndex;
+              });
+              return;
+            }
+            
+            // Otherwise, check for room center or room area
             final worldPos = _vp.screenToWorld(d.localPosition);
             final clickedRoomIndex = _findRoomAtPosition(worldPos);
             if (clickedRoomIndex != null) {
@@ -264,6 +436,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
               final distance = (d.localPosition - centerScreen).distance;
               
               setState(() {
+                _selectedVertex = null; // Deselect vertex when clicking room
                 // Click area: 40px radius (covers button or name text)
                 if (distance < 40) {
                   // Click on center = edit name
@@ -276,8 +449,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
               });
             } else {
               // Click outside any room = deselect
-              setState(() {
+          setState(() {
                 _selectedRoomIndex = null;
+                _selectedVertex = null;
               });
             }
           }
@@ -295,7 +469,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
         },
 
         child: SizedBox.expand(
-          key: ValueKey('plan_painter_${_completedRooms.length}_${_draftRoomVertices?.length ?? 0}'),
+                key: ValueKey('plan_painter_${_completedRooms.length}_${_draftRoomVertices?.length ?? 0}'),
           child: CustomPaint(
             painter: _PlanPainter(
               vp: _vp,
@@ -307,13 +481,32 @@ class _PlanCanvasState extends State<PlanCanvas> {
               useImperial: _useImperial,
               isDragging: _isDragging,
               selectedRoomIndex: _selectedRoomIndex,
+              selectedVertex: _selectedVertex,
+              hoveredVertex: _hoveredVertex,
+              showGrid: _showGrid,
+            ),
+              ),
             ),
           ),
         ),
-      ),
-      ),
+        ),
+        // Toolbar positioned at top-left
+        Positioned(
+          top: 8,
+          left: 8,
+          child: PlanToolbar(
+            useImperial: _useImperial,
+            showGrid: _showGrid,
+            canUndo: _canUndo,
+            canRedo: _canRedo,
+            onToggleUnit: _toggleUnit,
+            onToggleGrid: _toggleGrid,
+            onUndo: _undo,
+            onRedo: _redo,
+          ),
+        ),
+      ],
     );
-
   }
 
   /// Snap a world-space position to the nearest grid point.
@@ -347,6 +540,34 @@ class _PlanCanvasState extends State<PlanCanvas> {
     return Offset(centerX / uniqueVertices.length, centerY / uniqueVertices.length);
   }
 
+  /// Find the closest vertex to a screen position, if within tolerance.
+  /// Returns (roomIndex, vertexIndex) or null if no vertex is close enough.
+  ({int roomIndex, int vertexIndex})? _findVertexAtPosition(Offset screenPosition) {
+    double closestDistance = _vertexSelectTolerancePx;
+    ({int roomIndex, int vertexIndex})? closestVertex;
+    
+    for (int roomIdx = 0; roomIdx < _completedRooms.length; roomIdx++) {
+      final room = _completedRooms[roomIdx];
+      // Use unique vertices (skip closing vertex if duplicate)
+      final uniqueVertices = room.vertices.length > 1 && 
+                            room.vertices.first == room.vertices.last
+          ? room.vertices.sublist(0, room.vertices.length - 1)
+          : room.vertices;
+      
+      for (int vertexIdx = 0; vertexIdx < uniqueVertices.length; vertexIdx++) {
+        final vertexScreen = _vp.worldToScreen(uniqueVertices[vertexIdx]);
+        final distance = (screenPosition - vertexScreen).distance;
+        
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestVertex = (roomIndex: roomIdx, vertexIndex: vertexIdx);
+        }
+      }
+    }
+    
+    return closestVertex;
+  }
+
   /// Safely copy rooms list, handling hot reload issues.
   List<Room> _safeCopyRooms(List<Room>? rooms) {
     // Handle null/undefined case (web hot reload issue)
@@ -369,18 +590,38 @@ class _PlanCanvasState extends State<PlanCanvas> {
     }
   }
 
-  /// Handle pan start: begin drawing a wall segment.
+  /// Handle pan start: begin drawing a wall segment or start editing a vertex.
   void _handlePanStart(Offset screenPosition) {
+    // First check if clicking on a vertex to edit
+    final clickedVertex = _findVertexAtPosition(screenPosition);
+    
+    if (clickedVertex != null && _draftRoomVertices == null) {
+      // Start editing this vertex
+      setState(() {
+        _selectedVertex = clickedVertex;
+        _selectedRoomIndex = clickedVertex.roomIndex;
+        _isEditingVertex = true;
+        _isDragging = false;
+      });
+      return;
+    }
+    
+    // Otherwise, proceed with normal room drawing
     final worldPosition = _vp.screenToWorld(screenPosition);
     final snappedPosition = _snapToGrid(worldPosition);
     
     setState(() {
+      _selectedVertex = null; // Deselect vertex when starting new drawing
+      _isEditingVertex = false;
+      
       if (_draftRoomVertices == null) {
         // Start a new room with first vertex (snapped to grid)
         _draftRoomVertices = [snappedPosition];
         _dragStartPositionWorldMm = snappedPosition;
         _isDragging = true;
         _hoverPositionWorldMm = snappedPosition;
+        // Save state to history when starting a new draft room
+        _saveHistoryState();
       } else {
         // Check if starting drag near the start vertex (close room)
         if (_draftRoomVertices!.isNotEmpty) {
@@ -404,8 +645,47 @@ class _PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
-  /// Handle pan update: update preview line as user drags.
+  /// Handle pan update: update preview line as user drags, or move vertex if editing.
   void _handlePanUpdate(Offset screenPosition) {
+    // If editing a vertex, move it
+    if (_isEditingVertex && _selectedVertex != null) {
+      final worldPosition = _vp.screenToWorld(screenPosition);
+      final snappedPosition = _snapToGrid(worldPosition);
+      
+      setState(() {
+        final roomIdx = _selectedVertex!.roomIndex;
+        final vertexIdx = _selectedVertex!.vertexIndex;
+        
+        if (roomIdx >= 0 && roomIdx < _completedRooms.length) {
+          final room = _completedRooms[roomIdx];
+          final vertices = List<Offset>.from(room.vertices);
+          
+          // Handle closed polygon: if last vertex is duplicate of first, update both
+          final isClosed = vertices.length > 1 && vertices.first == vertices.last;
+          final uniqueVertexCount = isClosed ? vertices.length - 1 : vertices.length;
+          
+          if (vertexIdx >= 0 && vertexIdx < uniqueVertexCount) {
+            vertices[vertexIdx] = snappedPosition;
+            
+            // If closed polygon, also update the closing vertex
+            if (isClosed && vertexIdx == 0) {
+              vertices[vertices.length - 1] = snappedPosition;
+            } else if (isClosed && vertexIdx == uniqueVertexCount - 1) {
+              vertices[vertices.length - 1] = snappedPosition;
+            }
+            
+            // Create new room with updated vertices (Room is immutable)
+            _completedRooms[roomIdx] = Room(
+              vertices: vertices,
+              name: room.name,
+            );
+          }
+        }
+      });
+      return;
+    }
+    
+    // Otherwise, handle normal drawing preview
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
@@ -414,11 +694,27 @@ class _PlanCanvasState extends State<PlanCanvas> {
     setState(() {
       // Update hover position to show preview line (snapped to grid)
       _hoverPositionWorldMm = snappedPosition;
+      
+      // Update hovered vertex for visual feedback
+      final hoveredVertex = _findVertexAtPosition(screenPosition);
+      _hoveredVertex = hoveredVertex;
     });
   }
 
-  /// Handle pan end: place the wall segment (add vertex).
+  /// Handle pan end: place the wall segment (add vertex) or finish editing vertex.
   void _handlePanEnd(Offset screenPosition) {
+    // Finish editing vertex
+    if (_isEditingVertex) {
+      setState(() {
+        _isEditingVertex = false;
+        // Keep vertex selected for potential further edits
+        // Save state to history after vertex edit completes
+        _saveHistoryState();
+      });
+      return;
+    }
+    
+    // Handle normal drawing
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
@@ -451,6 +747,8 @@ class _PlanCanvasState extends State<PlanCanvas> {
           (snappedPosition - _draftRoomVertices!.last).distance > minDistanceMm) {
         _draftRoomVertices = [..._draftRoomVertices!, snappedPosition];
         _hoverPositionWorldMm = snappedPosition;
+        // Save state to history after adding a vertex to draft room
+        _saveHistoryState();
       }
       
       _dragStartPositionWorldMm = null;
@@ -480,6 +778,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
       // Clear draft
       _draftRoomVertices = null;
       _hoverPositionWorldMm = null;
+      
+      // Save state to history after room creation
+      _saveHistoryState();
     });
   }
   
@@ -590,6 +891,8 @@ class _PlanCanvasState extends State<PlanCanvas> {
           // Adjust selection index if room before it was deleted
           _selectedRoomIndex = _selectedRoomIndex! - 1;
         }
+        // Save state to history after room deletion
+        _saveHistoryState();
       });
     }
   }
@@ -611,6 +914,8 @@ class _PlanCanvasState extends State<PlanCanvas> {
         name: newName?.trim().isNotEmpty == true ? newName!.trim() : null,
       );
       _completedRooms[roomIndex] = updatedRoom;
+      // Save state to history after room name change
+      _saveHistoryState();
     });
   }
 }
@@ -623,6 +928,9 @@ class _PlanPainter extends CustomPainter {
   final bool useImperial;
   final bool isDragging;
   final int? selectedRoomIndex;
+  final ({int roomIndex, int vertexIndex})? selectedVertex;
+  final ({int roomIndex, int vertexIndex})? hoveredVertex;
+  final bool showGrid;
 
   _PlanPainter({
     required this.vp,
@@ -632,6 +940,9 @@ class _PlanPainter extends CustomPainter {
     required this.useImperial,
     required this.isDragging,
     required this.selectedRoomIndex,
+    this.selectedVertex,
+    this.hoveredVertex,
+    required this.showGrid,
   }) : completedRooms = completedRooms ?? [];
 
   @override
@@ -644,7 +955,10 @@ class _PlanPainter extends CustomPainter {
       Paint()..color = Colors.white,
     );
 
+      // Draw grid only if enabled
+      if (showGrid) {
     _drawGrid(canvas, size);
+      }
 
       // Draw completed rooms (filled polygons with outline)
       // Defensive check: ensure completedRooms is a valid, iterable list
@@ -666,6 +980,8 @@ class _PlanPainter extends CustomPainter {
                   if (room != null && room.vertices.isNotEmpty) {
                     // Pass selection state to highlight selected room
                     _drawRoom(canvas, room, isDraft: false, isSelected: i == selectedRoomIndex);
+                    // Draw vertices for this room
+                    _drawRoomVertices(canvas, room, roomIndex: i);
                   }
                 } catch (e) {
                   // Skip invalid rooms during hot reload
@@ -680,10 +996,12 @@ class _PlanPainter extends CustomPainter {
               int index = 0;
               for (final room in completedRooms) {
                 try {
-                  if (room != null && room.vertices.isNotEmpty) {
-                    _drawRoom(canvas, room, isDraft: false, isSelected: index == selectedRoomIndex);
-                    index++;
-                  }
+                    if (room != null && room.vertices.isNotEmpty) {
+                      _drawRoom(canvas, room, isDraft: false, isSelected: index == selectedRoomIndex);
+                      // Draw vertices for this room
+                      _drawRoomVertices(canvas, room, roomIndex: index);
+                      index++;
+                    }
                 } catch (e) {
                   debugPrint('Error drawing room: $e');
                 }
@@ -928,6 +1246,63 @@ class _PlanPainter extends CustomPainter {
       if (screenDistance < 50) continue; // Skip very short walls
       
       _drawDimension(canvas, startScreen, endScreen, distanceMm);
+    }
+  }
+  
+  /// Draw vertices for a completed room with visual feedback for selection/hover.
+  void _drawRoomVertices(Canvas canvas, Room room, {required int roomIndex}) {
+    // Use unique vertices (skip closing vertex if duplicate)
+    final uniqueVertices = room.vertices.length > 1 && 
+                          room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    
+    for (int vertexIdx = 0; vertexIdx < uniqueVertices.length; vertexIdx++) {
+      final vertexScreen = vp.worldToScreen(uniqueVertices[vertexIdx]);
+      
+      // Determine if this vertex is selected or hovered
+      final isSelected = selectedVertex != null &&
+                        selectedVertex!.roomIndex == roomIndex &&
+                        selectedVertex!.vertexIndex == vertexIdx;
+      final isHovered = hoveredVertex != null &&
+                       hoveredVertex!.roomIndex == roomIndex &&
+                       hoveredVertex!.vertexIndex == vertexIdx;
+      
+      // Draw vertex circle
+      final radius = isSelected ? 8.0 : (isHovered ? 7.0 : 6.0);
+      final color = isSelected 
+          ? Colors.orange 
+          : (isHovered ? Colors.orange.withOpacity(0.7) : Colors.blue);
+      
+      // Outer ring for better visibility
+      canvas.drawCircle(
+        vertexScreen,
+        radius + 1,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+      
+      // Main vertex circle
+      canvas.drawCircle(
+        vertexScreen,
+        radius,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.fill,
+      );
+      
+      // Inner highlight for selected
+      if (isSelected) {
+        canvas.drawCircle(
+          vertexScreen,
+          radius * 0.5,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.fill,
+        );
+      }
     }
   }
   
