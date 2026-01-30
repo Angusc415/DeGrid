@@ -56,6 +56,13 @@ class _PlanCanvasState extends State<PlanCanvas> {
   // Grid visibility toggle
   bool _showGrid = true;
   
+  // Pan mode toggle: when true, single-finger drag pans instead of drawing
+  bool _isPanMode = false;
+  
+  // Pan mode state: track if we're currently panning
+  bool _isPanning = false;
+  Offset? _panStartScreen;
+  
   // Undo/Redo history
   // Each history entry contains both completed rooms and draft room vertices
   final List<({List<Room> rooms, List<Offset>? draftVertices})> _history = [];
@@ -498,6 +505,86 @@ class _PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  void _togglePanMode() {
+    setState(() {
+      _isPanMode = !_isPanMode;
+      // Clear any active panning when toggling
+      _isPanning = false;
+      _panStartScreen = null;
+    });
+  }
+
+  void _zoomIn() {
+    if (!mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+    final centerScreen = Offset(screenSize.width / 2, screenSize.height / 2);
+    setState(() {
+      _vp.zoomAt(zoomFactor: 1.2, focalScreenPx: centerScreen);
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  void _zoomOut() {
+    if (!mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+    final centerScreen = Offset(screenSize.width / 2, screenSize.height / 2);
+    setState(() {
+      _vp.zoomAt(zoomFactor: 0.833, focalScreenPx: centerScreen); // 1/1.2
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  void _fitToScreen() {
+    if (!mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+    
+    if (_completedRooms.isEmpty) {
+      // No rooms: reset to default view
+      setState(() {
+        _vp.resetView(screenSize: screenSize);
+        _hasUnsavedChanges = true;
+      });
+      return;
+    }
+    
+    // Calculate bounding box of all rooms
+    double minX = double.infinity;
+    double minY = double.infinity;
+    double maxX = double.negativeInfinity;
+    double maxY = double.negativeInfinity;
+    
+    for (final room in _completedRooms) {
+      for (final vertex in room.vertices) {
+        minX = minX < vertex.dx ? minX : vertex.dx;
+        minY = minY < vertex.dy ? minY : vertex.dy;
+        maxX = maxX > vertex.dx ? maxX : vertex.dx;
+        maxY = maxY > vertex.dy ? maxY : vertex.dy;
+      }
+    }
+    
+    // Add padding (10% on each side)
+    final padding = (maxX - minX).abs().clamp(100, 1000) * 0.1;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+    
+    final width = maxX - minX;
+    final height = maxY - minY;
+    final center = Offset((minX + maxX) / 2, (minY + maxY) / 2);
+    
+    // Calculate zoom to fit
+    final scaleX = screenSize.width / width;
+    final scaleY = screenSize.height / height;
+    final scale = (scaleX < scaleY ? scaleX : scaleY) * 0.9; // 90% to add margin
+    
+    setState(() {
+      _vp.mmPerPx = (1.0 / scale).clamp(PlanViewport.minMmPerPx, PlanViewport.maxMmPerPx);
+      _vp.worldOriginMm = center - Offset(screenSize.width / 2, screenSize.height / 2) * _vp.mmPerPx;
+      _hasUnsavedChanges = true;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -687,10 +774,19 @@ class _PlanCanvasState extends State<PlanCanvas> {
         onScaleStart: kIsWeb
             ? null
             : (details) {
-                // Check pointer count: 1 = drawing, 2+ = pan/zoom
+                // Check pointer count: 1 = drawing/panning, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
-                  // Single finger: start drawing
-                  _handlePanStart(details.localFocalPoint);
+                  // Single finger: check if in pan mode
+                  if (_isPanMode) {
+                    // Pan mode: start panning
+                    setState(() {
+                      _isPanning = true;
+                      _panStartScreen = details.localFocalPoint;
+                    });
+                  } else {
+                    // Draw mode: start drawing
+                    _handlePanStart(details.localFocalPoint);
+                  }
                 } else {
                   // Multi-finger: start pan/zoom
                   _startMmPerPx = _vp.mmPerPx;
@@ -699,11 +795,19 @@ class _PlanCanvasState extends State<PlanCanvas> {
         onScaleUpdate: kIsWeb
             ? null
             : (details) {
-                // Check pointer count: 1 = drawing, 2+ = pan/zoom
+                // Check pointer count: 1 = drawing/panning, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
-                  // Single finger: continue drawing
-                  _lastScalePosition = details.localFocalPoint;
-                  _handlePanUpdate(details.localFocalPoint);
+                  if (_isPanning) {
+                    // Pan mode: pan the viewport
+                    setState(() {
+                      _vp.panByScreenDelta(details.focalPointDelta);
+                      _lastScalePosition = details.localFocalPoint;
+                    });
+                  } else {
+                    // Draw mode: continue drawing
+                    _lastScalePosition = details.localFocalPoint;
+                    _handlePanUpdate(details.localFocalPoint);
+                  }
                 } else {
                   // Multi-finger: pan and zoom
                   setState(() {
@@ -721,6 +825,13 @@ class _PlanCanvasState extends State<PlanCanvas> {
         onScaleEnd: kIsWeb
             ? null
             : (_) {
+                // If we were panning, end panning
+                if (_isPanning) {
+                  setState(() {
+                    _isPanning = false;
+                    _panStartScreen = null;
+                  });
+                }
                 // If we were drawing (single finger gesture), finish drawing
                 if (_isDragging && _lastScalePosition != null) {
                   _handlePanEnd(_lastScalePosition!);
@@ -844,6 +955,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
           child: PlanToolbar(
             useImperial: _useImperial,
             showGrid: _showGrid,
+            isPanMode: _isPanMode,
             canUndo: _canUndo,
             canRedo: _canRedo,
             hasSelectedRoom: _selectedRoomIndex != null,
@@ -855,6 +967,10 @@ class _PlanCanvasState extends State<PlanCanvas> {
             onSave: _saveProject,
             onToggleUnit: _toggleUnit,
             onToggleGrid: _toggleGrid,
+            onTogglePanMode: _togglePanMode,
+            onZoomIn: _zoomIn,
+            onZoomOut: _zoomOut,
+            onFitToScreen: _fitToScreen,
             onUndo: _undo,
             onRedo: _redo,
           ),

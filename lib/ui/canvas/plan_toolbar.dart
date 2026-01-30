@@ -4,10 +4,15 @@ import 'package:flutter/material.dart';
 class PlanToolbar extends StatelessWidget {
   final bool useImperial;
   final bool showGrid;
+  final bool isPanMode;
   final bool canUndo;
   final bool canRedo;
   final VoidCallback onToggleUnit;
   final VoidCallback onToggleGrid;
+  final VoidCallback onTogglePanMode;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onFitToScreen;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final bool hasSelectedRoom;
@@ -20,6 +25,7 @@ class PlanToolbar extends StatelessWidget {
     super.key,
     required this.useImperial,
     required this.showGrid,
+    required this.isPanMode,
     required this.canUndo,
     required this.canRedo,
     this.hasSelectedRoom = false,
@@ -29,6 +35,10 @@ class PlanToolbar extends StatelessWidget {
     this.onSave,
     required this.onToggleUnit,
     required this.onToggleGrid,
+    required this.onTogglePanMode,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onFitToScreen,
     required this.onUndo,
     required this.onRedo,
   });
@@ -70,6 +80,72 @@ class PlanToolbar extends StatelessWidget {
               tooltip: showGrid ? 'Hide Grid' : 'Show Grid',
               onPressed: onToggleGrid,
             ),
+          ),
+          
+          const VerticalDivider(width: 8),
+          
+          // Pan mode toggle (mobile: single-finger drag pans when enabled)
+          Tooltip(
+            message: isPanMode ? 'Pan Mode: Drag to pan (tap to exit)' : 'Draw Mode: Drag to draw (tap to enter pan mode)',
+            child: IconButton(
+              icon: Icon(isPanMode ? Icons.pan_tool : Icons.edit),
+              tooltip: isPanMode ? 'Pan Mode' : 'Draw Mode',
+              color: isPanMode ? Colors.blue : null,
+              onPressed: onTogglePanMode,
+            ),
+          ),
+          
+          const VerticalDivider(width: 8),
+          
+          // Zoom controls (popup menu)
+          PopupMenuButton<String>(
+            tooltip: 'Zoom Options',
+            icon: const Icon(Icons.zoom_in),
+            onSelected: (value) {
+              switch (value) {
+                case 'zoom_in':
+                  onZoomIn();
+                  break;
+                case 'zoom_out':
+                  onZoomOut();
+                  break;
+                case 'fit_screen':
+                  onFitToScreen();
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'zoom_in',
+                child: Row(
+                  children: [
+                    Icon(Icons.zoom_in, size: 20),
+                    SizedBox(width: 8),
+                    Text('Zoom In'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'zoom_out',
+                child: Row(
+                  children: [
+                    Icon(Icons.zoom_out, size: 20),
+                    SizedBox(width: 8),
+                    Text('Zoom Out'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'fit_screen',
+                child: Row(
+                  children: [
+                    Icon(Icons.fit_screen, size: 20),
+                    SizedBox(width: 8),
+                    Text('Fit to Screen'),
+                  ],
+                ),
+              ),
+            ],
           ),
           
           const VerticalDivider(width: 8),
