@@ -73,6 +73,17 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _viewportJsonMeta = const VerificationMeta(
+    'viewportJson',
+  );
+  @override
+  late final GeneratedColumn<String> viewportJson = GeneratedColumn<String>(
+    'viewport_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -80,6 +91,7 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     createdAt,
     updatedAt,
     useImperial,
+    viewportJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -125,6 +137,15 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         ),
       );
     }
+    if (data.containsKey('viewport_json')) {
+      context.handle(
+        _viewportJsonMeta,
+        viewportJson.isAcceptableOrUnknown(
+          data['viewport_json']!,
+          _viewportJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -154,6 +175,10 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.bool,
         data['${effectivePrefix}use_imperial'],
       )!,
+      viewportJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}viewport_json'],
+      ),
     );
   }
 
@@ -169,12 +194,14 @@ class Project extends DataClass implements Insertable<Project> {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool useImperial;
+  final String? viewportJson;
   const Project({
     required this.id,
     required this.name,
     required this.createdAt,
     required this.updatedAt,
     required this.useImperial,
+    this.viewportJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -184,6 +211,9 @@ class Project extends DataClass implements Insertable<Project> {
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['use_imperial'] = Variable<bool>(useImperial);
+    if (!nullToAbsent || viewportJson != null) {
+      map['viewport_json'] = Variable<String>(viewportJson);
+    }
     return map;
   }
 
@@ -194,6 +224,9 @@ class Project extends DataClass implements Insertable<Project> {
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       useImperial: Value(useImperial),
+      viewportJson: viewportJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(viewportJson),
     );
   }
 
@@ -208,6 +241,7 @@ class Project extends DataClass implements Insertable<Project> {
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       useImperial: serializer.fromJson<bool>(json['useImperial']),
+      viewportJson: serializer.fromJson<String?>(json['viewportJson']),
     );
   }
   @override
@@ -219,6 +253,7 @@ class Project extends DataClass implements Insertable<Project> {
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'useImperial': serializer.toJson<bool>(useImperial),
+      'viewportJson': serializer.toJson<String?>(viewportJson),
     };
   }
 
@@ -228,12 +263,14 @@ class Project extends DataClass implements Insertable<Project> {
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? useImperial,
+    Value<String?> viewportJson = const Value.absent(),
   }) => Project(
     id: id ?? this.id,
     name: name ?? this.name,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     useImperial: useImperial ?? this.useImperial,
+    viewportJson: viewportJson.present ? viewportJson.value : this.viewportJson,
   );
   Project copyWithCompanion(ProjectsCompanion data) {
     return Project(
@@ -244,6 +281,9 @@ class Project extends DataClass implements Insertable<Project> {
       useImperial: data.useImperial.present
           ? data.useImperial.value
           : this.useImperial,
+      viewportJson: data.viewportJson.present
+          ? data.viewportJson.value
+          : this.viewportJson,
     );
   }
 
@@ -254,13 +294,15 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('name: $name, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('useImperial: $useImperial')
+          ..write('useImperial: $useImperial, ')
+          ..write('viewportJson: $viewportJson')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, name, createdAt, updatedAt, useImperial);
+  int get hashCode =>
+      Object.hash(id, name, createdAt, updatedAt, useImperial, viewportJson);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -269,7 +311,8 @@ class Project extends DataClass implements Insertable<Project> {
           other.name == this.name &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
-          other.useImperial == this.useImperial);
+          other.useImperial == this.useImperial &&
+          other.viewportJson == this.viewportJson);
 }
 
 class ProjectsCompanion extends UpdateCompanion<Project> {
@@ -278,12 +321,14 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<bool> useImperial;
+  final Value<String?> viewportJson;
   const ProjectsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
+    this.viewportJson = const Value.absent(),
   });
   ProjectsCompanion.insert({
     this.id = const Value.absent(),
@@ -291,6 +336,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
+    this.viewportJson = const Value.absent(),
   }) : name = Value(name);
   static Insertable<Project> custom({
     Expression<int>? id,
@@ -298,6 +344,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<bool>? useImperial,
+    Expression<String>? viewportJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -305,6 +352,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (useImperial != null) 'use_imperial': useImperial,
+      if (viewportJson != null) 'viewport_json': viewportJson,
     });
   }
 
@@ -314,6 +362,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<bool>? useImperial,
+    Value<String?>? viewportJson,
   }) {
     return ProjectsCompanion(
       id: id ?? this.id,
@@ -321,6 +370,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       useImperial: useImperial ?? this.useImperial,
+      viewportJson: viewportJson ?? this.viewportJson,
     );
   }
 
@@ -342,6 +392,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     if (useImperial.present) {
       map['use_imperial'] = Variable<bool>(useImperial.value);
     }
+    if (viewportJson.present) {
+      map['viewport_json'] = Variable<String>(viewportJson.value);
+    }
     return map;
   }
 
@@ -352,13 +405,14 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('name: $name, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('useImperial: $useImperial')
+          ..write('useImperial: $useImperial, ')
+          ..write('viewportJson: $viewportJson')
           ..write(')'))
         .toString();
   }
 }
 
-class $RoomsTable extends Rooms with TableInfo<$RoomsTable, Room> {
+class $RoomsTable extends Rooms with TableInfo<$RoomsTable, RoomData> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
@@ -437,7 +491,7 @@ class $RoomsTable extends Rooms with TableInfo<$RoomsTable, Room> {
   static const String $name = 'rooms';
   @override
   VerificationContext validateIntegrity(
-    Insertable<Room> instance, {
+    Insertable<RoomData> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
@@ -482,9 +536,9 @@ class $RoomsTable extends Rooms with TableInfo<$RoomsTable, Room> {
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  Room map(Map<String, dynamic> data, {String? tablePrefix}) {
+  RoomData map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return Room(
+    return RoomData(
       id: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}id'],
@@ -514,13 +568,13 @@ class $RoomsTable extends Rooms with TableInfo<$RoomsTable, Room> {
   }
 }
 
-class Room extends DataClass implements Insertable<Room> {
+class RoomData extends DataClass implements Insertable<RoomData> {
   final int id;
   final int projectId;
   final String? name;
   final String verticesJson;
   final int orderIndex;
-  const Room({
+  const RoomData({
     required this.id,
     required this.projectId,
     this.name,
@@ -550,12 +604,12 @@ class Room extends DataClass implements Insertable<Room> {
     );
   }
 
-  factory Room.fromJson(
+  factory RoomData.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return Room(
+    return RoomData(
       id: serializer.fromJson<int>(json['id']),
       projectId: serializer.fromJson<int>(json['projectId']),
       name: serializer.fromJson<String?>(json['name']),
@@ -575,21 +629,21 @@ class Room extends DataClass implements Insertable<Room> {
     };
   }
 
-  Room copyWith({
+  RoomData copyWith({
     int? id,
     int? projectId,
     Value<String?> name = const Value.absent(),
     String? verticesJson,
     int? orderIndex,
-  }) => Room(
+  }) => RoomData(
     id: id ?? this.id,
     projectId: projectId ?? this.projectId,
     name: name.present ? name.value : this.name,
     verticesJson: verticesJson ?? this.verticesJson,
     orderIndex: orderIndex ?? this.orderIndex,
   );
-  Room copyWithCompanion(RoomsCompanion data) {
-    return Room(
+  RoomData copyWithCompanion(RoomsCompanion data) {
+    return RoomData(
       id: data.id.present ? data.id.value : this.id,
       projectId: data.projectId.present ? data.projectId.value : this.projectId,
       name: data.name.present ? data.name.value : this.name,
@@ -604,7 +658,7 @@ class Room extends DataClass implements Insertable<Room> {
 
   @override
   String toString() {
-    return (StringBuffer('Room(')
+    return (StringBuffer('RoomData(')
           ..write('id: $id, ')
           ..write('projectId: $projectId, ')
           ..write('name: $name, ')
@@ -620,7 +674,7 @@ class Room extends DataClass implements Insertable<Room> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is Room &&
+      (other is RoomData &&
           other.id == this.id &&
           other.projectId == this.projectId &&
           other.name == this.name &&
@@ -628,7 +682,7 @@ class Room extends DataClass implements Insertable<Room> {
           other.orderIndex == this.orderIndex);
 }
 
-class RoomsCompanion extends UpdateCompanion<Room> {
+class RoomsCompanion extends UpdateCompanion<RoomData> {
   final Value<int> id;
   final Value<int> projectId;
   final Value<String?> name;
@@ -649,7 +703,7 @@ class RoomsCompanion extends UpdateCompanion<Room> {
     this.orderIndex = const Value.absent(),
   }) : projectId = Value(projectId),
        verticesJson = Value(verticesJson);
-  static Insertable<Room> custom({
+  static Insertable<RoomData> custom({
     Expression<int>? id,
     Expression<int>? projectId,
     Expression<String>? name,
@@ -744,6 +798,7 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
+      Value<String?> viewportJson,
     });
 typedef $$ProjectsTableUpdateCompanionBuilder =
     ProjectsCompanion Function({
@@ -752,13 +807,14 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
+      Value<String?> viewportJson,
     });
 
 final class $$ProjectsTableReferences
     extends BaseReferences<_$AppDatabase, $ProjectsTable, Project> {
   $$ProjectsTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
-  static MultiTypedResultKey<$RoomsTable, List<Room>> _roomsRefsTable(
+  static MultiTypedResultKey<$RoomsTable, List<RoomData>> _roomsRefsTable(
     _$AppDatabase db,
   ) => MultiTypedResultKey.fromTable(
     db.rooms,
@@ -809,6 +865,11 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<bool> get useImperial => $composableBuilder(
     column: $table.useImperial,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get viewportJson => $composableBuilder(
+    column: $table.viewportJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -871,6 +932,11 @@ class $$ProjectsTableOrderingComposer
     column: $table.useImperial,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get viewportJson => $composableBuilder(
+    column: $table.viewportJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ProjectsTableAnnotationComposer
@@ -896,6 +962,11 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<bool> get useImperial => $composableBuilder(
     column: $table.useImperial,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get viewportJson => $composableBuilder(
+    column: $table.viewportJson,
     builder: (column) => column,
   );
 
@@ -958,12 +1029,14 @@ class $$ProjectsTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
+                Value<String?> viewportJson = const Value.absent(),
               }) => ProjectsCompanion(
                 id: id,
                 name: name,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 useImperial: useImperial,
+                viewportJson: viewportJson,
               ),
           createCompanionCallback:
               ({
@@ -972,12 +1045,14 @@ class $$ProjectsTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
+                Value<String?> viewportJson = const Value.absent(),
               }) => ProjectsCompanion.insert(
                 id: id,
                 name: name,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 useImperial: useImperial,
+                viewportJson: viewportJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -995,7 +1070,11 @@ class $$ProjectsTableTableManager
               getPrefetchedDataCallback: (items) async {
                 return [
                   if (roomsRefs)
-                    await $_getPrefetchedData<Project, $ProjectsTable, Room>(
+                    await $_getPrefetchedData<
+                      Project,
+                      $ProjectsTable,
+                      RoomData
+                    >(
                       currentTable: table,
                       referencedTable: $$ProjectsTableReferences
                           ._roomsRefsTable(db),
@@ -1045,7 +1124,7 @@ typedef $$RoomsTableUpdateCompanionBuilder =
     });
 
 final class $$RoomsTableReferences
-    extends BaseReferences<_$AppDatabase, $RoomsTable, Room> {
+    extends BaseReferences<_$AppDatabase, $RoomsTable, RoomData> {
   $$RoomsTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
   static $ProjectsTable _projectIdTable(_$AppDatabase db) => db.projects
@@ -1225,14 +1304,14 @@ class $$RoomsTableTableManager
         RootTableManager<
           _$AppDatabase,
           $RoomsTable,
-          Room,
+          RoomData,
           $$RoomsTableFilterComposer,
           $$RoomsTableOrderingComposer,
           $$RoomsTableAnnotationComposer,
           $$RoomsTableCreateCompanionBuilder,
           $$RoomsTableUpdateCompanionBuilder,
-          (Room, $$RoomsTableReferences),
-          Room,
+          (RoomData, $$RoomsTableReferences),
+          RoomData,
           PrefetchHooks Function({bool projectId})
         > {
   $$RoomsTableTableManager(_$AppDatabase db, $RoomsTable table)
@@ -1329,14 +1408,14 @@ typedef $$RoomsTableProcessedTableManager =
     ProcessedTableManager<
       _$AppDatabase,
       $RoomsTable,
-      Room,
+      RoomData,
       $$RoomsTableFilterComposer,
       $$RoomsTableOrderingComposer,
       $$RoomsTableAnnotationComposer,
       $$RoomsTableCreateCompanionBuilder,
       $$RoomsTableUpdateCompanionBuilder,
-      (Room, $$RoomsTableReferences),
-      Room,
+      (RoomData, $$RoomsTableReferences),
+      RoomData,
       PrefetchHooks Function({bool projectId})
     >;
 

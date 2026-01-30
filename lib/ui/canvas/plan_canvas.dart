@@ -2,16 +2,26 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:math' as math;
 import 'viewport.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../../core/geometry/room.dart';
 import '../../core/units/unit_converter.dart';
+import '../../core/database/database.dart';
+import '../../core/services/project_service.dart';
+import '../../core/models/project.dart';
 import 'plan_toolbar.dart';
 
 
 class PlanCanvas extends StatefulWidget {
-  const PlanCanvas({super.key});
+  final int? projectId;
+  final String? initialProjectName;
+
+  const PlanCanvas({
+    super.key,
+    this.projectId,
+    this.initialProjectName,
+  });
 
   @override
   State<PlanCanvas> createState() => _PlanCanvasState();
@@ -22,6 +32,17 @@ class _PlanCanvasState extends State<PlanCanvas> {
     mmPerPx: 5.0,
     worldOriginMm: const Offset(-500, -500),
   );
+
+  // Database and service
+  AppDatabase? _db;
+  ProjectService? _projectService;
+  bool _isInitializing = true;
+  
+  // Project state
+  int? _currentProjectId;
+  String? _currentProjectName;
+  bool _hasUnsavedChanges = false;
+  bool _isLoading = false;
 
   // Completed rooms (polygons)
   final List<Room> _completedRooms = [];
@@ -65,6 +86,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
   // Vertex editing state: true when dragging a vertex to reshape room
   bool _isEditingVertex = false;
 
+  // Last scale gesture position (for onScaleEnd)
+  Offset? _lastScalePosition;
+
   double _startMmPerPx = 5.0;
   
   // Focus node for keyboard shortcuts
@@ -84,11 +108,292 @@ class _PlanCanvasState extends State<PlanCanvas> {
     super.initState();
     // Initialize history with empty state
     _saveHistoryState();
+    // Initialize database and load project if provided
+    _initializeDatabase();
+  }
+
+  Future<void> _initializeDatabase() async {
+    try {
+      debugPrint('PlanCanvas: Initializing database...');
+      
+      // Check if we're on web
+      if (kIsWeb) {
+        debugPrint('PlanCanvas: Running on web - database not supported');
+        setState(() {
+          _isInitializing = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Database is not supported on web.\n'
+                'Please run on iOS, Android, macOS, Windows, or Linux for full functionality.\n'
+                'You can still use the app, but projects cannot be saved.',
+              ),
+              duration: Duration(seconds: 8),
+            ),
+          );
+        }
+        // Allow app to continue without database
+        setState(() {
+          _currentProjectName = widget.initialProjectName;
+        });
+        return;
+      }
+      
+      _db = AppDatabase();
+      _projectService = ProjectService(_db!);
+      debugPrint('PlanCanvas: Database and service created');
+      
+      // Pre-initialize the database connection by doing a simple query
+      // This ensures the connection is established before we try to load/save
+      try {
+        await _db!.customSelect('SELECT 1', readsFrom: {}).get();
+        debugPrint('PlanCanvas: Database connection established');
+      } catch (e) {
+        debugPrint('PlanCanvas: Warning - Could not pre-initialize database connection: $e');
+        // Continue anyway - the connection will be established on first real query
+      }
+      
+      setState(() {
+        _isInitializing = false;
+      });
+      debugPrint('PlanCanvas: Initialization flag set to false');
+      
+      if (widget.projectId != null) {
+        await _loadProject(widget.projectId!);
+      } else {
+        setState(() {
+          _currentProjectName = widget.initialProjectName;
+        });
+      }
+    } catch (e, stackTrace) {
+      debugPrint('PlanCanvas: Error initializing database: $e');
+      debugPrint('PlanCanvas: Stack trace: $stackTrace');
+      setState(() {
+        _isInitializing = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error initializing database: $e\n\nPlease restart the app.'),
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadProject(int projectId) async {
+    if (_projectService == null) {
+      debugPrint('Cannot load project: _projectService is null');
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      debugPrint('Loading project $projectId...');
+      final project = await _projectService!.getProject(projectId);
+      debugPrint('Project loaded: ${project?.name}, rooms: ${project?.rooms.length}');
+      
+      if (project != null && mounted) {
+        setState(() {
+          _currentProjectId = project.id;
+          _currentProjectName = project.name;
+          _useImperial = project.useImperial;
+          _completedRooms.clear();
+          _completedRooms.addAll(project.rooms);
+          
+          // Restore viewport if available
+          if (project.viewportState != null) {
+            final restoredViewport = project.viewportState!.toViewport();
+            _vp.mmPerPx = restoredViewport.mmPerPx;
+            _vp.worldOriginMm = restoredViewport.worldOriginMm;
+          }
+          
+          _hasUnsavedChanges = false;
+          _isLoading = false;
+        });
+        
+        // Reset history after loading
+        _history.clear();
+        _historyIndex = -1;
+        _saveHistoryState();
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error loading project: $e');
+      debugPrint('Stack trace: $stackTrace');
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading project: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveProject() async {
+    debugPrint('PlanCanvas: _saveProject called');
+    
+    // Check if we're on web
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Saving is not supported on web.\n'
+              'Please run on iOS, Android, macOS, Windows, or Linux to save projects.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Wait for initialization if still in progress
+    if (_isInitializing) {
+      debugPrint('PlanCanvas: Waiting for database initialization...');
+      int waitCount = 0;
+      const maxWait = 50; // 5 seconds
+      while (_isInitializing && waitCount < maxWait) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        waitCount++;
+      }
+    }
+    
+    if (_projectService == null) {
+      debugPrint('PlanCanvas: Cannot save project: _projectService is null after initialization');
+      // Try to re-initialize once (only if not on web)
+      if (!kIsWeb) {
+        debugPrint('PlanCanvas: Attempting to re-initialize database...');
+        try {
+          _db = AppDatabase();
+          _projectService = ProjectService(_db!);
+          debugPrint('PlanCanvas: Database re-initialized successfully');
+        } catch (e) {
+          debugPrint('PlanCanvas: Failed to re-initialize: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Database not initialized. Please restart the app.'),
+                duration: Duration(seconds: 5),
+              ),
+            );
+          }
+          return;
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Database is not supported on web.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+    }
+    
+    // If no project name, prompt for it
+    String? projectName = _currentProjectName;
+    if (projectName == null || projectName.isEmpty) {
+      debugPrint('No project name, prompting user...');
+      projectName = await _promptProjectName();
+      if (projectName == null || projectName.isEmpty) {
+        debugPrint('User cancelled project name prompt');
+        return; // User cancelled
+      }
+      debugPrint('User entered project name: $projectName');
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      debugPrint('Saving project: name=$projectName, id=$_currentProjectId, rooms=${_completedRooms.length}, viewport=${_vp.mmPerPx}');
+      final projectId = await _projectService!.saveProject(
+        id: _currentProjectId,
+        name: projectName,
+        rooms: _completedRooms,
+        viewport: _vp,
+        useImperial: _useImperial,
+      );
+      debugPrint('Project saved successfully with ID: $projectId');
+
+      setState(() {
+        _currentProjectId = projectId;
+        _currentProjectName = projectName;
+        _hasUnsavedChanges = false;
+        _isLoading = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Project "$projectName" saved successfully!'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error saving project: $e');
+      debugPrint('Stack trace: $stackTrace');
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving project: $e'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<String?> _promptProjectName() async {
+    final controller = TextEditingController(text: _currentProjectName ?? '');
+    final confirmed = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Project Name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Project Name',
+            hintText: 'Enter project name',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    return confirmed;
   }
 
   @override
   void dispose() {
     _focusNode.dispose();
+    _db?.close();
     super.dispose();
   }
   
@@ -182,6 +487,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
   void _toggleUnit() {
     setState(() {
       _useImperial = !_useImperial;
+      _hasUnsavedChanges = true;
     });
   }
   
@@ -275,6 +581,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
                       _selectedRoomIndex! < _completedRooms.length) {
                     _completedRooms.removeAt(_selectedRoomIndex!);
                     _selectedRoomIndex = null;
+                    _hasUnsavedChanges = true;
                     // Save state to history after room deletion
                     _saveHistoryState();
                   }
@@ -292,6 +599,13 @@ class _PlanCanvasState extends State<PlanCanvas> {
                   // Undo
                   _undo();
                 }
+              }
+              break;
+            case LogicalKeyboardKey.keyS:
+              // Save (Ctrl+S or Cmd+S)
+              if (HardwareKeyboard.instance.isControlPressed ||
+                  HardwareKeyboard.instance.isMetaPressed) {
+                _saveProject();
               }
               break;
             default:
@@ -368,39 +682,51 @@ class _PlanCanvasState extends State<PlanCanvas> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
 
-        // IMPORTANT: disable scale on web to stop left-drag pan weirdness
+        // Use scale gestures for both pan/zoom (multi-touch) and drawing (single-touch)
+        // On web, scale gestures are disabled to avoid conflicts with Listener
         onScaleStart: kIsWeb
             ? null
-            : (_) {
-                _startMmPerPx = _vp.mmPerPx;
+            : (details) {
+                // Check pointer count: 1 = drawing, 2+ = pan/zoom
+                if (details.pointerCount == 1) {
+                  // Single finger: start drawing
+                  _handlePanStart(details.localFocalPoint);
+                } else {
+                  // Multi-finger: start pan/zoom
+                  _startMmPerPx = _vp.mmPerPx;
+                }
               },
         onScaleUpdate: kIsWeb
             ? null
-            : (d) {
-                setState(() {
-                  _vp.panByScreenDelta(d.focalPointDelta);
+            : (details) {
+                // Check pointer count: 1 = drawing, 2+ = pan/zoom
+                if (details.pointerCount == 1) {
+                  // Single finger: continue drawing
+                  _lastScalePosition = details.localFocalPoint;
+                  _handlePanUpdate(details.localFocalPoint);
+                } else {
+                  // Multi-finger: pan and zoom
+                  setState(() {
+                    _vp.panByScreenDelta(details.focalPointDelta);
 
-                  final desiredMmPerPx = _startMmPerPx / d.scale;
-                  final zoomFactor = desiredMmPerPx / _vp.mmPerPx;
-                  _vp.zoomAt(
-                    zoomFactor: zoomFactor,
-                    focalScreenPx: d.focalPoint,
-                  );
-                });
+                    final desiredMmPerPx = _startMmPerPx / details.scale;
+                    final zoomFactor = desiredMmPerPx / _vp.mmPerPx;
+                    _vp.zoomAt(
+                      zoomFactor: zoomFactor,
+                      focalScreenPx: details.localFocalPoint,
+                    );
+                  });
+                }
               },
-
-        // Room drawing: click and drag to draw wall segments
-        onPanStart: (d) {
-          _handlePanStart(d.localPosition);
-        },
-        
-        onPanUpdate: (d) {
-          _handlePanUpdate(d.localPosition);
-        },
-        
-        onPanEnd: (d) {
-          _handlePanEnd(d.localPosition);
-        },
+        onScaleEnd: kIsWeb
+            ? null
+            : (_) {
+                // If we were drawing (single finger gesture), finish drawing
+                if (_isDragging && _lastScalePosition != null) {
+                  _handlePanEnd(_lastScalePosition!);
+                  _lastScalePosition = null;
+                }
+              },
         
         // Double-tap: close room if drafting
         onDoubleTapDown: (d) {
@@ -412,21 +738,42 @@ class _PlanCanvasState extends State<PlanCanvas> {
         
         // Single tap: select room or edit name if clicking center
         onTapDown: (d) {
-          if (_draftRoomVertices == null && !_isEditingVertex) {
-            // Only handle clicks when not drawing or editing
+          if (_draftRoomVertices == null) {
             // Check if clicking on a vertex first
             final clickedVertex = _findVertexAtPosition(d.localPosition);
             
             if (clickedVertex != null) {
-              // Click on vertex = select it (but don't start editing until drag)
+              // If clicking the same vertex that's already selected, deselect it
+              if (_selectedVertex != null &&
+                  _selectedVertex!.roomIndex == clickedVertex.roomIndex &&
+                  _selectedVertex!.vertexIndex == clickedVertex.vertexIndex) {
+                setState(() {
+                  _selectedVertex = null;
+                  _isEditingVertex = false;
+                });
+                return;
+              }
+              
+              // Click on different vertex = select it (will start editing when drag starts)
               setState(() {
                 _selectedVertex = clickedVertex;
                 _selectedRoomIndex = clickedVertex.roomIndex;
+                _isEditingVertex = false; // Reset editing state
+                // Clear any draft state to ensure we're ready to edit
+                _isDragging = false;
               });
               return;
             }
             
-            // Otherwise, check for room center or room area
+            // If clicking outside a vertex but we have a selected vertex, deselect it
+            if (_selectedVertex != null) {
+              setState(() {
+                _selectedVertex = null;
+                _isEditingVertex = false;
+              });
+            }
+            
+            // Check for room center or room area
             final worldPos = _vp.screenToWorld(d.localPosition);
             final clickedRoomIndex = _findRoomAtPosition(worldPos);
             if (clickedRoomIndex != null) {
@@ -438,6 +785,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
               setState(() {
                 _selectedVertex = null; // Deselect vertex when clicking room
                 _selectedRoomIndex = clickedRoomIndex;
+                _isEditingVertex = false;
               });
               
               // Click area: 40px radius (covers button or name text)
@@ -446,10 +794,11 @@ class _PlanCanvasState extends State<PlanCanvas> {
                 _editRoomName(clickedRoomIndex);
               }
             } else {
-              // Click outside any room = deselect
-          setState(() {
+              // Click outside any room = deselect everything
+              setState(() {
                 _selectedRoomIndex = null;
                 _selectedVertex = null;
+                _isEditingVertex = false;
               });
             }
           }
@@ -482,9 +831,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
               selectedVertex: _selectedVertex,
               hoveredVertex: _hoveredVertex,
               showGrid: _showGrid,
-            ),
-              ),
-            ),
+          ),
+        ),
+      ),
           ),
         ),
         ),
@@ -501,6 +850,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
             onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
                 ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
                 : null,
+            hasProject: _currentProjectId != null,
+            hasUnsavedChanges: _hasUnsavedChanges,
+            onSave: _saveProject,
             onToggleUnit: _toggleUnit,
             onToggleGrid: _toggleGrid,
             onUndo: _undo,
@@ -602,7 +954,16 @@ class _PlanCanvasState extends State<PlanCanvas> {
       return;
     }
     
-    // First check if clicking on a vertex to edit
+    // First check if we already have a selected vertex (from tap) - start editing it
+    if (_selectedVertex != null && _draftRoomVertices == null) {
+      setState(() {
+        _isEditingVertex = true;
+        _isDragging = false;
+      });
+      return;
+    }
+    
+    // Otherwise, check if clicking on a vertex to edit
     final clickedVertex = _findVertexAtPosition(screenPosition);
     
     if (clickedVertex != null && _draftRoomVertices == null) {
@@ -697,6 +1058,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
               vertices: vertices,
               name: room.name,
             );
+            _hasUnsavedChanges = true;
           }
         }
       });
@@ -805,6 +1167,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
         
         // Create room without a name - user can name it later by clicking the button
         _completedRooms.add(Room(vertices: vertices, name: null));
+        _hasUnsavedChanges = true;
       }
       
       // Clear draft
@@ -923,6 +1286,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
           // Adjust selection index if room before it was deleted
           _selectedRoomIndex = _selectedRoomIndex! - 1;
         }
+        _hasUnsavedChanges = true;
         // Save state to history after room deletion
         _saveHistoryState();
       });
@@ -946,6 +1310,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
         name: newName?.trim().isNotEmpty == true ? newName!.trim() : null,
       );
       _completedRooms[roomIndex] = updatedRoom;
+      _hasUnsavedChanges = true;
       // Save state to history after room name change
       _saveHistoryState();
     });

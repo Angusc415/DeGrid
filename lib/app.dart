@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'ui/screens/editor_screen.dart';
+import 'ui/screens/projects_screen.dart';
 
 class App extends StatelessWidget {
   const App({super.key});
@@ -7,9 +7,9 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'FloorPlan',
+      title: 'DeGrid',
       theme: ThemeData(useMaterial3: true),
-      home: const EditorScreen(),
+      home: const ProjectsScreen(),
     );
   }
 }

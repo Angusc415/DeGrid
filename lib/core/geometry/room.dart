@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:convert';
 
 /// Represents a completed room (polygon) in the floor plan.
 /// 
@@ -36,5 +37,43 @@ class Room {
       sum -= vertices[j].dx * vertices[i].dy;
     }
     return (sum / 2).abs();
+  }
+
+  /// Convert Room to JSON string for database storage.
+  /// 
+  /// Format: {"vertices": [{"x": 0.0, "y": 0.0}, ...], "name": "Room Name"}
+  String toJsonString() {
+    final json = <String, dynamic>{
+      'vertices': vertices.map((v) => {'x': v.dx, 'y': v.dy}).toList(),
+    };
+    if (name != null && name!.isNotEmpty) {
+      json['name'] = name;
+    }
+    return jsonEncode(json);
+  }
+
+  /// Create Room from JSON string (from database).
+  /// 
+  /// Throws FormatException if JSON is invalid.
+  factory Room.fromJsonString(String jsonString) {
+    final json = jsonDecode(jsonString) as Map<String, dynamic>;
+    
+    final verticesList = json['vertices'] as List;
+    final vertices = verticesList
+        .map((v) => Offset(
+              (v as Map<String, dynamic>)['x'] as double,
+              v['y'] as double,
+            ))
+        .toList();
+    
+    final name = json['name'] as String?;
+    
+    return Room(vertices: vertices, name: name);
+  }
+
+  /// Convert vertices to JSON-compatible list format.
+  /// Used for serialization to database.
+  List<Map<String, double>> get verticesAsJson {
+    return vertices.map((v) => {'x': v.dx, 'y': v.dy}).toList();
   }
 }

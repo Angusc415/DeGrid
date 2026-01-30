@@ -12,6 +12,9 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback onRedo;
   final bool hasSelectedRoom;
   final VoidCallback? onDeleteRoom;
+  final bool hasProject;
+  final bool hasUnsavedChanges;
+  final VoidCallback? onSave;
 
   const PlanToolbar({
     super.key,
@@ -21,6 +24,9 @@ class PlanToolbar extends StatelessWidget {
     required this.canRedo,
     this.hasSelectedRoom = false,
     this.onDeleteRoom,
+    this.hasProject = false,
+    this.hasUnsavedChanges = false,
+    this.onSave,
     required this.onToggleUnit,
     required this.onToggleGrid,
     required this.onUndo,
@@ -99,6 +105,27 @@ class PlanToolbar extends StatelessWidget {
                 tooltip: 'Delete Room',
                 color: Colors.red,
                 onPressed: onDeleteRoom,
+              ),
+            ),
+          ],
+          
+          if (onSave != null) ...[
+            const VerticalDivider(width: 8),
+            
+            // Save button
+            Tooltip(
+              message: hasProject
+                  ? (hasUnsavedChanges ? 'Save Project (Ctrl+S)' : 'No unsaved changes')
+                  : (hasUnsavedChanges ? 'Save as New Project (Ctrl+S)' : 'Save Project'),
+              child: IconButton(
+                icon: Icon(
+                  Icons.save,
+                  color: hasUnsavedChanges ? Colors.orange : null,
+                ),
+                tooltip: 'Save',
+                // Enable save if there are unsaved changes (even for new projects)
+                // or if there's a project (to allow saving even when no changes, in case user wants to)
+                onPressed: hasUnsavedChanges || hasProject ? onSave : null,
               ),
             ),
           ],
