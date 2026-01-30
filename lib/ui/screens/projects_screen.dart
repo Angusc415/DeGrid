@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:printing/printing.dart';
+import 'package:pdf/pdf.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:typed_data';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
+import '../../core/export/pdf_export.dart';
+import '../../core/models/project.dart';
 import 'editor_screen.dart';
 
 class ProjectsScreen extends StatefulWidget {
@@ -256,6 +262,121 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     }
   }
 
+  /// Export a project to PDF.
+  Future<void> _exportProjectToPdf(Project project) async {
+    if (_projectService == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Database not initialized. Please restart the app.')),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Load full project data
+      final projectModel = await _projectService!.getProject(project.id);
+      
+      if (projectModel == null) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Close loading
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Project not found')),
+          );
+        }
+        return;
+      }
+
+      // Generate PDF
+      final pdfBytes = await PdfExportService.exportToPdf(
+        rooms: projectModel.rooms,
+        useImperial: projectModel.useImperial,
+        projectName: projectModel.name,
+        viewport: projectModel.viewportState?.toViewport(),
+        includeGrid: false, // Can be made configurable later
+      );
+
+      if (!mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Show PDF preview/share dialog
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdfBytes,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error exporting PDF: $e'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Import a project from PDF (placeholder for future implementation).
+  Future<void> _importProject() async {
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Import is not supported on web. Please use a native platform.'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Pick PDF file
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return; // User cancelled
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF import is not yet implemented. This feature will be available in a future update.'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error importing project: $e'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _db?.close();
@@ -268,6 +389,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.upload_file),
+            tooltip: 'Import Project',
+            onPressed: _isInitializing ? null : _importProject,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
@@ -327,6 +453,16 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                         subtitle: Text('Updated ${_formatDate(project.updatedAt)}'),
                         trailing: PopupMenuButton(
                           itemBuilder: (context) => [
+                            PopupMenuItem(
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.picture_as_pdf),
+                                  SizedBox(width: 8),
+                                  Text('Export PDF'),
+                                ],
+                              ),
+                              onTap: () => _exportProjectToPdf(project),
+                            ),
                             PopupMenuItem(
                               child: const Row(
                                 children: [
