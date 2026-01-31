@@ -165,7 +165,7 @@ class PdfExportService {
     
     // Draw each room
     for (final room in rooms) {
-      _drawRoomOnCanvas(canvas, room, bbox, size, scale, pixelsPerPoint);
+      _drawRoomOnCanvas(canvas, room, bbox, size, scale, pixelsPerPoint, useImperial);
     }
     
     // Convert to image
@@ -196,8 +196,8 @@ class PdfExportService {
     }
   }
   
-  /// Draw room on Flutter canvas.
-  static void _drawRoomOnCanvas(Canvas canvas, Room room, _BoundingBox bbox, Size size, double scale, double pixelsPerPoint) {
+  /// Draw room on Flutter canvas with measurements.
+  static void _drawRoomOnCanvas(Canvas canvas, Room room, _BoundingBox bbox, Size size, double scale, double pixelsPerPoint, bool useImperial) {
     if (room.vertices.isEmpty) return;
     
     // Convert vertices to canvas coordinates
@@ -226,6 +226,122 @@ class PdfExportService {
       ..color = const Color(0xFF1976D2)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2);
+    
+    // Draw wall measurements
+    _drawWallMeasurementsOnCanvas(canvas, room, points, bbox, scale, pixelsPerPoint, useImperial);
+  }
+  
+  /// Draw wall measurements on canvas for PDF export.
+  static void _drawWallMeasurementsOnCanvas(
+    Canvas canvas,
+    Room room,
+    List<Offset> screenPoints,
+    _BoundingBox bbox,
+    double scale,
+    double pixelsPerPoint,
+    bool useImperial,
+  ) {
+    if (room.vertices.length < 2) return;
+    
+    // Get unique vertices (skip closing vertex if duplicate)
+    final uniqueVertices = room.vertices.length > 1 && 
+                           room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    
+    final uniqueScreenPoints = screenPoints.length > 1 && 
+                               screenPoints.first == screenPoints.last
+        ? screenPoints.sublist(0, screenPoints.length - 1)
+        : screenPoints;
+    
+    if (uniqueVertices.length < 2) return;
+    
+    // Draw dimension for each wall segment
+    for (int i = 0; i < uniqueVertices.length; i++) {
+      final j = (i + 1) % uniqueVertices.length;
+      final startWorld = uniqueVertices[i];
+      final endWorld = uniqueVertices[j];
+      final startScreen = uniqueScreenPoints[i];
+      final endScreen = uniqueScreenPoints[j];
+      
+      // Calculate distance in mm
+      final distanceMm = (endWorld - startWorld).distance;
+      
+      // Only draw if wall is long enough to display measurement
+      final screenDistance = (endScreen - startScreen).distance;
+      if (screenDistance < 30 * pixelsPerPoint) continue; // Skip very short walls
+      
+      _drawDimensionOnCanvas(canvas, startScreen, endScreen, distanceMm, useImperial, pixelsPerPoint);
+    }
+  }
+  
+  /// Draw a dimension line with measurement text for a wall segment.
+  static void _drawDimensionOnCanvas(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    double distanceMm,
+    bool useImperial,
+    double pixelsPerPoint,
+  ) {
+    // Calculate midpoint and perpendicular offset for dimension line
+    final midpoint = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
+    final wallVector = end - start;
+    final wallLength = wallVector.distance;
+    if (wallLength == 0) return;
+    
+    // Perpendicular direction (rotate 90 degrees)
+    final perp = Offset(-wallVector.dy / wallLength, wallVector.dx / wallLength);
+    
+    // Offset distance from wall (scaled for PDF quality)
+    final offsetDistance = 20.0 * pixelsPerPoint;
+    final dimensionLineStart = midpoint + perp * offsetDistance;
+    final dimensionLineEnd = midpoint - perp * offsetDistance;
+    
+    // Draw dimension line (perpendicular to wall)
+    final dimLinePaint = Paint()
+      ..color = const Color(0xFF757575)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawLine(dimensionLineStart, dimensionLineEnd, dimLinePaint);
+    
+    // Draw extension lines (from wall to dimension line)
+    final extLinePaint = Paint()
+      ..color = const Color(0xFFBDBDBD)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawLine(start, dimensionLineStart, extLinePaint);
+    canvas.drawLine(end, dimensionLineStart, extLinePaint);
+    
+    // Format measurement text
+    final measurementText = UnitConverter.formatDistance(distanceMm, useImperial: useImperial);
+    
+    // Draw measurement text
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: measurementText,
+        style: TextStyle(
+          color: const Color(0xFF424242),
+          fontSize: 10 * pixelsPerPoint,
+          fontWeight: FontWeight.w600,
+          backgroundColor: Colors.white.withOpacity(0.9),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+    
+    textPainter.layout();
+    
+    // Position text at dimension line, rotated to match wall angle
+    final wallAngle = math.atan2(wallVector.dy, wallVector.dx);
+    final textOffset = dimensionLineStart - Offset(textPainter.width / 2, textPainter.height / 2);
+    
+    canvas.save();
+    canvas.translate(textOffset.dx + textPainter.width / 2, textOffset.dy + textPainter.height / 2);
+    canvas.rotate(wallAngle);
+    textPainter.paint(canvas, Offset(-textPainter.width / 2, -textPainter.height / 2));
+    canvas.restore();
   }
 
   /// Build room line widgets using positioned containers (widget-based approach).
@@ -460,19 +576,23 @@ class PdfExportService {
     }
     
     return pw.Positioned(
-      left: pdfX - 30, // Approximate centering
-      top: pdfY - 8,
+      left: pdfX - 40, // Approximate centering (will be adjusted by text width)
+      top: pdfY - 10,
       child: pw.Container(
-        padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: pw.BoxDecoration(
           color: PdfColors.white,
-          borderRadius: pw.BorderRadius.circular(2),
+          borderRadius: pw.BorderRadius.circular(4),
+          border: pw.Border.all(
+            color: PdfColor.fromInt(0xFF1976D2),
+            width: 1,
+          ),
         ),
         child: pw.Text(
           labelText,
           style: pw.TextStyle(
             color: PdfColor.fromInt(0xFF1976D2), // Darker blue for visibility
-            fontSize: 9,
+            fontSize: 10,
             fontWeight: pw.FontWeight.bold,
           ),
           textAlign: pw.TextAlign.center,
