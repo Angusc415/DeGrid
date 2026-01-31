@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:math' as math;
 import 'viewport.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint, defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../../core/geometry/room.dart';
@@ -97,6 +97,12 @@ class _PlanCanvasState extends State<PlanCanvas> {
   Offset? _lastScalePosition;
 
   double _startMmPerPx = 5.0;
+  
+  // Length input for wall segments
+  final TextEditingController _lengthInputController = TextEditingController();
+  double? _desiredLengthMm; // Desired length in mm (null = use dragged length)
+  Offset? _originalLastSegmentDirection; // Store original direction when user starts typing
+  Offset? _originalSecondToLastVertex; // Store original second-to-last vertex position
   
   // Focus node for keyboard shortcuts
   final FocusNode _focusNode = FocusNode();
@@ -400,6 +406,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
   @override
   void dispose() {
     _focusNode.dispose();
+    _lengthInputController.dispose();
     _db?.close();
     super.dispose();
   }
@@ -710,7 +717,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
           // Pan gestures are handled separately
           if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging && !_isEditingVertex) {
             setState(() {
-              _hoverPositionWorldMm = _vp.screenToWorld(e.localPosition);
+              final worldPosition = _vp.screenToWorld(e.localPosition);
+              final snappedPosition = _snapToGrid(worldPosition);
+              _hoverPositionWorldMm = snappedPosition;
             });
           }
           
@@ -975,6 +984,17 @@ class _PlanCanvasState extends State<PlanCanvas> {
             onRedo: _redo,
           ),
         ),
+        // Length input number pad (only visible when drawing)
+        if (_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty)
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: _LengthInputPad(
+              controller: _lengthInputController,
+              useImperial: _useImperial,
+              onChanged: _onLengthInputChanged,
+            ),
+          ),
       ],
     );
   }
@@ -1107,6 +1127,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
         _dragStartPositionWorldMm = snappedPosition;
         _isDragging = true;
         _hoverPositionWorldMm = snappedPosition;
+        // Clear length input when starting new room
+        _lengthInputController.clear();
+        _desiredLengthMm = null;
         // Save state to history when starting a new draft room
         _saveHistoryState();
       } else {
@@ -1189,6 +1212,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
     
     setState(() {
       // Update hover position to show preview line (snapped to grid)
+      // Don't apply length constraint during drawing - user draws freely first
       _hoverPositionWorldMm = snappedPosition;
       
       // Update hovered vertex for visual feedback
@@ -1250,7 +1274,7 @@ class _PlanCanvasState extends State<PlanCanvas> {
         }
       }
       
-      // Add new vertex at end of drag (snapped to grid)
+      // Add new vertex at end of drag (draw freely, no length constraint)
       // Prevent duplicate vertices (dragging to same spot)
       final minDistanceMm = _gridSpacingMm * 0.5; // Minimum half grid spacing between vertices
       if (_draftRoomVertices!.isEmpty ||
@@ -1259,6 +1283,12 @@ class _PlanCanvasState extends State<PlanCanvas> {
         _hoverPositionWorldMm = snappedPosition;
         // Save state to history after adding a vertex to draft room
         _saveHistoryState();
+        
+        // Clear length input when placing new vertex (user can now adjust this segment)
+        _lengthInputController.clear();
+        _desiredLengthMm = null;
+        _originalLastSegmentDirection = null;
+        _originalSecondToLastVertex = null;
       }
       
       _dragStartPositionWorldMm = null;
@@ -1289,12 +1319,156 @@ class _PlanCanvasState extends State<PlanCanvas> {
       // Clear draft
       _draftRoomVertices = null;
       _hoverPositionWorldMm = null;
+      _lengthInputController.clear();
+      _desiredLengthMm = null;
+      _originalLastSegmentDirection = null;
+      _originalSecondToLastVertex = null;
       
       // Save state to history after room creation
       _saveHistoryState();
     });
   }
   
+  /// Handle length input change from number pad.
+  /// Adjusts the last drawn segment to match the entered length in real-time.
+  void _onLengthInputChanged(String value) {
+    setState(() {
+      if (value.trim().isEmpty) {
+        _desiredLengthMm = null;
+        _originalLastSegmentDirection = null;
+        _originalSecondToLastVertex = null;
+        return;
+      }
+      
+      // Try to parse the input - handle partial input (e.g., "3", "30", "300")
+      // For partial input, try parsing as a simple number first
+      double? parsed;
+      
+      // Try parsing as a simple number (for partial input like "3", "30", "3000")
+      final simpleNumber = double.tryParse(value.trim());
+      if (simpleNumber != null && simpleNumber > 0) {
+        // If using imperial, assume feet; if metric, assume mm
+        if (_useImperial) {
+          const mmPerFoot = 304.8;
+          parsed = simpleNumber * mmPerFoot;
+        } else {
+          parsed = simpleNumber; // Assume mm
+        }
+      } else {
+        // Try full parsing (handles units like "3000mm", "10.5", etc.)
+        parsed = _parseLengthInput(value);
+      }
+      
+      if (parsed != null && parsed > 0) {
+        _desiredLengthMm = parsed;
+        
+        // Adjust the last segment to match the entered length in real-time
+        if (_draftRoomVertices != null && _draftRoomVertices!.length >= 2) {
+          // Store original direction and second-to-last vertex on first input
+          if (_originalLastSegmentDirection == null || _originalSecondToLastVertex == null) {
+            final secondToLast = _draftRoomVertices![_draftRoomVertices!.length - 2];
+            final lastVertex = _draftRoomVertices!.last;
+            
+            // Calculate and store original direction
+            final direction = lastVertex - secondToLast;
+            final directionLength = direction.distance;
+            
+            if (directionLength > 0) {
+              _originalSecondToLastVertex = secondToLast;
+              _originalLastSegmentDirection = Offset(
+                direction.dx / directionLength,
+                direction.dy / directionLength,
+              );
+            } else {
+              // Can't determine direction, skip
+              return;
+            }
+          }
+          
+          // Use stored original direction for all updates
+          if (_originalLastSegmentDirection != null && _originalSecondToLastVertex != null) {
+            // Calculate new position for last vertex using original direction
+            final newLastVertex = _originalSecondToLastVertex! + Offset(
+              _originalLastSegmentDirection!.dx * _desiredLengthMm!,
+              _originalLastSegmentDirection!.dy * _desiredLengthMm!,
+            );
+            
+            // Update the last vertex in real-time
+            final updatedVertices = List<Offset>.from(_draftRoomVertices!);
+            updatedVertices[updatedVertices.length - 1] = _snapToGrid(newLastVertex);
+            _draftRoomVertices = updatedVertices;
+            _hoverPositionWorldMm = updatedVertices.last;
+            
+            // Mark as unsaved (but don't save to history on every keystroke - too many states)
+            _hasUnsavedChanges = true;
+          }
+        }
+      } else {
+        // Invalid input - clear desired length but keep current vertex position
+        _desiredLengthMm = null;
+        _originalLastSegmentDirection = null;
+        _originalSecondToLastVertex = null;
+      }
+    });
+  }
+  
+  /// Parse length input string to millimeters.
+  /// Supports formats like "3000", "3000mm", "300cm", "10.5", "10' 6\"", etc.
+  double? _parseLengthInput(String input) {
+    if (input.trim().isEmpty) return null;
+    
+    final trimmed = input.trim().toLowerCase();
+    
+    if (_useImperial) {
+      // Imperial: Parse feet and inches
+      // Simplified parsing - just parse numbers
+      const mmPerFoot = 304.8;
+      const mmPerInch = 25.4;
+      
+      // Try to match feet and inches: look for two numbers separated by space or quote
+      // Pattern: number, optional quote/ft, optional second number, optional quote
+      final pattern = '^(\\d+(?:\\.\\d+)?)\\s*(?:[\'"]|ft)?\\s*(?:(\\d+(?:\\.\\d+)?)\\s*(?:[\'"]|inch)?)?\$';
+      final regex = RegExp(pattern);
+      final match = regex.firstMatch(trimmed);
+      
+      if (match != null) {
+        final feetStr = match.group(1);
+        final inchesStr = match.group(2);
+        
+        if (feetStr != null) {
+          final feet = double.tryParse(feetStr) ?? 0;
+          final inches = inchesStr != null ? (double.tryParse(inchesStr) ?? 0) : 0;
+          return (feet * mmPerFoot) + (inches * mmPerInch);
+        }
+      }
+      
+      // Try simple decimal (assume feet)
+      final feet = double.tryParse(trimmed);
+      if (feet != null) {
+        return feet * mmPerFoot;
+      }
+    } else {
+      // Metric: Parse mm or cm
+      const mmPerCm = 10.0;
+      if (trimmed.endsWith('cm')) {
+        final cm = double.tryParse(trimmed.substring(0, trimmed.length - 2).trim());
+        if (cm != null) return cm * mmPerCm;
+      } else if (trimmed.endsWith('m')) {
+        final m = double.tryParse(trimmed.substring(0, trimmed.length - 1).trim());
+        if (m != null) return m * 1000; // meters to mm
+      } else if (trimmed.endsWith('mm')) {
+        final mm = double.tryParse(trimmed.substring(0, trimmed.length - 2).trim());
+        if (mm != null) return mm;
+      } else {
+        // Assume mm if no unit
+        final mm = double.tryParse(trimmed);
+        if (mm != null) return mm;
+      }
+    }
+    
+    return null;
+  }
+
   /// Show a dialog to get the room name from the user.
   Future<String?> _showRoomNameDialog({String? initialName}) async {
     final context = this.context;
@@ -1430,6 +1604,258 @@ class _PlanCanvasState extends State<PlanCanvas> {
       // Save state to history after room name change
       _saveHistoryState();
     });
+  }
+}
+
+/// Floating number pad widget for entering wall length.
+class _LengthInputPad extends StatefulWidget {
+  final TextEditingController controller;
+  final bool useImperial;
+  final ValueChanged<String> onChanged;
+
+  const _LengthInputPad({
+    required this.controller,
+    required this.useImperial,
+    required this.onChanged,
+  });
+
+  @override
+  State<_LengthInputPad> createState() => _LengthInputPadState();
+}
+
+class _LengthInputPadState extends State<_LengthInputPad> {
+  bool get _isTouchDevice => !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isTouchDevice) {
+      // Mobile: Show compact number pad with buttons
+      return Container(
+        constraints: const BoxConstraints(maxWidth: 180),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Length',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Display area showing current value (updates live)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: Text(
+                widget.controller.text.isEmpty 
+                    ? (widget.useImperial ? '0 ft' : '0 mm')
+                    : widget.controller.text,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Compact number pad
+            _buildNumberPad(),
+          ],
+        ),
+      );
+    } else {
+      // Web: Simple text field
+      return Container(
+        width: 200,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Wall Length',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: widget.controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: widget.useImperial ? 'ft/in' : 'mm/cm',
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 16),
+              onChanged: widget.onChanged,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.useImperial ? 'Enter feet (e.g., 10.5)' : 'Enter mm (e.g., 3000)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _buildNumberPad() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Row 1: 1, 2, 3
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildNumberButton('1'),
+            const SizedBox(width: 4),
+            _buildNumberButton('2'),
+            const SizedBox(width: 4),
+            _buildNumberButton('3'),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Row 2: 4, 5, 6
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildNumberButton('4'),
+            const SizedBox(width: 4),
+            _buildNumberButton('5'),
+            const SizedBox(width: 4),
+            _buildNumberButton('6'),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Row 3: 7, 8, 9
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildNumberButton('7'),
+            const SizedBox(width: 4),
+            _buildNumberButton('8'),
+            const SizedBox(width: 4),
+            _buildNumberButton('9'),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Row 4: ., 0, ⌫
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildNumberButton('.'),
+            const SizedBox(width: 4),
+            _buildNumberButton('0'),
+            const SizedBox(width: 4),
+            _buildActionButton(Icons.backspace_outlined, () {
+              if (widget.controller.text.isNotEmpty) {
+                widget.controller.text = widget.controller.text.substring(0, widget.controller.text.length - 1);
+                widget.onChanged(widget.controller.text);
+                setState(() {}); // Update display
+              }
+            }),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Clear button
+        SizedBox(
+          width: double.infinity,
+          child: _buildActionButton(Icons.clear, () {
+            widget.controller.clear();
+            widget.onChanged('');
+            setState(() {}); // Update display
+          }, label: 'Clear'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNumberButton(String digit) {
+    return Material(
+      color: Colors.grey[200],
+      borderRadius: BorderRadius.circular(4),
+      child: InkWell(
+        onTap: () {
+          widget.controller.text += digit;
+          widget.onChanged(widget.controller.text);
+          setState(() {}); // Update display
+        },
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          width: 36,
+          height: 32,
+          alignment: Alignment.center,
+          child: Text(
+            digit,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton(IconData icon, VoidCallback onTap, {String? label}) {
+    return Material(
+      color: Colors.grey[300],
+      borderRadius: BorderRadius.circular(4),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          width: label != null ? double.infinity : 36,
+          height: 32,
+          alignment: Alignment.center,
+          padding: label != null ? const EdgeInsets.symmetric(horizontal: 8) : null,
+          child: label != null
+              ? Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              : Icon(icon, size: 18),
+        ),
+      ),
+    );
   }
 }
 
