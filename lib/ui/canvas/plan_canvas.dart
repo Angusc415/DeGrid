@@ -2052,17 +2052,17 @@ class _PlanPainter extends CustomPainter {
     centerY /= count;
     final center = Offset(centerX, centerY);
     
+    // Always draw area prominently
+    final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
+    
     if (room.name != null && room.name!.isNotEmpty) {
-      // Draw room name with area below it
-      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
-      final nameText = '${room.name!}\n$areaText';
-      
-      final textPainter = TextPainter(
+      // Draw room name with area below it (enhanced display)
+      final namePainter = TextPainter(
         text: TextSpan(
-          text: nameText,
+          text: room.name!,
           style: const TextStyle(
             color: Colors.blue,
-            fontSize: 16,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
             shadows: [
               Shadow(
@@ -2076,45 +2076,78 @@ class _PlanPainter extends CustomPainter {
         textAlign: TextAlign.center,
       );
       
-      textPainter.layout();
+      namePainter.layout();
       
-      // Draw text centered on the room
-      textPainter.paint(
+      // Draw room name
+      namePainter.paint(
         canvas,
         Offset(
-          center.dx - textPainter.width / 2,
-          center.dy - textPainter.height / 2,
+          center.dx - namePainter.width / 2,
+          center.dy - 20,
         ),
       );
+      
+      // Draw area with prominent background box
+      _drawAreaLabel(canvas, center, areaText, offsetY: 5);
     } else {
       // Draw name button (icon) when room has no name
-      // Also show area below button
       _drawNameButton(canvas, center);
       
-      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
-      final areaPainter = TextPainter(
-        text: TextSpan(
-          text: areaText,
-          style: TextStyle(
-            color: Colors.grey.shade600,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            backgroundColor: Colors.white.withOpacity(0.7),
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-        textAlign: TextAlign.center,
-      );
-      
-      areaPainter.layout();
-      areaPainter.paint(
-        canvas,
-        Offset(
-          center.dx - areaPainter.width / 2,
-          center.dy + 25, // Below the button
-        ),
-      );
+      // Draw area prominently below button
+      _drawAreaLabel(canvas, center, areaText, offsetY: 30);
     }
+  }
+  
+  /// Draw area label with prominent background for better visibility.
+  void _drawAreaLabel(Canvas canvas, Offset center, String areaText, {double offsetY = 0}) {
+    final areaPainter = TextPainter(
+      text: TextSpan(
+        text: areaText,
+        style: TextStyle(
+          color: Colors.blue.shade700,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+    
+    areaPainter.layout();
+    
+    // Draw background box for better readability
+    final padding = 6.0;
+    final boxRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        center.dx - areaPainter.width / 2 - padding,
+        center.dy + offsetY - areaPainter.height / 2 - padding,
+        areaPainter.width + padding * 2,
+        areaPainter.height + padding * 2,
+      ),
+      const Radius.circular(4),
+    );
+    
+    // Draw white background with slight transparency
+    final backgroundPaint = Paint()
+      ..color = Colors.white.withOpacity(0.9)
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(boxRect, backgroundPaint);
+    
+    // Draw border
+    final borderPaint = Paint()
+      ..color = Colors.blue.shade300
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRRect(boxRect, borderPaint);
+    
+    // Draw area text
+    areaPainter.paint(
+      canvas,
+      Offset(
+        center.dx - areaPainter.width / 2,
+        center.dy + offsetY - areaPainter.height / 2,
+      ),
+    );
   }
   
   /// Draw a clickable button icon for naming/renaming the room.
