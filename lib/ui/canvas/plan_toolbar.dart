@@ -97,55 +97,11 @@ class PlanToolbar extends StatelessWidget {
           
           const VerticalDivider(width: 8),
           
-          // Zoom controls (popup menu)
-          PopupMenuButton<String>(
-            tooltip: 'Zoom Options',
-            icon: const Icon(Icons.zoom_in),
-            onSelected: (value) {
-              switch (value) {
-                case 'zoom_in':
-                  onZoomIn();
-                  break;
-                case 'zoom_out':
-                  onZoomOut();
-                  break;
-                case 'fit_screen':
-                  onFitToScreen();
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) => [
-              const PopupMenuItem<String>(
-                value: 'zoom_in',
-                child: Row(
-                  children: [
-                    Icon(Icons.zoom_in, size: 20),
-                    SizedBox(width: 8),
-                    Text('Zoom In'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'zoom_out',
-                child: Row(
-                  children: [
-                    Icon(Icons.zoom_out, size: 20),
-                    SizedBox(width: 8),
-                    Text('Zoom Out'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'fit_screen',
-                child: Row(
-                  children: [
-                    Icon(Icons.fit_screen, size: 20),
-                    SizedBox(width: 8),
-                    Text('Fit to Screen'),
-                  ],
-                ),
-              ),
-            ],
+          // Zoom controls (custom dropdown that stays open)
+          _ZoomMenuButton(
+            onZoomIn: onZoomIn,
+            onZoomOut: onZoomOut,
+            onFitToScreen: onFitToScreen,
           ),
           
           const VerticalDivider(width: 8),
@@ -206,6 +162,163 @@ class PlanToolbar extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Custom zoom menu button that stays open until clicking outside.
+class _ZoomMenuButton extends StatefulWidget {
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onFitToScreen;
+
+  const _ZoomMenuButton({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onFitToScreen,
+  });
+
+  @override
+  State<_ZoomMenuButton> createState() => _ZoomMenuButtonState();
+}
+
+class _ZoomMenuButtonState extends State<_ZoomMenuButton> {
+  OverlayEntry? _overlayEntry;
+  bool _isMenuOpen = false;
+
+  void _showMenu() {
+    if (_isMenuOpen) return;
+
+    final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final size = renderBox.size;
+    final offset = renderBox.localToGlobal(Offset.zero);
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          // Invisible backdrop to catch taps outside menu
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => _hideMenu(), // Close when tapping outside
+              behavior: HitTestBehavior.opaque,
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+          // Menu positioned below toolbar
+          Positioned(
+            left: offset.dx,
+            top: offset.dy + size.height + 4, // Position below toolbar with small gap
+            child: GestureDetector(
+              onTap: () {}, // Prevent taps on menu from closing it
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  width: 180,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildMenuItem(
+                        icon: Icons.zoom_in,
+                        label: 'Zoom In',
+                        onTap: () {
+                          widget.onZoomIn();
+                          // Don't close menu - keep it open
+                        },
+                      ),
+                      const Divider(height: 1),
+                      _buildMenuItem(
+                        icon: Icons.zoom_out,
+                        label: 'Zoom Out',
+                        onTap: () {
+                          widget.onZoomOut();
+                          // Don't close menu - keep it open
+                        },
+                      ),
+                      const Divider(height: 1),
+                      _buildMenuItem(
+                        icon: Icons.fit_screen,
+                        label: 'Fit to Screen',
+                        onTap: () {
+                          widget.onFitToScreen();
+                          // Don't close menu - keep it open
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+    setState(() {
+      _isMenuOpen = true;
+    });
+  }
+
+  void _hideMenu() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    setState(() {
+      _isMenuOpen = false;
+    });
+  }
+
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 20),
+            const SizedBox(width: 12),
+            Text(label),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _hideMenu();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Zoom Options',
+      child: IconButton(
+        icon: Icon(
+          Icons.zoom_in,
+          color: _isMenuOpen ? Colors.blue : null,
+        ),
+        tooltip: 'Zoom Options',
+        onPressed: _isMenuOpen ? _hideMenu : _showMenu,
       ),
     );
   }

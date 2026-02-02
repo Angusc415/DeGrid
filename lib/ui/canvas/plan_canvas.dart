@@ -16,18 +16,22 @@ import 'plan_toolbar.dart';
 class PlanCanvas extends StatefulWidget {
   final int? projectId;
   final String? initialProjectName;
+  final Function(List<Room>, bool, int?)? onRoomsChanged; // Callback for rooms, useImperial, selectedIndex
+  final Function(int)? onSelectRoomRequested; // Callback when external code wants to select a room
 
   const PlanCanvas({
     super.key,
     this.projectId,
     this.initialProjectName,
+    this.onRoomsChanged,
+    this.onSelectRoomRequested,
   });
 
   @override
-  State<PlanCanvas> createState() => _PlanCanvasState();
+  State<PlanCanvas> createState() => PlanCanvasState();
 }
 
-class _PlanCanvasState extends State<PlanCanvas> {
+class PlanCanvasState extends State<PlanCanvas> {
   final PlanViewport _vp = PlanViewport(
     mmPerPx: 5.0,
     worldOriginMm: const Offset(-500, -500),
@@ -230,6 +234,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
           _hasUnsavedChanges = false;
           _isLoading = false;
         });
+        
+        // Notify parent of rooms change
+        widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
         
         // Reset history after loading
         _history.clear();
@@ -526,7 +533,8 @@ class _PlanCanvasState extends State<PlanCanvas> {
     final screenSize = MediaQuery.of(context).size;
     final centerScreen = Offset(screenSize.width / 2, screenSize.height / 2);
     setState(() {
-      _vp.zoomAt(zoomFactor: 1.2, focalScreenPx: centerScreen);
+      // Zoom in: decrease mmPerPx (see more detail)
+      _vp.zoomAt(zoomFactor: 0.833, focalScreenPx: centerScreen); // 1/1.2
       _hasUnsavedChanges = true;
     });
   }
@@ -536,7 +544,8 @@ class _PlanCanvasState extends State<PlanCanvas> {
     final screenSize = MediaQuery.of(context).size;
     final centerScreen = Offset(screenSize.width / 2, screenSize.height / 2);
     setState(() {
-      _vp.zoomAt(zoomFactor: 0.833, focalScreenPx: centerScreen); // 1/1.2
+      // Zoom out: increase mmPerPx (see less detail, more area)
+      _vp.zoomAt(zoomFactor: 1.2, focalScreenPx: centerScreen);
       _hasUnsavedChanges = true;
     });
   }
@@ -590,6 +599,42 @@ class _PlanCanvasState extends State<PlanCanvas> {
       _vp.worldOriginMm = center - Offset(screenSize.width / 2, screenSize.height / 2) * _vp.mmPerPx;
       _hasUnsavedChanges = true;
     });
+  }
+
+  /// Select a room and center the view on it.
+  /// This is called from external code (e.g., room summary panel).
+  void selectRoom(int roomIndex) {
+    if (roomIndex < 0 || roomIndex >= _completedRooms.length) return;
+    
+    final room = _completedRooms[roomIndex];
+    
+    // Calculate room center
+    double centerX = 0;
+    double centerY = 0;
+    for (final vertex in room.vertices) {
+      centerX += vertex.dx;
+      centerY += vertex.dy;
+    }
+    centerX /= room.vertices.length;
+    centerY /= room.vertices.length;
+    
+    if (!mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+    
+    setState(() {
+      _selectedRoomIndex = roomIndex;
+      // Center view on room
+      _vp.worldOriginMm = Offset(centerX, centerY) - 
+          Offset(screenSize.width / 2, screenSize.height / 2) * _vp.mmPerPx;
+    });
+    
+    // Notify parent
+    widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+  }
+  
+  /// Delete a room by index (called from external code).
+  void deleteRoom(int roomIndex) {
+    _showDeleteRoomDialog(roomIndex);
   }
 
   @override
@@ -1326,6 +1371,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
       
       // Save state to history after room creation
       _saveHistoryState();
+      
+      // Notify parent of rooms change
+      widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
     });
   }
   
@@ -1579,6 +1627,9 @@ class _PlanCanvasState extends State<PlanCanvas> {
         _hasUnsavedChanges = true;
         // Save state to history after room deletion
         _saveHistoryState();
+        
+        // Notify parent of rooms change
+        widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
       });
     }
   }
@@ -2078,17 +2129,23 @@ class _PlanPainter extends CustomPainter {
       
       namePainter.layout();
       
-      // Draw room name
+      // Calculate spacing: name height + gap + area height
+      final nameHeight = namePainter.height;
+      final areaHeight = 30.0; // Approximate area label height (text + padding)
+      final gap = 16.0; // Increased gap to prevent overlap
+      final totalHeight = nameHeight + gap + areaHeight;
+      
+      // Draw room name (positioned above center to make room for area below)
       namePainter.paint(
         canvas,
         Offset(
           center.dx - namePainter.width / 2,
-          center.dy - 20,
+          center.dy - totalHeight / 2,
         ),
       );
       
-      // Draw area with prominent background box
-      _drawAreaLabel(canvas, center, areaText, offsetY: 5);
+      // Draw area with prominent background box (below name with gap)
+      _drawAreaLabel(canvas, center, areaText, offsetY: nameHeight / 2 + gap + areaHeight / 2);
     } else {
       // Draw name button (icon) when room has no name
       _drawNameButton(canvas, center);
@@ -2347,7 +2404,7 @@ class _PlanPainter extends CustomPainter {
 
     final vertices = draftRoomVertices!;
 
-    // Draw lines between vertices
+    // Draw lines between vertices with measurements
     if (vertices.length > 1) {
       final linePaint = Paint()
         ..color = Colors.blue.withOpacity(0.5)
@@ -2358,6 +2415,13 @@ class _PlanPainter extends CustomPainter {
         final a = vp.worldToScreen(vertices[i]);
         final b = vp.worldToScreen(vertices[i + 1]);
         canvas.drawLine(a, b, linePaint);
+        
+        // Draw measurement on each completed segment
+        final distanceMm = (vertices[i + 1] - vertices[i]).distance;
+        final screenDistance = (b - a).distance;
+        if (screenDistance > 50) { // Only draw if segment is long enough
+          _drawDimension(canvas, a, b, distanceMm);
+        }
       }
     }
 
@@ -2446,26 +2510,109 @@ class _PlanPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    const gridMm = 100.0; // 10cm
+    // Adaptive grid spacing based on zoom level
+    // Target: ~50-100 pixels between grid lines for good visibility
+    final targetScreenSpacing = 80.0; // pixels
+    final targetWorldSpacingMm = targetScreenSpacing * vp.mmPerPx;
+    
+    // Choose appropriate grid spacing from nice round values
+    // Values in millimeters: 1mm, 5mm, 10mm, 50mm, 100mm, 500mm, 1000mm, 5000mm, 10000mm
+    final niceSpacings = [1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0];
+    
+    // Find the closest nice spacing that's not too small
+    double gridMm = niceSpacings.first;
+    for (final spacing in niceSpacings) {
+      if (spacing >= targetWorldSpacingMm * 0.5) {
+        gridMm = spacing;
+        break;
+      }
+    }
+    // If we're very zoomed out, use the largest spacing
+    if (targetWorldSpacingMm > niceSpacings.last) {
+      gridMm = niceSpacings.last;
+    }
+    
     final topLeftW = vp.screenToWorld(Offset.zero);
     final bottomRightW = vp.screenToWorld(Offset(size.width, size.height));
 
     double startX = (topLeftW.dx / gridMm).floor() * gridMm;
     double startY = (topLeftW.dy / gridMm).floor() * gridMm;
 
-    final gridPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.25)
-      ..strokeWidth = 1;
+    // Adjust line opacity and width based on grid size
+    // Larger grids (zoomed out) get lighter lines
+    final screenSpacing = gridMm / vp.mmPerPx;
+    final opacity = (screenSpacing > 200) 
+        ? 0.15  // Very large grids: lighter
+        : (screenSpacing > 100)
+            ? 0.2   // Large grids: medium
+            : 0.25; // Normal grids: standard
+    final lineWidth = (screenSpacing > 200) ? 0.5 : 1.0;
 
+    final gridPaint = Paint()
+      ..color = Colors.grey.withOpacity(opacity)
+      ..strokeWidth = lineWidth;
+
+    // Draw vertical lines
     for (double x = startX; x <= bottomRightW.dx; x += gridMm) {
       final a = vp.worldToScreen(Offset(x, topLeftW.dy));
       final b = vp.worldToScreen(Offset(x, bottomRightW.dy));
       canvas.drawLine(a, b, gridPaint);
     }
+    
+    // Draw horizontal lines
     for (double y = startY; y <= bottomRightW.dy; y += gridMm) {
       final a = vp.worldToScreen(Offset(topLeftW.dx, y));
       final b = vp.worldToScreen(Offset(bottomRightW.dx, y));
       canvas.drawLine(a, b, gridPaint);
+    }
+    
+    // Optionally draw grid labels (every 5th or 10th line to avoid clutter)
+    final labelInterval = (gridMm >= 1000) ? 1 : (gridMm >= 100) ? 5 : 10;
+    final labelPaint = TextPainter(
+      text: TextSpan(
+        text: _formatGridLabel(gridMm),
+        style: TextStyle(
+          color: Colors.grey.withOpacity(0.6),
+          fontSize: 10,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    labelPaint.layout();
+    
+    // Draw labels at origin and a few key points
+    final labelPoints = [
+      Offset(startX, startY),
+      if (startX + gridMm * labelInterval <= bottomRightW.dx)
+        Offset(startX + gridMm * labelInterval, startY),
+      if (startY + gridMm * labelInterval <= bottomRightW.dy)
+        Offset(startX, startY + gridMm * labelInterval),
+    ];
+    
+    for (final point in labelPoints) {
+      final screenPoint = vp.worldToScreen(point);
+      // Only draw if label is visible on screen
+      if (screenPoint.dx >= -50 && screenPoint.dx <= size.width + 50 &&
+          screenPoint.dy >= -50 && screenPoint.dy <= size.height + 50) {
+        labelPaint.paint(canvas, screenPoint + const Offset(4, 4));
+      }
+    }
+  }
+  
+  /// Format grid spacing as a readable label (e.g., "1 cm", "1 m")
+  String _formatGridLabel(double gridMm) {
+    if (gridMm >= 10000) {
+      return '${(gridMm / 1000).toStringAsFixed(0)} m';
+    } else if (gridMm >= 1000) {
+      return '${(gridMm / 1000).toStringAsFixed(1)} m';
+    } else if (gridMm >= 100) {
+      return '${(gridMm / 10).toStringAsFixed(0)} cm';
+    } else if (gridMm >= 10) {
+      return '${gridMm.toStringAsFixed(0)} cm';
+    } else if (gridMm >= 1) {
+      return '${gridMm.toStringAsFixed(0)} mm';
+    } else {
+      return '${(gridMm * 10).toStringAsFixed(0)} mm';
     }
   }
 
