@@ -12,6 +12,8 @@ import '../../core/services/project_service.dart';
 import '../../core/models/project.dart';
 import 'plan_toolbar.dart';
 
+/// Angle lock for draw mode: none (free), snap to 90°, or snap to 45°.
+enum DrawAngleLock { none, snap90, snap45 }
 
 class PlanCanvas extends StatefulWidget {
   final int? projectId;
@@ -63,9 +65,19 @@ class PlanCanvasState extends State<PlanCanvas> {
   // Pan mode toggle: when true, single-finger drag pans instead of drawing
   bool _isPanMode = false;
   
+  /// Draw mode angle lock: lines snap to 90°, 45°, or free angle.
+  DrawAngleLock _drawAngleLock = DrawAngleLock.none;
+  
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
   Offset? _panStartScreen;
+  /// Minimum drag distance (px) before a touch is treated as pan; below this, treat as tap (e.g. vertex select).
+  static const double _panSlopPx = 18.0;
+  /// True when the current scale gesture is "drag to move selected vertex" (set synchronously in onScaleStart so onScaleUpdate sees it before setState runs).
+  bool _scaleGestureIsVertexEdit = false;
+
+  /// Set to true to log vertex-edit vs pan decisions (debug only).
+  static const bool _debugVertexEdit = false;
   
   // Undo/Redo history
   // Each history entry contains both completed rooms and draft room vertices
@@ -79,6 +91,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   // Selected vertex for editing: (roomIndex, vertexIndex)
   // null = no vertex selected
   ({int roomIndex, int vertexIndex})? _selectedVertex;
+  /// Set synchronously when a tap selects a vertex so the next touch (drag) sees it before setState rebuilds.
+  ({int roomIndex, int vertexIndex})? _pendingSelectedVertex;
   
   // Hovered vertex for visual feedback: (roomIndex, vertexIndex)
   // null = no vertex hovered
@@ -522,10 +536,83 @@ class PlanCanvasState extends State<PlanCanvas> {
   void _togglePanMode() {
     setState(() {
       _isPanMode = !_isPanMode;
-      // Clear any active panning when toggling
       _isPanning = false;
       _panStartScreen = null;
+      _pendingSelectedVertex = null;
+      _selectedVertex = null;
+      _hoveredVertex = null;
+      _isEditingVertex = false;
     });
+  }
+
+  /// Handle a single tap on the canvas (vertex select, room select, etc.).
+  /// Called from onTapDown (web) and from onScaleEnd when scale gesture was a tap (mobile).
+  void _handleCanvasTap(Offset localPosition) {
+    if (_draftRoomVertices == null) {
+      if (_isPanMode) {
+        final clickedVertex = _findVertexAtPosition(localPosition);
+        if (clickedVertex != null) {
+          if (_selectedVertex != null &&
+              _selectedVertex!.roomIndex == clickedVertex.roomIndex &&
+              _selectedVertex!.vertexIndex == clickedVertex.vertexIndex) {
+            _pendingSelectedVertex = null;
+            setState(() {
+              _selectedVertex = null;
+              _isEditingVertex = false;
+            });
+            return;
+          }
+          // Set synchronously so next touch (drag) sees it before setState rebuilds
+          _pendingSelectedVertex = clickedVertex;
+          setState(() {
+            _selectedVertex = clickedVertex;
+            _selectedRoomIndex = clickedVertex.roomIndex;
+            _isEditingVertex = false;
+            _isDragging = false;
+          });
+          return;
+        }
+        if (_selectedVertex != null) {
+          _pendingSelectedVertex = null;
+          setState(() {
+            _selectedVertex = null;
+            _isEditingVertex = false;
+          });
+        }
+      } else {
+        if (_selectedVertex != null) {
+          setState(() {
+            _selectedVertex = null;
+            _isEditingVertex = false;
+          });
+        }
+      }
+
+      final worldPos = _vp.screenToWorld(localPosition);
+      final clickedRoomIndex = _findRoomAtPosition(worldPos);
+      if (clickedRoomIndex != null) {
+        final room = _completedRooms[clickedRoomIndex];
+        final center = _getRoomCenter(room.vertices);
+        final centerScreen = _vp.worldToScreen(center);
+        final distance = (localPosition - centerScreen).distance;
+        _pendingSelectedVertex = null;
+        setState(() {
+          _selectedVertex = null;
+          _selectedRoomIndex = clickedRoomIndex;
+          _isEditingVertex = false;
+        });
+        if (distance < 40) {
+          _editRoomName(clickedRoomIndex);
+        }
+      } else {
+        _pendingSelectedVertex = null;
+        setState(() {
+          _selectedRoomIndex = null;
+          _selectedVertex = null;
+          _isEditingVertex = false;
+        });
+      }
+    }
   }
 
   void _zoomIn() {
@@ -763,15 +850,19 @@ class PlanCanvasState extends State<PlanCanvas> {
           if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging && !_isEditingVertex) {
             setState(() {
               final worldPosition = _vp.screenToWorld(e.localPosition);
-              final snappedPosition = _snapToGrid(worldPosition);
-              _hoverPositionWorldMm = snappedPosition;
+              _hoverPositionWorldMm = _snapToGridAndAngle(worldPosition);
             });
           }
           
-          // Update hovered vertex for visual feedback (when not drawing or editing)
-          if (e.buttons == 0 && _draftRoomVertices == null && !_isEditingVertex) {
+          // Update hovered vertex for visual feedback (only in pan mode, when not drawing or editing)
+          if (e.buttons == 0 && _draftRoomVertices == null && !_isEditingVertex && _isPanMode) {
             setState(() {
               _hoveredVertex = _findVertexAtPosition(e.localPosition);
+            });
+          } else if (!_isPanMode) {
+            // In draw mode, clear hovered vertex
+            setState(() {
+              _hoveredVertex = null;
             });
           }
           
@@ -828,15 +919,23 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleStart: kIsWeb
             ? null
             : (details) {
-                // Check pointer count: 1 = drawing/panning, 2+ = pan/zoom
+                // Check pointer count: 1 = drawing/panning/vertex-edit, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
-                  // Single finger: check if in pan mode
                   if (_isPanMode) {
-                    // Pan mode: start panning
-                    setState(() {
-                      _isPanning = true;
-                      _panStartScreen = details.localFocalPoint;
-                    });
+                    // Pan mode: if a vertex is selected (state or pending from tap), treat this drag as vertex edit
+                    final hasSelectedVertex = (_selectedVertex != null || _pendingSelectedVertex != null) && _draftRoomVertices == null;
+                    if (hasSelectedVertex) {
+                      _scaleGestureIsVertexEdit = true;
+                      final v = _selectedVertex ?? _pendingSelectedVertex;
+                      if (_debugVertexEdit) debugPrint('PlanCanvas: scaleStart → vertex edit (vertex=${v!.roomIndex},${v.vertexIndex})');
+                      _handlePanStart(details.localFocalPoint);
+                    } else {
+                      _scaleGestureIsVertexEdit = false;
+                      if (_debugVertexEdit) debugPrint('PlanCanvas: scaleStart → potential pan (no selected vertex)');
+                      setState(() {
+                        _panStartScreen = details.localFocalPoint;
+                      });
+                    }
                   } else {
                     // Draw mode: start drawing
                     _handlePanStart(details.localFocalPoint);
@@ -851,13 +950,34 @@ class PlanCanvasState extends State<PlanCanvas> {
             : (details) {
                 // Check pointer count: 1 = drawing/panning, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
-                  if (_isPanning) {
+                  // Vertex editing (pan mode): drag to move selected vertex (use sync flag so we see it before setState runs)
+                  if (_scaleGestureIsVertexEdit || _isEditingVertex) {
+                    _lastScalePosition = details.localFocalPoint;
+                    if (_debugVertexEdit && _scaleGestureIsVertexEdit && !_isEditingVertex) debugPrint('PlanCanvas: scaleUpdate → vertex move (sync flag)');
+                    _handlePanUpdate(details.localFocalPoint);
+                  } else if (_isPanning) {
                     // Pan mode: pan the viewport
                     setState(() {
                       _vp.panByScreenDelta(details.focalPointDelta);
                       _lastScalePosition = details.localFocalPoint;
                     });
-                  } else {
+                  } else if (_isPanMode && _panStartScreen != null && !_isPanning) {
+                    // Pan mode: only start panning after finger moves past slop (so tap can select vertex)
+                    final distance = (details.localFocalPoint - _panStartScreen!).distance;
+                    if (distance > _panSlopPx) {
+                      setState(() {
+                        _isPanning = true;
+                        _vp.panByScreenDelta(details.focalPointDelta);
+                        _lastScalePosition = details.localFocalPoint;
+                      });
+                    }
+                  } else if (_isPanning) {
+                    // Pan mode: continue panning (handled in branch above when slop just exceeded)
+                    setState(() {
+                      _vp.panByScreenDelta(details.focalPointDelta);
+                      _lastScalePosition = details.localFocalPoint;
+                    });
+                  } else if (!_isPanMode) {
                     // Draw mode: continue drawing
                     _lastScalePosition = details.localFocalPoint;
                     _handlePanUpdate(details.localFocalPoint);
@@ -881,10 +1001,24 @@ class PlanCanvasState extends State<PlanCanvas> {
             : (_) {
                 // If we were panning, end panning
                 if (_isPanning) {
+                  _scaleGestureIsVertexEdit = false;
+                  _pendingSelectedVertex = null;
                   setState(() {
                     _isPanning = false;
                     _panStartScreen = null;
                   });
+                } else if ((_scaleGestureIsVertexEdit || _isEditingVertex) && _lastScalePosition != null) {
+                  // Vertex edit drag finished
+                  _scaleGestureIsVertexEdit = false;
+                  _pendingSelectedVertex = null;
+                  _handlePanEnd(_lastScalePosition!);
+                  _lastScalePosition = null;
+                } else if (_panStartScreen != null) {
+                  // Single-finger touch in pan mode that didn't move past slop = treat as tap (e.g. vertex select)
+                  _scaleGestureIsVertexEdit = false;
+                  final tapPosition = _panStartScreen!;
+                  setState(() => _panStartScreen = null);
+                  _handleCanvasTap(tapPosition);
                 }
                 // If we were drawing (single finger gesture), finish drawing
                 if (_isDragging && _lastScalePosition != null) {
@@ -901,73 +1035,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           }
         },
         
-        // Single tap: select room or edit name if clicking center
-        onTapDown: (d) {
-          if (_draftRoomVertices == null) {
-            // Check if clicking on a vertex first
-            final clickedVertex = _findVertexAtPosition(d.localPosition);
-            
-            if (clickedVertex != null) {
-              // If clicking the same vertex that's already selected, deselect it
-              if (_selectedVertex != null &&
-                  _selectedVertex!.roomIndex == clickedVertex.roomIndex &&
-                  _selectedVertex!.vertexIndex == clickedVertex.vertexIndex) {
-                setState(() {
-                  _selectedVertex = null;
-                  _isEditingVertex = false;
-                });
-                return;
-              }
-              
-              // Click on different vertex = select it (will start editing when drag starts)
-              setState(() {
-                _selectedVertex = clickedVertex;
-                _selectedRoomIndex = clickedVertex.roomIndex;
-                _isEditingVertex = false; // Reset editing state
-                // Clear any draft state to ensure we're ready to edit
-                _isDragging = false;
-              });
-              return;
-            }
-            
-            // If clicking outside a vertex but we have a selected vertex, deselect it
-            if (_selectedVertex != null) {
-              setState(() {
-                _selectedVertex = null;
-                _isEditingVertex = false;
-              });
-            }
-            
-            // Check for room center or room area
-            final worldPos = _vp.screenToWorld(d.localPosition);
-            final clickedRoomIndex = _findRoomAtPosition(worldPos);
-            if (clickedRoomIndex != null) {
-              final room = _completedRooms[clickedRoomIndex];
-              final center = _getRoomCenter(room.vertices);
-              final centerScreen = _vp.worldToScreen(center);
-              final distance = (d.localPosition - centerScreen).distance;
-              
-              setState(() {
-                _selectedVertex = null; // Deselect vertex when clicking room
-                _selectedRoomIndex = clickedRoomIndex;
-                _isEditingVertex = false;
-              });
-              
-              // Click area: 40px radius (covers button or name text)
-              if (distance < 40) {
-                // Click on center = edit name (call async function outside setState)
-                _editRoomName(clickedRoomIndex);
-              }
-            } else {
-              // Click outside any room = deselect everything
-              setState(() {
-                _selectedRoomIndex = null;
-                _selectedVertex = null;
-                _isEditingVertex = false;
-              });
-            }
-          }
-        },
+        // Single tap: select room or edit name if clicking center, or place roll (web / when tap wins)
+        onTapDown: (d) => _handleCanvasTap(d.localPosition),
         
         // Right-click (or long-press on mobile): show delete option
         onSecondaryTapDown: (d) {
@@ -982,64 +1051,110 @@ class PlanCanvasState extends State<PlanCanvas> {
 
         child: SizedBox.expand(
                 key: ValueKey('plan_painter_${_completedRooms.length}_${_draftRoomVertices?.length ?? 0}'),
-          child: CustomPaint(
-            painter: _PlanPainter(
-              vp: _vp,
-              completedRooms: _safeCopyRooms(_completedRooms),
-              draftRoomVertices: _draftRoomVertices != null 
-                  ? List<Offset>.from(_draftRoomVertices!) 
-                  : null,
-              hoverPositionWorldMm: _hoverPositionWorldMm,
-              useImperial: _useImperial,
-              isDragging: _isDragging,
-              selectedRoomIndex: _selectedRoomIndex,
-              selectedVertex: _selectedVertex,
-              hoveredVertex: _hoveredVertex,
-              showGrid: _showGrid,
+          child: Stack(
+            children: [
+              // Main canvas painter (rooms, grid, etc.)
+              CustomPaint(
+                painter: _PlanPainter(
+                  vp: _vp,
+                  completedRooms: _safeCopyRooms(_completedRooms),
+                  draftRoomVertices: _draftRoomVertices != null 
+                      ? List<Offset>.from(_draftRoomVertices!) 
+                      : null,
+                  hoverPositionWorldMm: _hoverPositionWorldMm,
+                  previewLineAngleDeg: _angleBetweenLinesDeg ?? _currentSegmentAngleDeg,
+                  useImperial: _useImperial,
+                  isDragging: _isDragging,
+                  selectedRoomIndex: _selectedRoomIndex,
+                  selectedVertex: _selectedVertex,
+                  hoveredVertex: _hoveredVertex,
+                  showGrid: _showGrid,
+                ),
+              ),
+            ],
           ),
         ),
       ),
-          ),
+      ),
+      ),
+      // Toolbar positioned at top-left
+      Positioned(
+        top: 8,
+        left: 8,
+        child: PlanToolbar(
+          useImperial: _useImperial,
+          showGrid: _showGrid,
+          isPanMode: _isPanMode,
+          canUndo: _canUndo,
+          canRedo: _canRedo,
+          hasSelectedRoom: _selectedRoomIndex != null,
+          onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
+              ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
+              : null,
+          hasProject: _currentProjectId != null,
+          hasUnsavedChanges: _hasUnsavedChanges,
+          onSave: _saveProject,
+          onToggleUnit: _toggleUnit,
+          onToggleGrid: _toggleGrid,
+          onTogglePanMode: _togglePanMode,
+          onZoomIn: _zoomIn,
+          onZoomOut: _zoomOut,
+          onFitToScreen: _fitToScreen,
+          onUndo: _undo,
+          onRedo: _redo,
         ),
-        ),
-        // Toolbar positioned at top-left
+      ),
+      // Draw toolbar: Lock / Unlock — when locked, snaps to 45° or 90° automatically (only when in draw mode)
+      if (!_isPanMode)
         Positioned(
-          top: 8,
+          top: 64,
           left: 8,
-          child: PlanToolbar(
-            useImperial: _useImperial,
-            showGrid: _showGrid,
-            isPanMode: _isPanMode,
-            canUndo: _canUndo,
-            canRedo: _canRedo,
-            hasSelectedRoom: _selectedRoomIndex != null,
-            onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
-                ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
-                : null,
-            hasProject: _currentProjectId != null,
-            hasUnsavedChanges: _hasUnsavedChanges,
-            onSave: _saveProject,
-            onToggleUnit: _toggleUnit,
-            onToggleGrid: _toggleGrid,
-            onTogglePanMode: _togglePanMode,
-            onZoomIn: _zoomIn,
-            onZoomOut: _zoomOut,
-            onFitToScreen: _fitToScreen,
-            onUndo: _undo,
-            onRedo: _redo,
-          ),
-        ),
-        // Length input number pad (only visible when drawing)
-        if (_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty)
-          Positioned(
-            bottom: 16,
-            right: 16,
-            child: _LengthInputPad(
-              controller: _lengthInputController,
-              useImperial: _useImperial,
-              onChanged: _onLengthInputChanged,
+          child: Material(
+            elevation: 2,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _drawAngleLock = _drawAngleLock == DrawAngleLock.none
+                        ? DrawAngleLock.snap45
+                        : DrawAngleLock.none;
+                  });
+                },
+                icon: Icon(
+                  _drawAngleLock == DrawAngleLock.none ? Icons.lock_open : Icons.lock,
+                  size: 18,
+                ),
+                label: Text(_drawAngleLock == DrawAngleLock.none ? 'Unlock' : 'Lock'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
             ),
           ),
+        ),
+      // Length input number pad (only visible when drawing)
+      ...(_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty
+          ? [
+              Positioned(
+                bottom: 16,
+                right: 16,
+                child: _LengthInputPad(
+                  controller: _lengthInputController,
+                  useImperial: _useImperial,
+                  onChanged: _onLengthInputChanged,
+                ),
+              ),
+            ]
+          : []),
       ],
     );
   }
@@ -1052,6 +1167,78 @@ class PlanCanvasState extends State<PlanCanvas> {
     final snappedX = (worldPositionMm.dx / _gridSpacingMm).round() * _gridSpacingMm;
     final snappedY = (worldPositionMm.dy / _gridSpacingMm).round() * _gridSpacingMm;
     return Offset(snappedX, snappedY);
+  }
+
+  /// Snap a point from [fromMm] toward [toMm] so the angle snaps to 90° or 45° (or return grid-snapped [toMm] if lock is none).
+  /// Keeps the same distance from [fromMm] as [toMm], then snaps to grid.
+  Offset _snapAngleToConstraint(Offset fromMm, Offset toMm, DrawAngleLock lock) {
+    if (lock == DrawAngleLock.none) return _snapToGrid(toMm);
+    final dx = toMm.dx - fromMm.dx;
+    final dy = toMm.dy - fromMm.dy;
+    final distance = math.sqrt(dx * dx + dy * dy);
+    if (distance < 1e-6) return _snapToGrid(toMm);
+    double angleDeg = math.atan2(dy, dx) * (180.0 / math.pi);
+    if (angleDeg < 0) angleDeg += 360.0;
+    double snappedDeg;
+    if (lock == DrawAngleLock.snap90) {
+      snappedDeg = (angleDeg / 90.0).round() * 90.0;
+      if (snappedDeg >= 360) snappedDeg = 0;
+    } else {
+      assert(lock == DrawAngleLock.snap45);
+      snappedDeg = (angleDeg / 45.0).round() * 45.0;
+      if (snappedDeg >= 360) snappedDeg = 0;
+    }
+    final rad = snappedDeg * (math.pi / 180.0);
+    final snapped = Offset(
+      fromMm.dx + distance * math.cos(rad),
+      fromMm.dy + distance * math.sin(rad),
+    );
+    return _snapToGrid(snapped);
+  }
+
+  /// Grid-snap then optionally angle-snap from last draft vertex. Use when updating hover or adding a vertex.
+  Offset _snapToGridAndAngle(Offset worldPositionMm) {
+    final snapped = _snapToGrid(worldPositionMm);
+    if (_drawAngleLock == DrawAngleLock.none) return snapped;
+    if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty) return snapped;
+    return _snapAngleToConstraint(_draftRoomVertices!.last, snapped, _drawAngleLock);
+  }
+
+  /// Current segment angle in degrees (last vertex to hover). Returns null if not drawing or no hover.
+  double? get _currentSegmentAngleDeg {
+    if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty || _hoverPositionWorldMm == null) return null;
+    final from = _draftRoomVertices!.last;
+    final to = _hoverPositionWorldMm!;
+    final dx = to.dx - from.dx;
+    final dy = to.dy - from.dy;
+    if (dx.abs() < 1e-6 && dy.abs() < 1e-6) return null;
+    double deg = math.atan2(dy, dx) * (180.0 / math.pi);
+    if (deg < 0) deg += 360.0;
+    return deg;
+  }
+
+  /// Angle of the second line (preview) relative to the first line (last drawn segment), in degrees [0, 180].
+  /// 0° = same direction; 90° = turn 90° either way; 180° = straight back.
+  double? get _angleBetweenLinesDeg {
+    if (_draftRoomVertices == null || _draftRoomVertices!.length < 2 || _hoverPositionWorldMm == null) return null;
+    final prev = _draftRoomVertices![_draftRoomVertices!.length - 2];
+    final last = _draftRoomVertices!.last;
+    final hover = _hoverPositionWorldMm!;
+    final dir1 = Offset(last.dx - prev.dx, last.dy - prev.dy);
+    final dir2 = Offset(hover.dx - last.dx, hover.dy - last.dy);
+    final l1 = math.sqrt(dir1.dx * dir1.dx + dir1.dy * dir1.dy);
+    final l2 = math.sqrt(dir2.dx * dir2.dx + dir2.dy * dir2.dy);
+    if (l1 < 1e-6 || l2 < 1e-6) return null;
+    final angle1 = math.atan2(dir1.dy, dir1.dx);
+    final angle2 = math.atan2(dir2.dy, dir2.dx);
+    double diffRad = angle2 - angle1;
+    while (diffRad < 0) diffRad += 2 * math.pi;
+    while (diffRad >= 2 * math.pi) diffRad -= 2 * math.pi;
+    double deg = diffRad * (180.0 / math.pi);
+    // Show 0–180° either way (turn left or right gives same magnitude)
+    if (deg > 180.0) deg = 360.0 - deg;
+    // Display complementary angle (e.g. 9° → 171°)
+    return 180.0 - deg;
   }
 
   /// Calculate the center point (centroid) of a polygon.
@@ -1135,35 +1322,42 @@ class PlanCanvasState extends State<PlanCanvas> {
       return;
     }
     
-    // First check if we already have a selected vertex (from tap) - start editing it
-    if (_selectedVertex != null && _draftRoomVertices == null) {
-      setState(() {
-        _isEditingVertex = true;
-        _isDragging = false;
-      });
-      return;
+    // Only allow vertex editing when in pan mode
+    if (_isPanMode) {
+      // Use state or pending (tap may have set pending before rebuild)
+      final vertexToEdit = _selectedVertex ?? _pendingSelectedVertex;
+      if (vertexToEdit != null && _draftRoomVertices == null) {
+        setState(() {
+          _selectedVertex = vertexToEdit;
+          _selectedRoomIndex = vertexToEdit.roomIndex;
+          _isEditingVertex = true;
+          _isDragging = false;
+        });
+        return;
+      }
+      // Otherwise, check if clicking on a vertex to edit
+      final clickedVertex = _findVertexAtPosition(screenPosition);
+      if (clickedVertex != null && _draftRoomVertices == null) {
+        setState(() {
+          _selectedVertex = clickedVertex;
+          _selectedRoomIndex = clickedVertex.roomIndex;
+          _isEditingVertex = true;
+          _isDragging = false;
+        });
+        return;
+      }
     }
     
-    // Otherwise, check if clicking on a vertex to edit
-    final clickedVertex = _findVertexAtPosition(screenPosition);
-    
-    if (clickedVertex != null && _draftRoomVertices == null) {
-      // Start editing this vertex
-      setState(() {
-        _selectedVertex = clickedVertex;
-        _selectedRoomIndex = clickedVertex.roomIndex;
-        _isEditingVertex = true;
-        _isDragging = false;
-      });
-      return;
-    }
+    // In draw mode, or if no vertex clicked: proceed with drawing
+    // This allows drawing over existing room lines when in draw mode
     
     // Otherwise, proceed with normal room drawing
     final worldPosition = _vp.screenToWorld(screenPosition);
     final snappedPosition = _snapToGrid(worldPosition);
     
+    _pendingSelectedVertex = null;
     setState(() {
-      _selectedVertex = null; // Deselect vertex when starting new drawing
+      _selectedVertex = null;
       _isEditingVertex = false;
       
       if (_draftRoomVertices == null) {
@@ -1210,14 +1404,15 @@ class PlanCanvasState extends State<PlanCanvas> {
       return;
     }
     
-    // If editing a vertex, move it
-    if (_isEditingVertex && _selectedVertex != null) {
+    // If editing a vertex, move it (use state or pending so first drag frame works before setState)
+    final vertexToEdit = _selectedVertex ?? _pendingSelectedVertex;
+    if ((_isEditingVertex || _scaleGestureIsVertexEdit) && vertexToEdit != null) {
       final worldPosition = _vp.screenToWorld(screenPosition);
       final snappedPosition = _snapToGrid(worldPosition);
       
       setState(() {
-        final roomIdx = _selectedVertex!.roomIndex;
-        final vertexIdx = _selectedVertex!.vertexIndex;
+        final roomIdx = vertexToEdit.roomIndex;
+        final vertexIdx = vertexToEdit.vertexIndex;
         
         if (roomIdx >= 0 && roomIdx < _completedRooms.length) {
           final room = _completedRooms[roomIdx];
@@ -1253,16 +1448,20 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
-    final snappedPosition = _snapToGrid(worldPosition);
+    final snappedPosition = _snapToGridAndAngle(worldPosition);
     
     setState(() {
-      // Update hover position to show preview line (snapped to grid)
+      // Update hover position to show preview line (snapped to grid and optionally angle)
       // Don't apply length constraint during drawing - user draws freely first
       _hoverPositionWorldMm = snappedPosition;
       
-      // Update hovered vertex for visual feedback
-      final hoveredVertex = _findVertexAtPosition(screenPosition);
-      _hoveredVertex = hoveredVertex;
+      // Update hovered vertex for visual feedback (only in pan mode)
+      if (_isPanMode) {
+        final hoveredVertex = _findVertexAtPosition(screenPosition);
+        _hoveredVertex = hoveredVertex;
+      } else {
+        _hoveredVertex = null;
+      }
     });
   }
 
@@ -1297,7 +1496,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
-    final snappedPosition = _snapToGrid(worldPosition);
+    final snappedPosition = _snapToGridAndAngle(worldPosition);
     
     setState(() {
       _isDragging = false;
@@ -1583,7 +1782,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     }
     return inside;
   }
-  
+
   /// Show a confirmation dialog to delete a room.
   Future<void> _showDeleteRoomDialog(int roomIndex) async {
     if (roomIndex < 0 || roomIndex >= _completedRooms.length) return;
@@ -1915,6 +2114,8 @@ class _PlanPainter extends CustomPainter {
   final List<Room> completedRooms;
   final List<Offset>? draftRoomVertices;
   final Offset? hoverPositionWorldMm;
+  /// When non-null (angle unlocked), draw this angle on the preview line.
+  final double? previewLineAngleDeg;
   final bool useImperial;
   final bool isDragging;
   final int? selectedRoomIndex;
@@ -1927,6 +2128,7 @@ class _PlanPainter extends CustomPainter {
     List<Room>? completedRooms,
     required this.draftRoomVertices,
     required this.hoverPositionWorldMm,
+    this.previewLineAngleDeg,
     required this.useImperial,
     required this.isDragging,
     required this.selectedRoomIndex,
@@ -2398,6 +2600,110 @@ class _PlanPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Draw visual arc showing the angle between two lines.
+  /// [vertexScreen] is the corner point; [prevScreen] and [nextScreen] are the two adjacent points.
+  /// Arc is drawn from the first line to the second line so it always connects both.
+  void _drawAngleArc(Canvas canvas, Offset vertexScreen, Offset prevScreen, Offset nextScreen, double angleDeg) {
+    final toPrev = prevScreen - vertexScreen;
+    final toNext = nextScreen - vertexScreen;
+    final d1 = math.sqrt(toPrev.dx * toPrev.dx + toPrev.dy * toPrev.dy);
+    final d2 = math.sqrt(toNext.dx * toNext.dx + toNext.dy * toNext.dy);
+    if (d1 < 1e-6 || d2 < 1e-6) return;
+    
+    // Normalize direction vectors (pointing away from vertex along each line)
+    final dir1 = Offset(toPrev.dx / d1, toPrev.dy / d1);
+    final dir2 = Offset(toNext.dx / d2, toNext.dy / d2);
+    
+    // Angles in radians: direction of each line from the vertex
+    final angle1 = math.atan2(dir1.dy, dir1.dx);
+    final angle2 = math.atan2(dir2.dy, dir2.dx);
+    
+    // Sweep from angle1 to angle2 (normalized to (-π, π]) so the arc connects both lines exactly
+    double sweep = angle2 - angle1;
+    while (sweep > math.pi) sweep -= 2 * math.pi;
+    while (sweep < -math.pi) sweep += 2 * math.pi;
+    
+    final startAngle = angle1;
+    
+    // Arc radius (visual size)
+    const arcRadius = 18.0;
+    
+    // Create bounding rect for arc (centered at vertex)
+    final rect = Rect.fromCircle(center: vertexScreen, radius: arcRadius);
+    
+    // Draw arc - start at angle1, sweep the correct amount
+    final arcPaint = Paint()
+      ..color = Colors.blue.shade600.withOpacity(0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, startAngle, sweep, false, arcPaint);
+    
+    // Draw small lines from vertex to the actual line directions (at arc radius)
+    // These lines connect the vertex to where the arc should start/end on the actual lines
+    final linePaint = Paint()
+      ..color = Colors.blue.shade600.withOpacity(0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    // Line 1: from vertex along dir1 (first line direction)
+    canvas.drawLine(
+      vertexScreen,
+      Offset(vertexScreen.dx + dir1.dx * arcRadius, vertexScreen.dy + dir1.dy * arcRadius),
+      linePaint,
+    );
+    // Line 2: from vertex along dir2 (second line direction)
+    canvas.drawLine(
+      vertexScreen,
+      Offset(vertexScreen.dx + dir2.dx * arcRadius, vertexScreen.dy + dir2.dy * arcRadius),
+      linePaint,
+    );
+  }
+
+  /// Draw angle label in the space between two lines (at the corner).
+  /// [vertexScreen] is the corner point; [prevScreen] and [nextScreen] are the two adjacent points.
+  void _drawAngleInCorner(Canvas canvas, Offset vertexScreen, Offset prevScreen, Offset nextScreen, double angleDeg) {
+    // Draw visual arc first
+    _drawAngleArc(canvas, vertexScreen, prevScreen, nextScreen, angleDeg);
+    
+    final toPrev = prevScreen - vertexScreen;
+    final toNext = nextScreen - vertexScreen;
+    final d1 = math.sqrt(toPrev.dx * toPrev.dx + toPrev.dy * toPrev.dy);
+    final d2 = math.sqrt(toNext.dx * toNext.dx + toNext.dy * toNext.dy);
+    if (d1 < 1e-6 || d2 < 1e-6) return;
+    // Bisector from vertex into the corner (between the two segments)
+    final out1 = Offset(-toPrev.dx / d1, -toPrev.dy / d1);
+    final out2 = Offset(-toNext.dx / d2, -toNext.dy / d2);
+    final bisector = Offset(out1.dx + out2.dx, out1.dy + out2.dy);
+    final len = math.sqrt(bisector.dx * bisector.dx + bisector.dy * bisector.dy);
+    if (len < 1e-6) return;
+    const offsetPx = 22.0;
+    final pos = Offset(
+      vertexScreen.dx + bisector.dx / len * offsetPx,
+      vertexScreen.dy + bisector.dy / len * offsetPx,
+    );
+    final angleText = '${angleDeg.round()}°';
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: angleText,
+        style: TextStyle(
+          color: Colors.blue.shade800,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          backgroundColor: Colors.white.withOpacity(0.95),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+    textPainter.layout();
+    const pad = 4.0;
+    final w = textPainter.width + pad * 2;
+    final h = textPainter.height + 2;
+    final rect = Rect.fromCenter(center: pos, width: w, height: h);
+    canvas.drawRect(rect, Paint()..color = Colors.white.withOpacity(0.95));
+    textPainter.paint(canvas, pos - Offset(textPainter.width / 2, textPainter.height / 2) + const Offset(0, 1));
+  }
+
   /// Draw the draft room with vertices, lines, and preview line to cursor.
   void _drawDraftRoom(Canvas canvas) {
     if (draftRoomVertices == null || draftRoomVertices!.isEmpty) return;
@@ -2423,6 +2729,29 @@ class _PlanPainter extends CustomPainter {
           _drawDimension(canvas, a, b, distanceMm);
         }
       }
+
+      // Draw angle at each interior corner: second segment relative to first, 0–180° either way
+      for (int i = 1; i < vertices.length - 1; i++) {
+        final prev = vp.worldToScreen(vertices[i - 1]);
+        final vert = vp.worldToScreen(vertices[i]);
+        final next = vp.worldToScreen(vertices[i + 1]);
+        final dir1 = Offset(vertices[i].dx - vertices[i - 1].dx, vertices[i].dy - vertices[i - 1].dy);
+        final dir2 = Offset(vertices[i + 1].dx - vertices[i].dx, vertices[i + 1].dy - vertices[i].dy);
+        final l1 = math.sqrt(dir1.dx * dir1.dx + dir1.dy * dir1.dy);
+        final l2 = math.sqrt(dir2.dx * dir2.dx + dir2.dy * dir2.dy);
+        if (l1 >= 1e-6 && l2 >= 1e-6) {
+          final angle1 = math.atan2(dir1.dy, dir1.dx);
+          final angle2 = math.atan2(dir2.dy, dir2.dx);
+          double diffRad = angle2 - angle1;
+          while (diffRad < 0) diffRad += 2 * math.pi;
+          while (diffRad >= 2 * math.pi) diffRad -= 2 * math.pi;
+          double angleDeg = diffRad * (180.0 / math.pi);
+          if (angleDeg > 180.0) angleDeg = 360.0 - angleDeg;
+          // Display complementary angle (e.g. 9° → 171°)
+          angleDeg = 180.0 - angleDeg;
+          _drawAngleInCorner(canvas, vert, prev, next, angleDeg);
+        }
+      }
     }
 
     // Draw preview line from last vertex to cursor (if hovering or dragging)
@@ -2443,6 +2772,12 @@ class _PlanPainter extends CustomPainter {
       
       // Solid preview line (more visible than dashed)
       canvas.drawLine(lastScreen, hoverScreen, previewPaint);
+      
+      // Draw angle in the corner between last segment and preview line (same style as length on segment)
+      if (previewLineAngleDeg != null && vertices.length >= 2) {
+        final prevScreen = vp.worldToScreen(vertices[vertices.length - 2]);
+        _drawAngleInCorner(canvas, lastScreen, prevScreen, hoverScreen, previewLineAngleDeg!);
+      }
       
       // Draw live measurement on the preview line
       if (isDragging && distanceMm > 10) {
