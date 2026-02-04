@@ -131,8 +131,9 @@ class PlanCanvasState extends State<PlanCanvas> {
   // Screen-space tolerance for clicking on a vertex (in pixels)
   static const double _vertexSelectTolerancePx = 12.0;
   
-  // Grid spacing in millimeters (matches grid drawing)
-  static const double _gridSpacingMm = 100.0; // 10cm = 100mm
+  // Snap spacing in mm: 1 = full mm precision; grid drawing uses adaptive spacing
+  static const double _snapSpacingMm = 1.0; // 1mm snap so you can work in mm and cm
+  static const double _minVertexDistanceMm = 1.0; // minimum 1mm between vertices
 
   @override
   void initState() {
@@ -1049,17 +1050,24 @@ class PlanCanvasState extends State<PlanCanvas> {
           }
         },
 
-        child: SizedBox.expand(
-                key: ValueKey('plan_painter_${_completedRooms.length}_${_draftRoomVertices?.length ?? 0}'),
-          child: Stack(
-            children: [
-              // Main canvas painter (rooms, grid, etc.)
-              CustomPaint(
+        child: LayoutBuilder(
+          key: ValueKey('plan_painter_${_completedRooms.length}_${_draftRoomVertices?.length ?? 0}'),
+          builder: (context, constraints) {
+            final w = constraints.maxWidth.isFinite && constraints.maxWidth < double.infinity
+                ? constraints.maxWidth : 0.0;
+            final h = constraints.maxHeight.isFinite && constraints.maxHeight < double.infinity
+                ? constraints.maxHeight : 0.0;
+            final hasSize = w > 0 && h > 0;
+            return SizedBox(
+              width: hasSize ? w : double.infinity,
+              height: hasSize ? h : double.infinity,
+              child: CustomPaint(
+                size: Size(w, h),
                 painter: _PlanPainter(
                   vp: _vp,
                   completedRooms: _safeCopyRooms(_completedRooms),
-                  draftRoomVertices: _draftRoomVertices != null 
-                      ? List<Offset>.from(_draftRoomVertices!) 
+                  draftRoomVertices: _draftRoomVertices != null
+                      ? List<Offset>.from(_draftRoomVertices!)
                       : null,
                   hoverPositionWorldMm: _hoverPositionWorldMm,
                   previewLineAngleDeg: _angleBetweenLinesDeg ?? _currentSegmentAngleDeg,
@@ -1071,8 +1079,8 @@ class PlanCanvasState extends State<PlanCanvas> {
                   showGrid: _showGrid,
                 ),
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
       ),
@@ -1164,8 +1172,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// This ensures vertices align to the grid for precise floor plan drawing.
   /// Grid spacing is 100mm (10cm).
   Offset _snapToGrid(Offset worldPositionMm) {
-    final snappedX = (worldPositionMm.dx / _gridSpacingMm).round() * _gridSpacingMm;
-    final snappedY = (worldPositionMm.dy / _gridSpacingMm).round() * _gridSpacingMm;
+    final snappedX = (worldPositionMm.dx / _snapSpacingMm).round() * _snapSpacingMm;
+    final snappedY = (worldPositionMm.dy / _snapSpacingMm).round() * _snapSpacingMm;
     return Offset(snappedX, snappedY);
   }
 
@@ -1520,7 +1528,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       
       // Add new vertex at end of drag (draw freely, no length constraint)
       // Prevent duplicate vertices (dragging to same spot)
-      final minDistanceMm = _gridSpacingMm * 0.5; // Minimum half grid spacing between vertices
+      final minDistanceMm = _minVertexDistanceMm; // Minimum distance between vertices
       if (_draftRoomVertices!.isEmpty ||
           (snappedPosition - _draftRoomVertices!.last).distance > minDistanceMm) {
         _draftRoomVertices = [..._draftRoomVertices!, snappedPosition];
@@ -2147,12 +2155,7 @@ class _PlanPainter extends CustomPainter {
       Paint()..color = Colors.white,
     );
 
-      // Draw grid only if enabled
-      if (showGrid) {
-    _drawGrid(canvas, size);
-      }
-
-      // Draw completed rooms (filled polygons with outline)
+      // Draw completed rooms (filled polygons with outline) first
       // Defensive check: ensure completedRooms is a valid, iterable list
       // This handles hot reload issues where the list might become non-iterable or undefined
       try {
@@ -2216,6 +2219,11 @@ class _PlanPainter extends CustomPainter {
       } catch (e) {
         debugPrint('Error drawing draft room: $e');
       }
+
+      // Draw grid on top so it is always visible when enabled
+      if (showGrid && size.width > 0 && size.height > 0) {
+        _drawGrid(canvas, size);
+      }
     } catch (e, stackTrace) {
       // Last resort: draw error message instead of crashing
       debugPrint('Critical error in paint: $e');
@@ -2262,15 +2270,15 @@ class _PlanPainter extends CustomPainter {
         ..style = PaintingStyle.fill,
     );
 
-    // Outline - thicker and different color when selected
+    // Outline - visible stroke (thicker so lines don’t disappear when zoomed)
     final outlinePath = Path();
     outlinePath.addPolygon(screenPoints, true);
     canvas.drawPath(
       outlinePath,
       Paint()
-        ..color = isSelected ? Colors.orange : Colors.blue
+        ..color = isSelected ? Colors.orange : Colors.blue.shade700
         ..style = PaintingStyle.stroke
-        ..strokeWidth = isSelected ? 3 : 2,
+        ..strokeWidth = isSelected ? 3.5 : 2.5,
     );
     
     // Draw room name/label or name button centered on the room
@@ -2713,9 +2721,9 @@ class _PlanPainter extends CustomPainter {
     // Draw lines between vertices with measurements
     if (vertices.length > 1) {
       final linePaint = Paint()
-        ..color = Colors.blue.withOpacity(0.5)
+        ..color = Colors.blue.shade700.withOpacity(0.85)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2;
+        ..strokeWidth = 2.5;
 
       for (int i = 0; i < vertices.length - 1; i++) {
         final a = vp.worldToScreen(vertices[i]);
@@ -2765,9 +2773,9 @@ class _PlanPainter extends CustomPainter {
       final distanceMm = (hoverPositionWorldMm! - lastWorld).distance;
       
       final previewPaint = Paint()
-        ..color = Colors.blue.withOpacity(0.5) // More visible during drag
+        ..color = Colors.blue.shade700.withOpacity(0.9)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0 // Thicker during drag
+        ..strokeWidth = 2.5
         ..strokeCap = StrokeCap.round;
       
       // Solid preview line (more visible than dashed)
@@ -2845,92 +2853,47 @@ class _PlanPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    // Adaptive grid spacing based on zoom level
-    // Target: ~50-100 pixels between grid lines for good visibility
-    final targetScreenSpacing = 80.0; // pixels
-    final targetWorldSpacingMm = targetScreenSpacing * vp.mmPerPx;
-    
-    // Choose appropriate grid spacing from nice round values
-    // Values in millimeters: 1mm, 5mm, 10mm, 50mm, 100mm, 500mm, 1000mm, 5000mm, 10000mm
+    if (size.width <= 0 || size.height <= 0) return;
+    // World-space grid: spacing scales so ~50–80px between lines on screen
+    final targetScreenSpacingPx = 60.0;
+    final targetWorldSpacingMm = targetScreenSpacingPx * vp.mmPerPx;
     final niceSpacings = [1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0];
-    
-    // Find the closest nice spacing that's not too small
-    double gridMm = niceSpacings.first;
+    double gridMm = niceSpacings.last;
     for (final spacing in niceSpacings) {
       if (spacing >= targetWorldSpacingMm * 0.5) {
         gridMm = spacing;
         break;
       }
     }
-    // If we're very zoomed out, use the largest spacing
-    if (targetWorldSpacingMm > niceSpacings.last) {
-      gridMm = niceSpacings.last;
-    }
-    
+
+    final screenSpacingPx = gridMm / vp.mmPerPx;
+    // Scale stroke with zoom: thinner when zoomed in (dense grid), slightly thicker when zoomed out
+    final strokeWidth = (screenSpacingPx / 80).clamp(0.5, 2.0).toDouble();
+
     final topLeftW = vp.screenToWorld(Offset.zero);
     final bottomRightW = vp.screenToWorld(Offset(size.width, size.height));
+    final minX = math.min(topLeftW.dx, bottomRightW.dx) - gridMm;
+    final maxX = math.max(topLeftW.dx, bottomRightW.dx) + gridMm;
+    final minY = math.min(topLeftW.dy, bottomRightW.dy) - gridMm;
+    final maxY = math.max(topLeftW.dy, bottomRightW.dy) + gridMm;
 
-    double startX = (topLeftW.dx / gridMm).floor() * gridMm;
-    double startY = (topLeftW.dy / gridMm).floor() * gridMm;
-
-    // Adjust line opacity and width based on grid size
-    // Larger grids (zoomed out) get lighter lines
-    final screenSpacing = gridMm / vp.mmPerPx;
-    final opacity = (screenSpacing > 200) 
-        ? 0.15  // Very large grids: lighter
-        : (screenSpacing > 100)
-            ? 0.2   // Large grids: medium
-            : 0.25; // Normal grids: standard
-    final lineWidth = (screenSpacing > 200) ? 0.5 : 1.0;
+    double startX = (minX / gridMm).floor() * gridMm;
+    double startY = (minY / gridMm).floor() * gridMm;
 
     final gridPaint = Paint()
-      ..color = Colors.grey.withOpacity(opacity)
-      ..strokeWidth = lineWidth;
+      ..color = Colors.grey.withOpacity(0.35)
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
 
-    // Draw vertical lines
-    for (double x = startX; x <= bottomRightW.dx; x += gridMm) {
-      final a = vp.worldToScreen(Offset(x, topLeftW.dy));
-      final b = vp.worldToScreen(Offset(x, bottomRightW.dy));
+    for (double x = startX; x <= maxX; x += gridMm) {
+      final a = vp.worldToScreen(Offset(x, minY));
+      final b = vp.worldToScreen(Offset(x, maxY));
       canvas.drawLine(a, b, gridPaint);
     }
-    
-    // Draw horizontal lines
-    for (double y = startY; y <= bottomRightW.dy; y += gridMm) {
-      final a = vp.worldToScreen(Offset(topLeftW.dx, y));
-      final b = vp.worldToScreen(Offset(bottomRightW.dx, y));
+    for (double y = startY; y <= maxY; y += gridMm) {
+      final a = vp.worldToScreen(Offset(minX, y));
+      final b = vp.worldToScreen(Offset(maxX, y));
       canvas.drawLine(a, b, gridPaint);
-    }
-    
-    // Optionally draw grid labels (every 5th or 10th line to avoid clutter)
-    final labelInterval = (gridMm >= 1000) ? 1 : (gridMm >= 100) ? 5 : 10;
-    final labelPaint = TextPainter(
-      text: TextSpan(
-        text: _formatGridLabel(gridMm),
-        style: TextStyle(
-          color: Colors.grey.withOpacity(0.6),
-          fontSize: 10,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    labelPaint.layout();
-    
-    // Draw labels at origin and a few key points
-    final labelPoints = [
-      Offset(startX, startY),
-      if (startX + gridMm * labelInterval <= bottomRightW.dx)
-        Offset(startX + gridMm * labelInterval, startY),
-      if (startY + gridMm * labelInterval <= bottomRightW.dy)
-        Offset(startX, startY + gridMm * labelInterval),
-    ];
-    
-    for (final point in labelPoints) {
-      final screenPoint = vp.worldToScreen(point);
-      // Only draw if label is visible on screen
-      if (screenPoint.dx >= -50 && screenPoint.dx <= size.width + 50 &&
-          screenPoint.dy >= -50 && screenPoint.dy <= size.height + 50) {
-        labelPaint.paint(canvas, screenPoint + const Offset(4, 4));
-      }
     }
   }
   

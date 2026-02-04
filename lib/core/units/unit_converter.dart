@@ -36,19 +36,19 @@ class UnitConverter {
     }
   }
 
-  /// Format as metric (mm or cm).
+  /// Format as metric: mm under 1m, then cm with decimals, then m with decimals.
   static String _formatMetric(double mm) {
-    if (mm < 100) {
-      // Use mm for small distances
+    if (mm < 1000) {
+      // Under 1m: show mm
       return '${mm.round()}mm';
-    } else {
-      // Use cm for larger distances
+    } else if (mm < 10000) {
+      // 1000mm–10000mm (1m–10m): show cm with decimals
       final cm = mm / mmPerCm;
-      if (cm % 1 == 0) {
-        return '${cm.round()}cm';
-      } else {
-        return '${cm.toStringAsFixed(1)}cm';
-      }
+      return '${cm.toStringAsFixed(1)}cm';
+    } else {
+      // 10000mm and above (10m+): show m with decimals
+      final m = mm / 1000;
+      return '${m.toStringAsFixed(1)}m';
     }
   }
 
