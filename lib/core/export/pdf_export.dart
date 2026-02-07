@@ -36,72 +36,263 @@ class PdfExportService {
       return _createEmptyPdf(projectName);
     }
 
-    // Calculate bounding box of all rooms
-    final bbox = _calculateBoundingBox(rooms);
-    
-    // Page setup: A4 size in points
-    // A4 = 210mm × 297mm = 595.28 × 841.89 points
-    const pageWidthPt = 595.28; // A4 width in points
-    const pageHeightPt = 841.89; // A4 height in points
-    const marginPt = 56.69; // 20mm margin on all sides
-    
-    final contentWidthPt = pageWidthPt - (marginPt * 2);
-    final contentHeightPt = pageHeightPt - (marginPt * 2);
-    
-    // Calculate scale to fit all rooms on page
-    final roomWidthMm = bbox.maxX - bbox.minX;
-    final roomHeightMm = bbox.maxY - bbox.minY;
-    
-    final roomWidthPt = roomWidthMm * pointPerMm;
-    final roomHeightPt = roomHeightMm * pointPerMm;
-    
-    // Scale to fit with padding
-    final scaleX = contentWidthPt / roomWidthPt;
-    final scaleY = contentHeightPt / roomHeightPt;
-    final scale = (scaleX < scaleY ? scaleX : scaleY) * 0.9; // 90% to add margin
-    
-    // Calculate offset to center the floor plan
-    final scaledWidthPt = roomWidthPt * scale;
-    final scaledHeightPt = roomHeightPt * scale;
-    final offsetX = (contentWidthPt - scaledWidthPt) / 2 + marginPt;
-    final offsetY = (contentHeightPt - scaledHeightPt) / 2 + marginPt;
-    
-    // Render floor plan to image first (most reliable approach)
-    final imageBytes = await _renderFloorPlanToImage(rooms, bbox, scale, useImperial, includeGrid);
-    final pdfImage = pw.MemoryImage(imageBytes);
-    
     // Create PDF document
     final pdf = pw.Document();
-    
+
+    // Page 1: Overview floor plan (all rooms fit on one page)
+    await _addFloorPlanPage(
+      pdf: pdf,
+      rooms: rooms,
+      useImperial: useImperial,
+      projectName: projectName,
+      includeGrid: includeGrid,
+      subtitle: null,
+    );
+
+    // Page 2: Room schedule (area summary)
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                projectName,
+                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Room schedule • ${useImperial ? "Imperial" : "Metric"}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              ),
+              pw.SizedBox(height: 16),
+              _buildRoomScheduleTable(rooms, useImperial),
+            ],
+          );
+        },
+      ),
+    );
+
+    // Extra pages: one page per room for readability (handles rooms far apart)
+    if (rooms.length > 1) {
+      for (int i = 0; i < rooms.length; i++) {
+        final room = rooms[i];
+        final subtitle = room.name != null && room.name!.isNotEmpty ? room.name! : 'Room ${i + 1}';
+        await _addFloorPlanPage(
+          pdf: pdf,
+          rooms: [room],
+          useImperial: useImperial,
+          projectName: projectName,
+          includeGrid: includeGrid,
+          subtitle: subtitle,
+        );
+      }
+    }
+
+    return pdf.save();
+  }
+
+  /// Page setup constants (A4).
+  static const double _pageWidthPt = 595.28;
+  static const double _pageHeightPt = 841.89;
+  static const double _marginPt = 56.69; // ~20mm
+
+  /// Add a floor-plan page for a set of rooms (overview or per-room).
+  static Future<void> _addFloorPlanPage({
+    required pw.Document pdf,
+    required List<Room> rooms,
+    required bool useImperial,
+    required String projectName,
+    required bool includeGrid,
+    required String? subtitle,
+  }) async {
+    final bbox = _calculateBoundingBox(rooms);
+
+    final contentWidthPt = _pageWidthPt - (_marginPt * 2);
+    final contentHeightPt = _pageHeightPt - (_marginPt * 2);
+
+    final roomWidthMm = bbox.maxX - bbox.minX;
+    final roomHeightMm = bbox.maxY - bbox.minY;
+    final roomWidthPt = roomWidthMm * pointPerMm;
+    final roomHeightPt = roomHeightMm * pointPerMm;
+
+    // Fit to page with extra safety padding so nothing gets clipped by the page edge.
+    final scaleX = contentWidthPt / roomWidthPt;
+    final scaleY = contentHeightPt / roomHeightPt;
+    final scale = (scaleX < scaleY ? scaleX : scaleY) * 0.85; // was 0.9
+
+    final scaledWidthPt = roomWidthPt * scale;
+    final scaledHeightPt = roomHeightPt * scale;
+    final offsetX = (contentWidthPt - scaledWidthPt) / 2 + _marginPt;
+    final offsetY = (contentHeightPt - scaledHeightPt) / 2 + _marginPt;
+
+    final imageBytes = await _renderFloorPlanToImage(rooms, bbox, scale, useImperial, includeGrid);
+    final pdfImage = pw.MemoryImage(imageBytes);
+
+    final scaleRatio = scale <= 0 ? 1 : (1 / scale);
+    final scaleInteger = scaleRatio >= 10 ? scaleRatio.round() : scaleRatio.roundToDouble();
+
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         build: (pw.Context context) {
           return pw.Stack(
             children: [
-              // Floor plan as image (centered on page)
               pw.Positioned(
                 left: offsetX,
                 top: offsetY,
-                child: pw.Image(
-                  pdfImage,
-                  width: scaledWidthPt,
-                  height: scaledHeightPt,
+                child: pw.Image(pdfImage, width: scaledWidthPt, height: scaledHeightPt),
+              ),
+              ...rooms.map(
+                (room) => _buildRoomLabelWidget(
+                  room,
+                  bbox,
+                  useImperial,
+                  scale,
+                  offsetX,
+                  offsetY,
+                  pageWidthPt: _pageWidthPt,
+                  pageHeightPt: _pageHeightPt,
+                  marginPt: _marginPt,
                 ),
               ),
-              
-              // Room labels as text widgets (overlay on image)
-              ...rooms.map((room) => _buildRoomLabelWidget(room, bbox, useImperial, scale, offsetX, offsetY)),
-              
-              // Header with project name
               _buildHeader(projectName, useImperial),
+              if (subtitle != null)
+                pw.Positioned(
+                  top: 44,
+                  left: 0,
+                  right: 0,
+                  child: pw.Center(
+                    child: pw.Text(
+                      subtitle,
+                      style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+                    ),
+                  ),
+                ),
+              _buildScaleLegendClamped(
+                offsetX: offsetX,
+                offsetY: offsetY,
+                widthPt: scaledWidthPt,
+                heightPt: scaledHeightPt,
+                scaleInteger: scaleInteger,
+                pageWidthPt: _pageWidthPt,
+                pageHeightPt: _pageHeightPt,
+                marginPt: _marginPt,
+              ),
             ],
           );
         },
       ),
     );
-    
-    return pdf.save();
+  }
+
+  /// Scale legend (e.g. "Scale 1:100") clamped to stay fully on-page.
+  static pw.Widget _buildScaleLegendClamped({
+    required double offsetX,
+    required double offsetY,
+    required double widthPt,
+    required double heightPt,
+    required num scaleInteger,
+    required double pageWidthPt,
+    required double pageHeightPt,
+    required double marginPt,
+  }) {
+    const legendW = 116.0;
+    const legendH = 22.0;
+    const inset = 4.0;
+
+    final desiredLeft = offsetX + widthPt - legendW - inset;
+    final desiredTop = offsetY + heightPt - legendH - inset;
+
+    final left = desiredLeft.clamp(marginPt, pageWidthPt - marginPt - legendW);
+    final top = desiredTop.clamp(marginPt, pageHeightPt - marginPt - legendH);
+
+    return pw.Positioned(
+      left: left,
+      top: top,
+      child: pw.Container(
+        width: legendW,
+        height: legendH,
+        alignment: pw.Alignment.center,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.white,
+          border: pw.Border.all(color: PdfColors.grey300),
+          borderRadius: pw.BorderRadius.circular(4),
+        ),
+        child: pw.FittedBox(
+          fit: pw.BoxFit.scaleDown,
+          child: pw.Text(
+            'Scale 1:${scaleInteger.toStringAsFixed(scaleInteger == scaleInteger.roundToDouble() ? 0 : 1)}',
+            style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Room schedule table: name, area; total at bottom.
+  static pw.Widget _buildRoomScheduleTable(List<Room> rooms, bool useImperial) {
+    double totalArea = 0.0;
+    for (final room in rooms) {
+      totalArea += room.areaMm2;
+    }
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: {
+        0: const pw.FlexColumnWidth(2),
+        1: const pw.FlexColumnWidth(1),
+      },
+      children: [
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE0E0E0)),
+          children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text('Room', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text('Area', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+            ),
+          ],
+        ),
+        ...rooms.map((room) {
+          final name = room.name != null && room.name!.isNotEmpty ? room.name! : 'Room ${rooms.indexOf(room) + 1}';
+          final areaStr = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
+          return pw.TableRow(
+            children: [
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: pw.Text(name, style: const pw.TextStyle(fontSize: 10)),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: pw.Text(areaStr, style: const pw.TextStyle(fontSize: 10)),
+              ),
+            ],
+          );
+        }),
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFF5F5F5)),
+          children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text('Total', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text(
+                UnitConverter.formatArea(totalArea, useImperial: useImperial),
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   /// Calculate bounding box of all rooms.
@@ -324,7 +515,7 @@ class PdfExportService {
           color: const Color(0xFF424242),
           fontSize: 10 * pixelsPerPoint,
           fontWeight: FontWeight.w600,
-          backgroundColor: Colors.white.withOpacity(0.9),
+          backgroundColor: Colors.white.withValues(alpha: 0.9),
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -549,7 +740,17 @@ class PdfExportService {
   }
 
   /// Build room label as a text widget (overlay on top of drawing).
-  static pw.Widget _buildRoomLabelWidget(Room room, _BoundingBox bbox, bool useImperial, double scale, double offsetX, double offsetY) {
+  static pw.Widget _buildRoomLabelWidget(
+    Room room,
+    _BoundingBox bbox,
+    bool useImperial,
+    double scale,
+    double offsetX,
+    double offsetY, {
+    required double pageWidthPt,
+    required double pageHeightPt,
+    required double marginPt,
+  }) {
     if (room.vertices.isEmpty) return pw.SizedBox.shrink();
     
     // Calculate centroid
@@ -575,10 +776,19 @@ class PdfExportService {
       labelText = areaText;
     }
     
+    // Keep labels fully on-page (prevents clipping near edges)
+    // Slightly wider and scale text down if needed to avoid cut-off.
+    const labelW = 140.0;
+    const labelH = 34.0;
+    final left = (pdfX - labelW / 2).clamp(marginPt, pageWidthPt - marginPt - labelW);
+    final top = (pdfY - labelH / 2).clamp(marginPt, pageHeightPt - marginPt - labelH);
+
     return pw.Positioned(
-      left: pdfX - 40, // Approximate centering (will be adjusted by text width)
-      top: pdfY - 10,
+      left: left,
+      top: top,
       child: pw.Container(
+        width: labelW,
+        height: labelH,
         padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: pw.BoxDecoration(
           color: PdfColors.white,
@@ -588,14 +798,19 @@ class PdfExportService {
             width: 1,
           ),
         ),
-        child: pw.Text(
-          labelText,
-          style: pw.TextStyle(
-            color: PdfColor.fromInt(0xFF1976D2), // Darker blue for visibility
-            fontSize: 10,
-            fontWeight: pw.FontWeight.bold,
+        child: pw.Center(
+          child: pw.FittedBox(
+            fit: pw.BoxFit.scaleDown,
+            child: pw.Text(
+              labelText,
+              style: pw.TextStyle(
+                color: PdfColor.fromInt(0xFF1976D2), // Darker blue for visibility
+                fontSize: 10,
+                fontWeight: pw.FontWeight.bold,
+              ),
+              textAlign: pw.TextAlign.center,
+            ),
           ),
-          textAlign: pw.TextAlign.center,
         ),
       ),
     );

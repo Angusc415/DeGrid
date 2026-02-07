@@ -1,7 +1,88 @@
 import 'package:flutter/material.dart';
 
+/// Which section of the toolbar to show (for collapsible corner menus).
+enum ToolbarSection { main, dimensions }
+
+/// Wraps toolbar content in a collapsible menu.
+/// Collapsed: single icon. Expanded: full [child] with a close button to collapse.
+class CollapsibleToolbar extends StatefulWidget {
+  final Widget child;
+  final String tooltip;
+  final IconData icon;
+
+  const CollapsibleToolbar({
+    super.key,
+    required this.child,
+    this.tooltip = 'Menu',
+    this.icon = Icons.menu,
+  });
+
+  @override
+  State<CollapsibleToolbar> createState() => _CollapsibleToolbarState();
+}
+
+class _CollapsibleToolbarState extends State<CollapsibleToolbar> {
+  bool _expanded = false;
+
+  static final _toolbarDecoration = BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(8),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.1),
+        blurRadius: 4,
+        offset: const Offset(0, 2),
+      ),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_expanded) {
+      return Material(
+        elevation: 2,
+        borderRadius: BorderRadius.circular(8),
+        child: Tooltip(
+          message: widget.tooltip,
+          child: InkWell(
+            onTap: () => setState(() => _expanded = true),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(widget.icon),
+            ),
+          ),
+        ),
+      );
+    }
+    return Container(
+      decoration: _toolbarDecoration,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: 'Close menu',
+            child: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => setState(() => _expanded = false),
+            ),
+          ),
+          const VerticalDivider(width: 1, thickness: 1),
+          widget.child,
+        ],
+      ),
+    );
+  }
+}
+
 /// Toolbar widget for the plan canvas with unit toggle, grid toggle, and undo/redo.
+/// When [section] is set, builds only that section (for use in collapsible corner menus).
 class PlanToolbar extends StatelessWidget {
+  final ToolbarSection? section;
   final bool useImperial;
   final bool showGrid;
   final bool isPanMode;
@@ -10,6 +91,8 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback onToggleUnit;
   final VoidCallback onToggleGrid;
   final VoidCallback onTogglePanMode;
+  final VoidCallback onCalibrate;
+  final bool isCalibrating;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onFitToScreen;
@@ -20,9 +103,23 @@ class PlanToolbar extends StatelessWidget {
   final bool hasProject;
   final bool hasUnsavedChanges;
   final VoidCallback? onSave;
+  final bool isMeasureMode;
+  final VoidCallback? onToggleMeasureMode;
+  final bool isAddDimensionMode;
+  final VoidCallback? onToggleAddDimensionMode;
+  final bool hasPlacedDimensions;
+  final VoidCallback? onRemoveLastDimension;
+  final bool isAngleLocked;
+  final VoidCallback? onToggleAngleLock;
+  final bool isDrawing;
+  final bool showNumberPad;
+  final VoidCallback? onToggleNumberPad;
+  final bool drawFromStart;
+  final VoidCallback? onToggleDrawFromStart;
 
   const PlanToolbar({
     super.key,
+    this.section,
     required this.useImperial,
     required this.showGrid,
     required this.isPanMode,
@@ -33,9 +130,24 @@ class PlanToolbar extends StatelessWidget {
     this.hasProject = false,
     this.hasUnsavedChanges = false,
     this.onSave,
+    this.isMeasureMode = false,
+    this.onToggleMeasureMode,
+    this.isAddDimensionMode = false,
+    this.onToggleAddDimensionMode,
+    this.hasPlacedDimensions = false,
+    this.onRemoveLastDimension,
+    this.isAngleLocked = false,
+    this.onToggleAngleLock,
+    this.isDrawing = false,
+    this.showNumberPad = true,
+    this.onToggleNumberPad,
+    this.drawFromStart = false,
+    this.onToggleDrawFromStart,
     required this.onToggleUnit,
     required this.onToggleGrid,
     required this.onTogglePanMode,
+    required this.onCalibrate,
+    this.isCalibrating = false,
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onFitToScreen,
@@ -43,24 +155,25 @@ class PlanToolbar extends StatelessWidget {
     required this.onRedo,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+  static final _toolbarDecoration = BoxDecoration(
+    color: Colors.white,
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.1),
+        blurRadius: 4,
+        offset: const Offset(0, 2),
       ),
+    ],
+  );
+
+  static const _toolbarPadding = EdgeInsets.symmetric(horizontal: 12, vertical: 8);
+
+  Widget _buildMainRow(BuildContext context) {
+    return Padding(
+      padding: _toolbarPadding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Unit toggle button
           Tooltip(
             message: useImperial ? 'Switch to Metric (mm/cm)' : 'Switch to Imperial (ft/in)',
             child: IconButton(
@@ -69,10 +182,7 @@ class PlanToolbar extends StatelessWidget {
               onPressed: onToggleUnit,
             ),
           ),
-          
           const VerticalDivider(width: 8),
-          
-          // Grid visibility toggle
           Tooltip(
             message: showGrid ? 'Hide Grid' : 'Show Grid',
             child: IconButton(
@@ -81,10 +191,7 @@ class PlanToolbar extends StatelessWidget {
               onPressed: onToggleGrid,
             ),
           ),
-          
           const VerticalDivider(width: 8),
-          
-          // Pan mode toggle (mobile: single-finger drag pans when enabled)
           Tooltip(
             message: isPanMode ? 'Pan Mode: Drag to pan (tap to exit)' : 'Draw Mode: Drag to draw (tap to enter pan mode)',
             child: IconButton(
@@ -94,19 +201,24 @@ class PlanToolbar extends StatelessWidget {
               onPressed: onTogglePanMode,
             ),
           ),
-          
+          if (onToggleAngleLock != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: isAngleLocked ? 'Lock angle (snap to 45°/90°)' : 'Unlock angle (free draw)',
+              child: IconButton(
+                icon: Icon(isAngleLocked ? Icons.lock : Icons.lock_open),
+                tooltip: isAngleLocked ? 'Lock' : 'Unlock',
+                onPressed: onToggleAngleLock,
+              ),
+            ),
+          ],
           const VerticalDivider(width: 8),
-          
-          // Zoom controls (custom dropdown that stays open)
           _ZoomMenuButton(
             onZoomIn: onZoomIn,
             onZoomOut: onZoomOut,
             onFitToScreen: onFitToScreen,
           ),
-          
           const VerticalDivider(width: 8),
-          
-          // Undo button
           Tooltip(
             message: 'Undo (Ctrl+Z)',
             child: IconButton(
@@ -115,8 +227,6 @@ class PlanToolbar extends StatelessWidget {
               onPressed: canUndo ? onUndo : null,
             ),
           ),
-          
-          // Redo button
           Tooltip(
             message: 'Redo (Ctrl+Shift+Z)',
             child: IconButton(
@@ -125,11 +235,32 @@ class PlanToolbar extends StatelessWidget {
               onPressed: canRedo ? onRedo : null,
             ),
           ),
-          
+          if (isDrawing && onToggleNumberPad != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: showNumberPad ? 'Hide number pad' : 'Show number pad',
+              child: IconButton(
+                icon: Icon(showNumberPad ? Icons.dialpad : Icons.dialpad_outlined),
+                tooltip: showNumberPad ? 'Hide number pad' : 'Show number pad',
+                onPressed: onToggleNumberPad,
+              ),
+            ),
+          ],
+          if (isDrawing && onToggleDrawFromStart != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: drawFromStart
+                  ? 'Drawing from start (first point). Tap to draw from end.'
+                  : 'Drawing from end (last point). Tap to draw from start.',
+              child: IconButton(
+                icon: const Icon(Icons.compare_arrows),
+                tooltip: drawFromStart ? 'Draw from end' : 'Draw from start',
+                onPressed: onToggleDrawFromStart,
+              ),
+            ),
+          ],
           if (hasSelectedRoom && onDeleteRoom != null) ...[
             const VerticalDivider(width: 8),
-            
-            // Delete room button
             Tooltip(
               message: 'Delete Selected Room (Delete/Backspace)',
               child: IconButton(
@@ -140,11 +271,8 @@ class PlanToolbar extends StatelessWidget {
               ),
             ),
           ],
-          
           if (onSave != null) ...[
             const VerticalDivider(width: 8),
-            
-            // Save button
             Tooltip(
               message: hasProject
                   ? (hasUnsavedChanges ? 'Save Project (Ctrl+S)' : 'No unsaved changes')
@@ -155,12 +283,102 @@ class PlanToolbar extends StatelessWidget {
                   color: hasUnsavedChanges ? Colors.orange : null,
                 ),
                 tooltip: 'Save',
-                // Enable save if there are unsaved changes (even for new projects)
-                // or if there's a project (to allow saving even when no changes, in case user wants to)
                 onPressed: hasUnsavedChanges || hasProject ? onSave : null,
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDimensionsRow(BuildContext context) {
+    return Padding(
+      padding: _toolbarPadding,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              'Dimensions',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ) ?? TextStyle(
+                fontSize: 11,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const VerticalDivider(width: 8),
+          Tooltip(
+            message: isCalibrating
+                ? 'Calibrating: tap 2 points, enter real distance (tap to cancel)'
+                : 'Calibrate scale (tap 2 points, enter real distance)',
+            child: IconButton(
+              icon: Icon(isCalibrating ? Icons.close : Icons.architecture),
+              tooltip: isCalibrating ? 'Cancel Calibrate' : 'Calibrate',
+              color: isCalibrating ? Colors.orange : null,
+              onPressed: onCalibrate,
+            ),
+          ),
+          if (onToggleMeasureMode != null)
+            Tooltip(
+              message: isMeasureMode
+                  ? 'Measure: click and drag (release to clear)'
+                  : 'Measure distance (click and drag, disappears on release)',
+              child: IconButton(
+                icon: const Icon(Icons.straighten),
+                tooltip: isMeasureMode ? 'Exit Measure' : 'Measure',
+                color: isMeasureMode ? Colors.teal : null,
+                onPressed: onToggleMeasureMode,
+              ),
+            ),
+          if (onToggleAddDimensionMode != null)
+            Tooltip(
+              message: isAddDimensionMode
+                  ? 'Add dimension: tap 2 points to place'
+                  : 'Add permanent dimension line',
+              child: IconButton(
+                icon: const Icon(Icons.show_chart),
+                tooltip: isAddDimensionMode ? 'Exit Add Dimension' : 'Add Dimension',
+                color: isAddDimensionMode ? Colors.teal : null,
+                onPressed: onToggleAddDimensionMode,
+              ),
+            ),
+          if (hasPlacedDimensions && onRemoveLastDimension != null)
+            Tooltip(
+              message: 'Remove last dimension',
+              child: IconButton(
+                icon: const Icon(Icons.remove_circle_outline),
+                tooltip: 'Remove last dimension',
+                onPressed: onRemoveLastDimension,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (section == ToolbarSection.main) {
+      return _buildMainRow(context);
+    }
+    if (section == ToolbarSection.dimensions) {
+      return _buildDimensionsRow(context);
+    }
+    // Legacy: both rows in one column (e.g. if section is null)
+    return Container(
+      decoration: _toolbarDecoration,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildMainRow(context),
+          _buildDimensionsRow(context),
         ],
       ),
     );

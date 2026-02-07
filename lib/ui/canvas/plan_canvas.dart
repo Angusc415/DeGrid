@@ -67,6 +67,22 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   /// Draw mode angle lock: lines snap to 90°, 45°, or free angle.
   DrawAngleLock _drawAngleLock = DrawAngleLock.none;
+
+  // Calibration mode (true scale): user taps 2 points then enters real distance.
+  bool _isCalibrating = false;
+  Offset? _calibrationP1Screen;
+  Offset? _calibrationP2Screen;
+
+  // Dimension tools
+  /// Measure tool: temporary line between two points (tap-tap to set, tap again to clear).
+  bool _isMeasureMode = false;
+  Offset? _measureP1World;
+  Offset? _measureP2World;
+  /// Add dimension mode: tap two points to place a permanent dimension.
+  bool _isAddDimensionMode = false;
+  Offset? _addDimensionP1World;
+  /// Placed dimensions (world mm); persisted with project later.
+  final List<({Offset fromMm, Offset toMm})> _placedDimensions = [];
   
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
@@ -100,9 +116,23 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   // Currently drawing a room (null = not drawing)
   List<Offset>? _draftRoomVertices;
-  
+  /// When true, new segments are drawn from the first vertex; when false, from the last.
+  bool _drawFromStart = false;
+
   // Current cursor/hover position for preview line (world-space mm)
   Offset? _hoverPositionWorldMm;
+
+  /// The vertex we're currently drawing from (start or end of draft chain).
+  Offset get _draftDrawingFrom =>
+      _drawFromStart ? _draftRoomVertices!.first : _draftRoomVertices!.last;
+  /// The vertex before [ _draftDrawingFrom ] in draw order (for angle calculation).
+  Offset? get _draftDrawingFromPrev {
+    if (_draftRoomVertices == null || _draftRoomVertices!.length < 2) return null;
+    return _drawFromStart ? _draftRoomVertices![1] : _draftRoomVertices![_draftRoomVertices!.length - 2];
+  }
+  /// The "other" end — used for close detection (drag near this to close).
+  Offset get _draftCloseTarget =>
+      _drawFromStart ? _draftRoomVertices!.last : _draftRoomVertices!.first;
   
   // Drag state: track if we're currently dragging to draw a wall
   bool _isDragging = false;
@@ -118,6 +148,12 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   // Length input for wall segments
   final TextEditingController _lengthInputController = TextEditingController();
+  bool _showNumberPad = true;
+  Offset? _numberPadPosition;
+  final GlobalKey _stackKey = GlobalKey();
+  final GlobalKey _numberPadWrapperKey = GlobalKey();
+  static const double _numberPadApproxWidth = 220;
+  static const double _numberPadApproxHeight = 320;
   double? _desiredLengthMm; // Desired length in mm (null = use dragged length)
   Offset? _originalLastSegmentDirection; // Store original direction when user starts typing
   Offset? _originalSecondToLastVertex; // Store original second-to-last vertex position
@@ -549,6 +585,25 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Handle a single tap on the canvas (vertex select, room select, etc.).
   /// Called from onTapDown (web) and from onScaleEnd when scale gesture was a tap (mobile).
   void _handleCanvasTap(Offset localPosition) {
+    // Calibration tap handling (takes priority over drawing/selecting)
+    if (_isCalibrating) {
+      _handleCalibrationTap(localPosition);
+      return;
+    }
+    // Measure mode: now click-and-drag (handled in scale gesture / pointer events); no tap handling
+    // Add dimension mode: tap two points to place permanent dimension
+    if (_isAddDimensionMode) {
+      final worldPos = _vp.screenToWorld(localPosition);
+      setState(() {
+        if (_addDimensionP1World == null) {
+          _addDimensionP1World = worldPos;
+        } else {
+          _placedDimensions.add((fromMm: _addDimensionP1World!, toMm: worldPos));
+          _addDimensionP1World = null;
+        }
+      });
+      return;
+    }
     if (_draftRoomVertices == null) {
       if (_isPanMode) {
         final clickedVertex = _findVertexAtPosition(localPosition);
@@ -613,6 +668,146 @@ class PlanCanvasState extends State<PlanCanvas> {
           _isEditingVertex = false;
         });
       }
+    }
+  }
+
+  void _toggleCalibration() {
+    setState(() {
+      if (_isCalibrating) {
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+      } else {
+        _isCalibrating = true;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+        // Exit other interaction modes while calibrating
+        _isPanMode = false;
+        _isDragging = false;
+        _isEditingVertex = false;
+        _isMeasureMode = false;
+        _measureP1World = null;
+        _measureP2World = null;
+        _isAddDimensionMode = false;
+        _addDimensionP1World = null;
+      }
+    });
+  }
+
+  void _toggleMeasureMode() {
+    setState(() {
+      if (_isMeasureMode) {
+        _isMeasureMode = false;
+        _measureP1World = null;
+        _measureP2World = null;
+      } else {
+        _isMeasureMode = true;
+        _measureP1World = null;
+        _measureP2World = null;
+        _isAddDimensionMode = false;
+        _addDimensionP1World = null;
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+      }
+    });
+  }
+
+  void _toggleAddDimensionMode() {
+    setState(() {
+      if (_isAddDimensionMode) {
+        _isAddDimensionMode = false;
+        _addDimensionP1World = null;
+      } else {
+        _isAddDimensionMode = true;
+        _addDimensionP1World = null;
+        _isMeasureMode = false;
+        _measureP1World = null;
+        _measureP2World = null;
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+      }
+    });
+  }
+
+  void _removeLastDimension() {
+    if (_placedDimensions.isEmpty) return;
+    setState(() => _placedDimensions.removeLast());
+  }
+
+  Future<void> _handleCalibrationTap(Offset screenPos) async {
+    if (_calibrationP1Screen == null) {
+      setState(() => _calibrationP1Screen = screenPos);
+      return;
+    }
+    if (_calibrationP2Screen == null) {
+      setState(() => _calibrationP2Screen = screenPos);
+      final p1 = _calibrationP1Screen!;
+      final p2 = _calibrationP2Screen!;
+      final pxDist = (p2 - p1).distance;
+      if (pxDist < 3) {
+        // Too small, reset second point
+        setState(() => _calibrationP2Screen = null);
+        return;
+      }
+
+      // Ask user for real-world distance
+      final controller = TextEditingController();
+      final ctx = context;
+      final result = await showDialog<String>(
+        context: ctx,
+        builder: (context) => AlertDialog(
+          title: const Text('Calibrate scale'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: _useImperial ? 'Distance (ft / in)' : 'Distance (mm / cm / m)',
+              hintText: _useImperial ? 'e.g. 10\' 6"' : 'e.g. 3000mm, 300cm, 3m',
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      if (result == null || result.trim().isEmpty) {
+        // Keep calibrating; allow re-enter by tapping again.
+        return;
+      }
+
+      final mm = _parseLengthInput(result);
+      if (mm == null || mm <= 0) {
+        // Invalid; keep points so user can try again
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid distance. Try again.')),
+        );
+        return;
+      }
+
+      final newMmPerPx = mm / pxDist;
+      final zoomFactor = newMmPerPx / _vp.mmPerPx;
+      final focal = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
+
+      setState(() {
+        _vp.zoomAt(zoomFactor: zoomFactor, focalScreenPx: focal);
+        _hasUnsavedChanges = true;
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+      });
+      return;
     }
   }
 
@@ -730,6 +925,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     return Stack(
       children: [
         KeyboardListener(
+          key: _stackKey,
           focusNode: _focusNode,
           autofocus: true,
           onKeyEvent: (event) {
@@ -791,6 +987,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                 _saveHistoryState();
                 setState(() {
                   _draftRoomVertices = null;
+                  _drawFromStart = false;
                   _hoverPositionWorldMm = null;
                 });
               } else {
@@ -843,9 +1040,32 @@ class PlanCanvasState extends State<PlanCanvas> {
           child: Listener(
       behavior: HitTestBehavior.opaque,
 
+            onPointerDown: (e) {
+              if (kIsWeb && _isMeasureMode && e.buttons == 1) {
+                final world = _vp.screenToWorld(e.localPosition);
+                setState(() {
+                  _measureP1World = world;
+                  _measureP2World = world;
+                });
+              }
+            },
+            onPointerUp: (e) {
+              if (kIsWeb && _isMeasureMode) {
+                setState(() {
+                  _measureP1World = null;
+                  _measureP2World = null;
+                });
+              }
+            },
+
             // PAN (web): Shift + left-drag OR right-click drag
             // Also track hover position for preview line (when not actively dragging to draw)
       onPointerMove: (e) {
+          if (kIsWeb && _isMeasureMode && _measureP1World != null && e.buttons == 1) {
+            setState(() {
+              _measureP2World = _vp.screenToWorld(e.localPosition);
+            });
+          }
           // Update hover position for preview line (only when not dragging to draw walls)
           // Pan gestures are handled separately
           if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging && !_isEditingVertex) {
@@ -920,8 +1140,15 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleStart: kIsWeb
             ? null
             : (details) {
-                // Check pointer count: 1 = drawing/panning/vertex-edit, 2+ = pan/zoom
+                // Check pointer count: 1 = drawing/panning/vertex-edit/measure, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
+                  if (_isMeasureMode) {
+                    setState(() {
+                      _measureP1World = _vp.screenToWorld(details.localFocalPoint);
+                      _measureP2World = _vp.screenToWorld(details.localFocalPoint);
+                    });
+                    return;
+                  }
                   if (_isPanMode) {
                     // Pan mode: if a vertex is selected (state or pending from tap), treat this drag as vertex edit
                     final hasSelectedVertex = (_selectedVertex != null || _pendingSelectedVertex != null) && _draftRoomVertices == null;
@@ -949,8 +1176,14 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleUpdate: kIsWeb
             ? null
             : (details) {
-                // Check pointer count: 1 = drawing/panning, 2+ = pan/zoom
+                // Check pointer count: 1 = drawing/panning/measure, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
+                  if (_isMeasureMode && _measureP1World != null) {
+                    setState(() {
+                      _measureP2World = _vp.screenToWorld(details.localFocalPoint);
+                    });
+                    return;
+                  }
                   // Vertex editing (pan mode): drag to move selected vertex (use sync flag so we see it before setState runs)
                   if (_scaleGestureIsVertexEdit || _isEditingVertex) {
                     _lastScalePosition = details.localFocalPoint;
@@ -1000,6 +1233,12 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleEnd: kIsWeb
             ? null
             : (_) {
+                if (_isMeasureMode) {
+                  setState(() {
+                    _measureP1World = null;
+                    _measureP2World = null;
+                  });
+                }
                 // If we were panning, end panning
                 if (_isPanning) {
                   _scaleGestureIsVertexEdit = false;
@@ -1077,6 +1316,15 @@ class PlanCanvasState extends State<PlanCanvas> {
                   selectedVertex: _selectedVertex,
                   hoveredVertex: _hoveredVertex,
                   showGrid: _showGrid,
+                  calibrationP1Screen: _calibrationP1Screen,
+                  calibrationP2Screen: _calibrationP2Screen,
+                  isMeasureMode: _isMeasureMode,
+                  measureP1World: _measureP1World,
+                  measureP2World: _measureP2World,
+                  isAddDimensionMode: _isAddDimensionMode,
+                  addDimensionP1World: _addDimensionP1World,
+                  placedDimensions: List.from(_placedDimensions),
+                  drawFromStart: _drawFromStart,
                 ),
               ),
             );
@@ -1085,80 +1333,145 @@ class PlanCanvasState extends State<PlanCanvas> {
       ),
       ),
       ),
-      // Toolbar positioned at top-left
+      // Top-left: collapsible View & Edit menu (unit, grid, draw, lock angle, zoom, undo, redo, delete, save)
       Positioned(
         top: 8,
         left: 8,
-        child: PlanToolbar(
-          useImperial: _useImperial,
-          showGrid: _showGrid,
-          isPanMode: _isPanMode,
-          canUndo: _canUndo,
-          canRedo: _canRedo,
-          hasSelectedRoom: _selectedRoomIndex != null,
-          onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
-              ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
-              : null,
-          hasProject: _currentProjectId != null,
-          hasUnsavedChanges: _hasUnsavedChanges,
-          onSave: _saveProject,
-          onToggleUnit: _toggleUnit,
-          onToggleGrid: _toggleGrid,
-          onTogglePanMode: _togglePanMode,
-          onZoomIn: _zoomIn,
-          onZoomOut: _zoomOut,
-          onFitToScreen: _fitToScreen,
-          onUndo: _undo,
-          onRedo: _redo,
-        ),
-      ),
-      // Draw toolbar: Lock / Unlock — when locked, snaps to 45° or 90° automatically (only when in draw mode)
-      if (!_isPanMode)
-        Positioned(
-          top: 64,
-          left: 8,
-          child: Material(
-            elevation: 2,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _drawAngleLock = _drawAngleLock == DrawAngleLock.none
-                        ? DrawAngleLock.snap45
-                        : DrawAngleLock.none;
-                  });
-                },
-                icon: Icon(
-                  _drawAngleLock == DrawAngleLock.none ? Icons.lock_open : Icons.lock,
-                  size: 18,
-                ),
-                label: Text(_drawAngleLock == DrawAngleLock.none ? 'Unlock' : 'Lock'),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ),
+        child: CollapsibleToolbar(
+          tooltip: 'View & Edit',
+          icon: Icons.edit_note,
+          child: PlanToolbar(
+            section: ToolbarSection.main,
+            useImperial: _useImperial,
+            showGrid: _showGrid,
+            isPanMode: _isPanMode,
+            canUndo: _canUndo,
+            canRedo: _canRedo,
+            hasSelectedRoom: _selectedRoomIndex != null,
+            onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
+                ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
+                : null,
+            hasProject: _currentProjectId != null,
+            hasUnsavedChanges: _hasUnsavedChanges,
+            onSave: _saveProject,
+            isAngleLocked: _drawAngleLock != DrawAngleLock.none,
+            onToggleAngleLock: _isPanMode
+                ? null
+                : () {
+                    setState(() {
+                      _drawAngleLock = _drawAngleLock == DrawAngleLock.none
+                          ? DrawAngleLock.snap45
+                          : DrawAngleLock.none;
+                    });
+                  },
+            isDrawing: _draftRoomVertices != null && _draftRoomVertices!.isNotEmpty,
+            showNumberPad: _showNumberPad,
+            onToggleNumberPad: () => setState(() => _showNumberPad = !_showNumberPad),
+            drawFromStart: _drawFromStart,
+            onToggleDrawFromStart: () => setState(() => _drawFromStart = !_drawFromStart),
+            onToggleUnit: _toggleUnit,
+            onToggleGrid: _toggleGrid,
+            onTogglePanMode: _togglePanMode,
+            onCalibrate: _toggleCalibration,
+            isCalibrating: _isCalibrating,
+            isMeasureMode: _isMeasureMode,
+            onToggleMeasureMode: _toggleMeasureMode,
+            isAddDimensionMode: _isAddDimensionMode,
+            onToggleAddDimensionMode: _toggleAddDimensionMode,
+            hasPlacedDimensions: _placedDimensions.isNotEmpty,
+            onRemoveLastDimension: _removeLastDimension,
+            onZoomIn: _zoomIn,
+            onZoomOut: _zoomOut,
+            onFitToScreen: _fitToScreen,
+            onUndo: _undo,
+            onRedo: _redo,
           ),
         ),
-      // Length input number pad (only visible when drawing)
-      ...(_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty
+      ),
+      // Bottom-right: collapsible Dimensions menu (calibrate, measure, add dimension, remove last)
+      Positioned(
+        bottom: 8,
+        right: 8,
+        child: CollapsibleToolbar(
+          tooltip: 'Dimensions',
+          icon: Icons.straighten,
+          child: PlanToolbar(
+            section: ToolbarSection.dimensions,
+            useImperial: _useImperial,
+            showGrid: _showGrid,
+            isPanMode: _isPanMode,
+            canUndo: _canUndo,
+            canRedo: _canRedo,
+            hasSelectedRoom: _selectedRoomIndex != null,
+            onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
+                ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
+                : null,
+            hasProject: _currentProjectId != null,
+            hasUnsavedChanges: _hasUnsavedChanges,
+            onSave: _saveProject,
+            isAngleLocked: false,
+            onToggleAngleLock: null,
+            onToggleUnit: _toggleUnit,
+            onToggleGrid: _toggleGrid,
+            onTogglePanMode: _togglePanMode,
+            onCalibrate: _toggleCalibration,
+            isCalibrating: _isCalibrating,
+            isMeasureMode: _isMeasureMode,
+            onToggleMeasureMode: _toggleMeasureMode,
+            isAddDimensionMode: _isAddDimensionMode,
+            onToggleAddDimensionMode: _toggleAddDimensionMode,
+            hasPlacedDimensions: _placedDimensions.isNotEmpty,
+            onRemoveLastDimension: _removeLastDimension,
+            onZoomIn: _zoomIn,
+            onZoomOut: _zoomOut,
+            onFitToScreen: _fitToScreen,
+            onUndo: _undo,
+            onRedo: _redo,
+          ),
+        ),
+      ),
+      // Length input number pad (visible when drawing and not hidden by user); draggable by its top bar
+      ...(_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty && _showNumberPad
           ? [
               Positioned(
-                bottom: 16,
-                right: 16,
-                child: _LengthInputPad(
-                  controller: _lengthInputController,
-                  useImperial: _useImperial,
-                  onChanged: _onLengthInputChanged,
+                left: _numberPadPosition?.dx,
+                top: _numberPadPosition?.dy,
+                bottom: _numberPadPosition == null ? 16 : null,
+                right: _numberPadPosition == null ? 16 : null,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: _numberPadApproxWidth,
+                    maxHeight: _numberPadApproxHeight,
+                  ),
+                  child: _DraggableNumberPadWrapper(
+                    key: _numberPadWrapperKey,
+                    onDragStart: () {
+                      final box = _numberPadWrapperKey.currentContext?.findRenderObject() as RenderBox?;
+                      final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+                      if (box == null || stackBox == null) return;
+                      final topLeftGlobal = box.localToGlobal(Offset.zero);
+                      final topLeftLocal = stackBox.globalToLocal(topLeftGlobal);
+                      setState(() => _numberPadPosition = topLeftLocal);
+                    },
+                    onDragUpdate: (Offset delta) {
+                      if (_numberPadPosition == null) return;
+                      final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+                      if (stackBox == null) return;
+                      final w = stackBox.size.width;
+                      final h = stackBox.size.height;
+                      setState(() {
+                        _numberPadPosition = Offset(
+                          (_numberPadPosition!.dx + delta.dx).clamp(0.0, w - _numberPadApproxWidth),
+                          (_numberPadPosition!.dy + delta.dy).clamp(0.0, h - _numberPadApproxHeight),
+                        );
+                      });
+                    },
+                    child: _LengthInputPad(
+                      controller: _lengthInputController,
+                      useImperial: _useImperial,
+                      onChanged: _onLengthInputChanged,
+                    ),
+                  ),
                 ),
               ),
             ]
@@ -1209,13 +1522,13 @@ class PlanCanvasState extends State<PlanCanvas> {
     final snapped = _snapToGrid(worldPositionMm);
     if (_drawAngleLock == DrawAngleLock.none) return snapped;
     if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty) return snapped;
-    return _snapAngleToConstraint(_draftRoomVertices!.last, snapped, _drawAngleLock);
+    return _snapAngleToConstraint(_draftDrawingFrom, snapped, _drawAngleLock);
   }
 
-  /// Current segment angle in degrees (last vertex to hover). Returns null if not drawing or no hover.
+  /// Current segment angle in degrees (drawing-from vertex to hover). Returns null if not drawing or no hover.
   double? get _currentSegmentAngleDeg {
     if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty || _hoverPositionWorldMm == null) return null;
-    final from = _draftRoomVertices!.last;
+    final from = _draftDrawingFrom;
     final to = _hoverPositionWorldMm!;
     final dx = to.dx - from.dx;
     final dy = to.dy - from.dy;
@@ -1228,9 +1541,9 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Angle of the second line (preview) relative to the first line (last drawn segment), in degrees [0, 180].
   /// 0° = same direction; 90° = turn 90° either way; 180° = straight back.
   double? get _angleBetweenLinesDeg {
-    if (_draftRoomVertices == null || _draftRoomVertices!.length < 2 || _hoverPositionWorldMm == null) return null;
-    final prev = _draftRoomVertices![_draftRoomVertices!.length - 2];
-    final last = _draftRoomVertices!.last;
+    final prev = _draftDrawingFromPrev;
+    if (prev == null || _hoverPositionWorldMm == null) return null;
+    final last = _draftDrawingFrom;
     final hover = _hoverPositionWorldMm!;
     final dir1 = Offset(last.dx - prev.dx, last.dy - prev.dy);
     final dir2 = Offset(hover.dx - last.dx, hover.dy - last.dy);
@@ -1245,6 +1558,9 @@ class PlanCanvasState extends State<PlanCanvas> {
     double deg = diffRad * (180.0 / math.pi);
     // Show 0–180° either way (turn left or right gives same magnitude)
     if (deg > 180.0) deg = 360.0 - deg;
+    // If the user is continuing straight (very small turn), don't draw angle annotation.
+    // This avoids showing an "angle arc" when the segment is essentially straight.
+    if (deg < 2.0) return null;
     // Display complementary angle (e.g. 9° → 171°)
     return 180.0 - deg;
   }
@@ -1380,21 +1696,21 @@ class PlanCanvasState extends State<PlanCanvas> {
         // Save state to history when starting a new draft room
         _saveHistoryState();
       } else {
-        // Check if starting drag near the start vertex (close room)
+        // Check if starting drag near the "other" endpoint (close room)
         if (_draftRoomVertices!.isNotEmpty) {
-          final startScreen = _vp.worldToScreen(_draftRoomVertices!.first);
-          final distance = (screenPosition - startScreen).distance;
+          final closeTargetScreen = _vp.worldToScreen(_draftCloseTarget);
+          final distance = (screenPosition - closeTargetScreen).distance;
           
-          // Close room if starting drag near start AND we have at least 3 vertices
+          // Close room if starting drag near close target AND we have at least 3 vertices
           if (distance < _closeTolerancePx && _draftRoomVertices!.length >= 3) {
             _closeDraftRoom(); // Fire and forget - async call
             return;
           }
         }
         
-        // Start a new wall segment from the last vertex
-        _dragStartPositionWorldMm = _draftRoomVertices!.isNotEmpty 
-            ? _draftRoomVertices!.last 
+        // Start a new wall segment from the current drawing endpoint
+        _dragStartPositionWorldMm = _draftRoomVertices!.isNotEmpty
+            ? _draftDrawingFrom
             : worldPosition;
         _isDragging = true;
         _hoverPositionWorldMm = worldPosition;
@@ -1513,25 +1829,26 @@ class PlanCanvasState extends State<PlanCanvas> {
         return;
       }
       
-      // Check if ending near the start vertex (close room)
-      // Use snapped position for close detection to be more forgiving
+      // Check if ending near the "other" endpoint (close room)
       if (_draftRoomVertices!.isNotEmpty && _draftRoomVertices!.length >= 3) {
-        final startScreen = _vp.worldToScreen(_draftRoomVertices!.first);
-        final distance = (screenPosition - startScreen).distance;
-        
+        final closeTargetScreen = _vp.worldToScreen(_draftCloseTarget);
+        final distance = (screenPosition - closeTargetScreen).distance;
         if (distance < _closeTolerancePx) {
-          _closeDraftRoom(); // Fire and forget - async call
+          _closeDraftRoom();
           _dragStartPositionWorldMm = null;
           return;
         }
       }
       
-      // Add new vertex at end of drag (draw freely, no length constraint)
-      // Prevent duplicate vertices (dragging to same spot)
-      final minDistanceMm = _minVertexDistanceMm; // Minimum distance between vertices
+      // Add new vertex at current drawing end; prevent duplicate vertices
+      final minDistanceMm = _minVertexDistanceMm;
       if (_draftRoomVertices!.isEmpty ||
-          (snappedPosition - _draftRoomVertices!.last).distance > minDistanceMm) {
-        _draftRoomVertices = [..._draftRoomVertices!, snappedPosition];
+          (snappedPosition - _draftDrawingFrom).distance > minDistanceMm) {
+        if (_drawFromStart) {
+          _draftRoomVertices = [snappedPosition, ..._draftRoomVertices!];
+        } else {
+          _draftRoomVertices = [..._draftRoomVertices!, snappedPosition];
+        }
         _hoverPositionWorldMm = snappedPosition;
         // Save state to history after adding a vertex to draft room
         _saveHistoryState();
@@ -1570,6 +1887,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       
       // Clear draft
       _draftRoomVertices = null;
+      _drawFromStart = false;
       _hoverPositionWorldMm = null;
       _lengthInputController.clear();
       _desiredLengthMm = null;
@@ -1619,15 +1937,12 @@ class PlanCanvasState extends State<PlanCanvas> {
         
         // Adjust the last segment to match the entered length in real-time
         if (_draftRoomVertices != null && _draftRoomVertices!.length >= 2) {
+          final secondToLast = _draftDrawingFromPrev!;
+          final lastVertex = _draftDrawingFrom;
           // Store original direction and second-to-last vertex on first input
           if (_originalLastSegmentDirection == null || _originalSecondToLastVertex == null) {
-            final secondToLast = _draftRoomVertices![_draftRoomVertices!.length - 2];
-            final lastVertex = _draftRoomVertices!.last;
-            
-            // Calculate and store original direction
             final direction = lastVertex - secondToLast;
             final directionLength = direction.distance;
-            
             if (directionLength > 0) {
               _originalSecondToLastVertex = secondToLast;
               _originalLastSegmentDirection = Offset(
@@ -1635,24 +1950,22 @@ class PlanCanvasState extends State<PlanCanvas> {
                 direction.dy / directionLength,
               );
             } else {
-              // Can't determine direction, skip
               return;
             }
           }
-          
-          // Use stored original direction for all updates
           if (_originalLastSegmentDirection != null && _originalSecondToLastVertex != null) {
-            // Calculate new position for last vertex using original direction
             final newLastVertex = _originalSecondToLastVertex! + Offset(
               _originalLastSegmentDirection!.dx * _desiredLengthMm!,
               _originalLastSegmentDirection!.dy * _desiredLengthMm!,
             );
-            
-            // Update the last vertex in real-time
             final updatedVertices = List<Offset>.from(_draftRoomVertices!);
-            updatedVertices[updatedVertices.length - 1] = _snapToGrid(newLastVertex);
+            if (_drawFromStart) {
+              updatedVertices[0] = _snapToGrid(newLastVertex);
+            } else {
+              updatedVertices[updatedVertices.length - 1] = _snapToGrid(newLastVertex);
+            }
             _draftRoomVertices = updatedVertices;
-            _hoverPositionWorldMm = updatedVertices.last;
+            _hoverPositionWorldMm = _drawFromStart ? updatedVertices.first : updatedVertices.last;
             
             // Mark as unsaved (but don't save to history on every keystroke - too many states)
             _hasUnsavedChanges = true;
@@ -1862,6 +2175,50 @@ class PlanCanvasState extends State<PlanCanvas> {
       // Save state to history after room name change
       _saveHistoryState();
     });
+  }
+}
+
+/// Wraps the number pad with a draggable title bar (tap-hold and drag the top to move).
+class _DraggableNumberPadWrapper extends StatelessWidget {
+  final VoidCallback onDragStart;
+  final ValueChanged<Offset> onDragUpdate;
+  final Widget child;
+
+  const _DraggableNumberPadWrapper({
+    super.key,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => onDragStart(),
+          onPanUpdate: (d) => onDragUpdate(d.delta),
+          child: Container(
+            height: 28,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.drag_handle,
+                size: 20,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+        ),
+        child,
+      ],
+    );
   }
 }
 
@@ -2130,6 +2487,15 @@ class _PlanPainter extends CustomPainter {
   final ({int roomIndex, int vertexIndex})? selectedVertex;
   final ({int roomIndex, int vertexIndex})? hoveredVertex;
   final bool showGrid;
+  final Offset? calibrationP1Screen;
+  final Offset? calibrationP2Screen;
+  final bool isMeasureMode;
+  final Offset? measureP1World;
+  final Offset? measureP2World;
+  final bool isAddDimensionMode;
+  final Offset? addDimensionP1World;
+  final List<({Offset fromMm, Offset toMm})> placedDimensions;
+  final bool drawFromStart;
 
   _PlanPainter({
     required this.vp,
@@ -2143,7 +2509,17 @@ class _PlanPainter extends CustomPainter {
     this.selectedVertex,
     this.hoveredVertex,
     required this.showGrid,
-  }) : completedRooms = completedRooms ?? [];
+    this.calibrationP1Screen,
+    this.calibrationP2Screen,
+    this.isMeasureMode = false,
+    this.measureP1World,
+    this.measureP2World,
+    this.isAddDimensionMode = false,
+    this.addDimensionP1World,
+    List<({Offset fromMm, Offset toMm})>? placedDimensions,
+    this.drawFromStart = false,
+  })  : completedRooms = completedRooms ?? [],
+        placedDimensions = placedDimensions ?? [];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2223,6 +2599,72 @@ class _PlanPainter extends CustomPainter {
       // Draw grid on top so it is always visible when enabled
       if (showGrid && size.width > 0 && size.height > 0) {
         _drawGrid(canvas, size);
+      }
+
+      // Placed dimensions (permanent)
+      for (final d in placedDimensions) {
+        final startScreen = vp.worldToScreen(d.fromMm);
+        final endScreen = vp.worldToScreen(d.toMm);
+        final distanceMm = (d.toMm - d.fromMm).distance;
+        _drawDimension(canvas, startScreen, endScreen, distanceMm, isDashed: true);
+      }
+
+      // Measure mode: temporary dimension line
+      if (isMeasureMode && measureP1World != null && measureP2World != null) {
+        final startScreen = vp.worldToScreen(measureP1World!);
+        final endScreen = vp.worldToScreen(measureP2World!);
+        final distanceMm = (measureP2World! - measureP1World!).distance;
+        _drawDimension(canvas, startScreen, endScreen, distanceMm, isTemporary: true);
+      } else if (isMeasureMode && measureP1World != null) {
+        final p1Screen = vp.worldToScreen(measureP1World!);
+        final dotPaint = Paint()
+          ..color = Colors.teal
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(p1Screen, 6, dotPaint);
+      }
+
+      // Add dimension mode: preview line from first point to hover
+      if (isAddDimensionMode && addDimensionP1World != null && hoverPositionWorldMm != null) {
+        final startScreen = vp.worldToScreen(addDimensionP1World!);
+        final endScreen = vp.worldToScreen(hoverPositionWorldMm!);
+        final distanceMm = (hoverPositionWorldMm! - addDimensionP1World!).distance;
+        _drawDimension(canvas, startScreen, endScreen, distanceMm, isTemporary: true);
+      } else if (isAddDimensionMode && addDimensionP1World != null) {
+        final p1Screen = vp.worldToScreen(addDimensionP1World!);
+        final dotPaint = Paint()
+          ..color = Colors.teal
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(p1Screen, 6, dotPaint);
+      }
+
+      // Calibration overlay (two tapped points + line)
+      if (calibrationP1Screen != null) {
+        final p1 = calibrationP1Screen!;
+        final paintPts = Paint()
+          ..color = Colors.orange
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(p1, 6, paintPts);
+
+        if (calibrationP2Screen != null) {
+          final p2 = calibrationP2Screen!;
+          canvas.drawCircle(p2, 6, paintPts);
+          final linePaint = Paint()
+            ..color = Colors.orange
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2;
+          canvas.drawLine(p1, p2, linePaint);
+        }
+
+        // Hint text
+        final textPainter = TextPainter(
+          text: const TextSpan(
+            text: 'Calibrate: tap 2 points',
+            style: TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(canvas, const Offset(12, 12));
       }
     } catch (e, stackTrace) {
       // Last resort: draw error message instead of crashing
@@ -2545,8 +2987,28 @@ class _PlanPainter extends CustomPainter {
     }
   }
   
+  /// Draw a dashed/dotted line between two points (for temporary dimension styling).
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint,
+      {double dashLength = 5, double gapLength = 4}) {
+    final path = Path()..moveTo(start.dx, start.dy)..lineTo(end.dx, end.dy);
+    for (final metric in path.computeMetrics()) {
+      double distance = 0;
+      while (distance < metric.length) {
+        final segmentLength =
+            (distance + dashLength <= metric.length) ? dashLength : metric.length - distance;
+        if (segmentLength > 0) {
+          final segment = metric.extractPath(distance, distance + segmentLength);
+          canvas.drawPath(segment, paint);
+        }
+        distance += dashLength + gapLength;
+      }
+    }
+  }
+
   /// Draw a dimension line with measurement text for a wall segment.
-  void _drawDimension(Canvas canvas, Offset start, Offset end, double distanceMm) {
+  /// When [isTemporary] is true, uses teal color and dotted lines for measure/add-dimension preview.
+  /// When [isDashed] is true (e.g. permanent placed dimensions), uses grey color and dotted lines.
+  void _drawDimension(Canvas canvas, Offset start, Offset end, double distanceMm, {bool isTemporary = false, bool isDashed = false}) {
     // Calculate midpoint and perpendicular offset for dimension line
     final midpoint = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
     final wallVector = end - start;
@@ -2561,20 +3023,33 @@ class _PlanPainter extends CustomPainter {
     final dimensionLineStart = midpoint + perp * offsetDistance;
     final dimensionLineEnd = midpoint - perp * offsetDistance;
     
+    final lineColor = isTemporary ? Colors.teal : Colors.grey.withOpacity(0.6);
+    final extColor = isTemporary ? Colors.teal.withOpacity(0.6) : Colors.grey.withOpacity(0.4);
+    final useDashed = isTemporary || isDashed;
+    
     // Draw dimension line (perpendicular to wall)
     final dimLinePaint = Paint()
-      ..color = Colors.grey.withOpacity(0.6)
+      ..color = lineColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    canvas.drawLine(dimensionLineStart, dimensionLineEnd, dimLinePaint);
+      ..strokeWidth = isTemporary ? 2 : 1;
+    if (useDashed) {
+      _drawDashedLine(canvas, dimensionLineStart, dimensionLineEnd, dimLinePaint);
+    } else {
+      canvas.drawLine(dimensionLineStart, dimensionLineEnd, dimLinePaint);
+    }
     
     // Draw extension lines (from wall to dimension line)
     final extLinePaint = Paint()
-      ..color = Colors.grey.withOpacity(0.4)
+      ..color = extColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.5;
-    canvas.drawLine(start, dimensionLineStart, extLinePaint);
-    canvas.drawLine(end, dimensionLineStart, extLinePaint);
+      ..strokeWidth = isTemporary ? 1 : 0.5;
+    if (useDashed) {
+      _drawDashedLine(canvas, start, dimensionLineStart, extLinePaint);
+      _drawDashedLine(canvas, end, dimensionLineStart, extLinePaint);
+    } else {
+      canvas.drawLine(start, dimensionLineStart, extLinePaint);
+      canvas.drawLine(end, dimensionLineStart, extLinePaint);
+    }
     
     // Format measurement text
     final measurementText = UnitConverter.formatDistance(distanceMm, useImperial: useImperial);
@@ -2584,7 +3059,7 @@ class _PlanPainter extends CustomPainter {
       text: TextSpan(
         text: measurementText,
         style: TextStyle(
-          color: Colors.grey.shade700,
+          color: isTemporary ? Colors.teal.shade700 : Colors.grey.shade700,
           fontSize: 12,
           fontWeight: FontWeight.w500,
           backgroundColor: Colors.white.withOpacity(0.8),
@@ -2762,14 +3237,11 @@ class _PlanPainter extends CustomPainter {
       }
     }
 
-    // Draw preview line from last vertex to cursor (if hovering or dragging)
-    // During drag, show line from drag start; when hovering, show from last vertex
+    // Draw preview line from current drawing endpoint to cursor
     if (hoverPositionWorldMm != null && vertices.isNotEmpty) {
-      final lastWorld = vertices.last;
+      final lastWorld = drawFromStart ? vertices.first : vertices.last;
       final lastScreen = vp.worldToScreen(lastWorld);
       final hoverScreen = vp.worldToScreen(hoverPositionWorldMm!);
-      
-      // Calculate distance of current segment in mm
       final distanceMm = (hoverPositionWorldMm! - lastWorld).distance;
       
       final previewPaint = Paint()
@@ -2781,9 +3253,9 @@ class _PlanPainter extends CustomPainter {
       // Solid preview line (more visible than dashed)
       canvas.drawLine(lastScreen, hoverScreen, previewPaint);
       
-      // Draw angle in the corner between last segment and preview line (same style as length on segment)
       if (previewLineAngleDeg != null && vertices.length >= 2) {
-        final prevScreen = vp.worldToScreen(vertices[vertices.length - 2]);
+        final prevWorld = drawFromStart ? vertices[1] : vertices[vertices.length - 2];
+        final prevScreen = vp.worldToScreen(prevWorld);
         _drawAngleInCorner(canvas, lastScreen, prevScreen, hoverScreen, previewLineAngleDeg!);
       }
       
@@ -2843,12 +3315,25 @@ class _PlanPainter extends CustomPainter {
 
     // Draw vertices as circles
     final vertexPaint = Paint()..color = Colors.blue;
-    final startVertexPaint = Paint()..color = Colors.green; // First vertex is green
-    
+    final startVertexPaint = Paint()..color = Colors.green; // First vertex (first placed) is green
+    final drawingFromIndex = drawFromStart ? 0 : vertices.length - 1;
+
     for (int i = 0; i < vertices.length; i++) {
       final screenPos = vp.worldToScreen(vertices[i]);
       final paint = (i == 0) ? startVertexPaint : vertexPaint;
       canvas.drawCircle(screenPos, 5, paint);
+    }
+
+    // Indicator for "drawing from" vertex: ring + slight emphasis
+    if (vertices.length >= 1) {
+      final fromScreen = vp.worldToScreen(vertices[drawingFromIndex]);
+      final ringPaint = Paint()
+        ..color = Colors.orange
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3;
+      canvas.drawCircle(fromScreen, 9, ringPaint);
+      final innerPaint = Paint()..color = Colors.orange.withOpacity(0.3);
+      canvas.drawCircle(fromScreen, 7, innerPaint);
     }
   }
 
