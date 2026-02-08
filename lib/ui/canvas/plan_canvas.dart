@@ -1340,6 +1340,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         child: CollapsibleToolbar(
           tooltip: 'View & Edit',
           icon: Icons.edit_note,
+          initialExpanded: true,
           child: PlanToolbar(
             section: ToolbarSection.main,
             useImperial: _useImperial,
@@ -1368,7 +1369,11 @@ class PlanCanvasState extends State<PlanCanvas> {
             showNumberPad: _showNumberPad,
             onToggleNumberPad: () => setState(() => _showNumberPad = !_showNumberPad),
             drawFromStart: _drawFromStart,
-            onToggleDrawFromStart: () => setState(() => _drawFromStart = !_drawFromStart),
+            onToggleDrawFromStart: () => setState(() {
+              _drawFromStart = !_drawFromStart;
+              // Clear hover so we don't draw a misleading preview line from new endpoint to stale cursor
+              _hoverPositionWorldMm = null;
+            }),
             onToggleUnit: _toggleUnit,
             onToggleGrid: _toggleGrid,
             onTogglePanMode: _togglePanMode,
@@ -1395,6 +1400,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         child: CollapsibleToolbar(
           tooltip: 'Dimensions',
           icon: Icons.straighten,
+          initialExpanded: false,
           child: PlanToolbar(
             section: ToolbarSection.dimensions,
             useImperial: _useImperial,
@@ -1436,8 +1442,8 @@ class PlanCanvasState extends State<PlanCanvas> {
               Positioned(
                 left: _numberPadPosition?.dx,
                 top: _numberPadPosition?.dy,
-                bottom: _numberPadPosition == null ? 16 : null,
                 right: _numberPadPosition == null ? 16 : null,
+                bottom: _numberPadPosition == null ? 60 : null,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: _numberPadApproxWidth,

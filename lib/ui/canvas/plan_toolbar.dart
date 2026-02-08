@@ -9,12 +9,14 @@ class CollapsibleToolbar extends StatefulWidget {
   final Widget child;
   final String tooltip;
   final IconData icon;
+  final bool initialExpanded;
 
   const CollapsibleToolbar({
     super.key,
     required this.child,
     this.tooltip = 'Menu',
     this.icon = Icons.menu,
+    this.initialExpanded = false,
   });
 
   @override
@@ -22,7 +24,13 @@ class CollapsibleToolbar extends StatefulWidget {
 }
 
 class _CollapsibleToolbarState extends State<CollapsibleToolbar> {
-  bool _expanded = false;
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initialExpanded;
+  }
 
   static final _toolbarDecoration = BoxDecoration(
     color: Colors.white,
