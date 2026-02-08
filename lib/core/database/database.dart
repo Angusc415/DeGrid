@@ -7,10 +7,20 @@ import 'database_stub.dart'
 
 part 'database.g.dart';
 
+/// Folders table - organizes projects into folders (file-system style)
+class Folders extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 255)();
+  IntColumn get parentId => integer().nullable().references(Folders, #id, onDelete: KeyAction.cascade)();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  IntColumn get orderIndex => integer().withDefault(const Constant(0))();
+}
+
 /// Projects table - stores project metadata
 class Projects extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text().withLength(min: 1, max: 255)();
+  IntColumn get folderId => integer().nullable().references(Folders, #id, onDelete: KeyAction.setNull)();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
   BoolColumn get useImperial => boolean().withDefault(const Constant(false))();
@@ -28,12 +38,12 @@ class Rooms extends Table {
 }
 
 /// Main database class
-@DriftDatabase(tables: [Projects, Rooms])
+@DriftDatabase(tables: [Folders, Projects, Rooms])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration {
@@ -49,6 +59,10 @@ class AppDatabase extends _$AppDatabase {
           // Remove carpet/roll planning tables (if they exist from schema 3)
           await m.database.customStatement('DROP TABLE IF EXISTS roll_plans');
           await m.database.customStatement('DROP TABLE IF EXISTS rolls');
+        }
+        if (from < 5) {
+          await m.createTable(folders);
+          await m.addColumn(projects, projects.folderId);
         }
       },
     );

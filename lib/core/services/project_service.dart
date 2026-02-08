@@ -15,11 +15,66 @@ class ProjectService {
 
   /// Get all projects (without rooms).
   /// Returns a list of project summaries.
-  Future<List<Project>> getAllProjects() async {
+  /// If [folderId] is provided, returns only projects in that folder.
+  /// If [folderId] is 0, returns only projects at root (no folder).
+  Future<List<Project>> getAllProjects({int? folderId}) async {
     final query = _db.select(_db.projects)
       ..orderBy([(p) => OrderingTerm.desc(p.updatedAt)]);
     
+    if (folderId != null) {
+      if (folderId == 0) {
+        query..where((p) => p.folderId.isNull());
+      } else {
+        query..where((p) => p.folderId.equals(folderId));
+      }
+    }
+    
     return await query.get();
+  }
+
+  /// Get all folders, optionally filtered by parent.
+  /// [parentId] null = root folders only; [parentId] = id = children of that folder.
+  Future<List<Folder>> getFolders({int? parentId}) async {
+    final query = _db.select(_db.folders)
+      ..orderBy([(f) => OrderingTerm.asc(f.orderIndex), (f) => OrderingTerm.asc(f.name)]);
+    
+    if (parentId == null) {
+      query..where((f) => f.parentId.isNull());
+    } else {
+      query..where((f) => f.parentId.equals(parentId));
+    }
+    
+    return await query.get();
+  }
+
+  /// Create a new folder.
+  Future<int> createFolder({required String name, int? parentId}) async {
+    return await _db.into(_db.folders).insert(
+      FoldersCompanion.insert(
+        name: name,
+        parentId: Value(parentId),
+      ),
+    );
+  }
+
+  /// Delete a folder. Projects in the folder move to root (folderId set null).
+  Future<void> deleteFolder(int id) async {
+    await (_db.update(_db.projects)..where((p) => p.folderId.equals(id)))
+        .write(const ProjectsCompanion(folderId: Value(null)));
+    await (_db.delete(_db.folders)..where((f) => f.id.equals(id))).go();
+  }
+
+  /// Move a project to a folder. [folderId] null = root.
+  Future<void> moveProjectToFolder(int projectId, int? folderId) async {
+    await (_db.update(_db.projects)..where((p) => p.id.equals(projectId)))
+        .write(ProjectsCompanion(folderId: Value(folderId), updatedAt: Value(DateTime.now())));
+  }
+
+  /// Move a folder to a new parent. [newParentId] null = root.
+  /// Caller must ensure newParentId is not the folder itself or a descendant (to avoid cycles).
+  Future<void> moveFolderToFolder(int folderId, int? newParentId) async {
+    await (_db.update(_db.folders)..where((f) => f.id.equals(folderId)))
+        .write(FoldersCompanion(parentId: Value(newParentId)));
   }
 
   /// Get a single project with all its rooms.
@@ -73,6 +128,7 @@ class ProjectService {
     required List<Room> rooms,
     required PlanViewport viewport,
     bool useImperial = false,
+    int? folderId,
   }) async {
     // Serialize viewport state
     final viewportState = PlanViewportState.fromViewport(viewport);
@@ -81,6 +137,7 @@ class ProjectService {
     // Insert project
     final projectCompanion = ProjectsCompanion.insert(
       name: name,
+      folderId: Value(folderId),
       useImperial: Value(useImperial),
       viewportJson: Value(viewportJson),
     );
@@ -162,6 +219,7 @@ class ProjectService {
     required List<Room> rooms,
     required PlanViewport viewport,
     bool useImperial = false,
+    int? folderId,
   }) async {
     try {
       if (id == null) {
@@ -172,6 +230,7 @@ class ProjectService {
           rooms: rooms,
           viewport: viewport,
           useImperial: useImperial,
+          folderId: folderId,
         );
         debugPrint('Created project with ID: $projectId');
         return projectId;
