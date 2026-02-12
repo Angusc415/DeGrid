@@ -453,6 +453,28 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _backgroundImagePathMeta =
+      const VerificationMeta('backgroundImagePath');
+  @override
+  late final GeneratedColumn<String> backgroundImagePath =
+      GeneratedColumn<String>(
+        'background_image_path',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _backgroundImageJsonMeta =
+      const VerificationMeta('backgroundImageJson');
+  @override
+  late final GeneratedColumn<String> backgroundImageJson =
+      GeneratedColumn<String>(
+        'background_image_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -462,6 +484,8 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     updatedAt,
     useImperial,
     viewportJson,
+    backgroundImagePath,
+    backgroundImageJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -522,6 +546,24 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         ),
       );
     }
+    if (data.containsKey('background_image_path')) {
+      context.handle(
+        _backgroundImagePathMeta,
+        backgroundImagePath.isAcceptableOrUnknown(
+          data['background_image_path']!,
+          _backgroundImagePathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('background_image_json')) {
+      context.handle(
+        _backgroundImageJsonMeta,
+        backgroundImageJson.isAcceptableOrUnknown(
+          data['background_image_json']!,
+          _backgroundImageJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -559,6 +601,14 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.string,
         data['${effectivePrefix}viewport_json'],
       ),
+      backgroundImagePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}background_image_path'],
+      ),
+      backgroundImageJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}background_image_json'],
+      ),
     );
   }
 
@@ -576,6 +626,8 @@ class Project extends DataClass implements Insertable<Project> {
   final DateTime updatedAt;
   final bool useImperial;
   final String? viewportJson;
+  final String? backgroundImagePath;
+  final String? backgroundImageJson;
   const Project({
     required this.id,
     required this.name,
@@ -584,6 +636,8 @@ class Project extends DataClass implements Insertable<Project> {
     required this.updatedAt,
     required this.useImperial,
     this.viewportJson,
+    this.backgroundImagePath,
+    this.backgroundImageJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -598,6 +652,12 @@ class Project extends DataClass implements Insertable<Project> {
     map['use_imperial'] = Variable<bool>(useImperial);
     if (!nullToAbsent || viewportJson != null) {
       map['viewport_json'] = Variable<String>(viewportJson);
+    }
+    if (!nullToAbsent || backgroundImagePath != null) {
+      map['background_image_path'] = Variable<String>(backgroundImagePath);
+    }
+    if (!nullToAbsent || backgroundImageJson != null) {
+      map['background_image_json'] = Variable<String>(backgroundImageJson);
     }
     return map;
   }
@@ -615,6 +675,12 @@ class Project extends DataClass implements Insertable<Project> {
       viewportJson: viewportJson == null && nullToAbsent
           ? const Value.absent()
           : Value(viewportJson),
+      backgroundImagePath: backgroundImagePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(backgroundImagePath),
+      backgroundImageJson: backgroundImageJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(backgroundImageJson),
     );
   }
 
@@ -631,6 +697,12 @@ class Project extends DataClass implements Insertable<Project> {
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       useImperial: serializer.fromJson<bool>(json['useImperial']),
       viewportJson: serializer.fromJson<String?>(json['viewportJson']),
+      backgroundImagePath: serializer.fromJson<String?>(
+        json['backgroundImagePath'],
+      ),
+      backgroundImageJson: serializer.fromJson<String?>(
+        json['backgroundImageJson'],
+      ),
     );
   }
   @override
@@ -644,6 +716,8 @@ class Project extends DataClass implements Insertable<Project> {
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'useImperial': serializer.toJson<bool>(useImperial),
       'viewportJson': serializer.toJson<String?>(viewportJson),
+      'backgroundImagePath': serializer.toJson<String?>(backgroundImagePath),
+      'backgroundImageJson': serializer.toJson<String?>(backgroundImageJson),
     };
   }
 
@@ -655,6 +729,8 @@ class Project extends DataClass implements Insertable<Project> {
     DateTime? updatedAt,
     bool? useImperial,
     Value<String?> viewportJson = const Value.absent(),
+    Value<String?> backgroundImagePath = const Value.absent(),
+    Value<String?> backgroundImageJson = const Value.absent(),
   }) => Project(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -663,6 +739,12 @@ class Project extends DataClass implements Insertable<Project> {
     updatedAt: updatedAt ?? this.updatedAt,
     useImperial: useImperial ?? this.useImperial,
     viewportJson: viewportJson.present ? viewportJson.value : this.viewportJson,
+    backgroundImagePath: backgroundImagePath.present
+        ? backgroundImagePath.value
+        : this.backgroundImagePath,
+    backgroundImageJson: backgroundImageJson.present
+        ? backgroundImageJson.value
+        : this.backgroundImageJson,
   );
   Project copyWithCompanion(ProjectsCompanion data) {
     return Project(
@@ -677,6 +759,12 @@ class Project extends DataClass implements Insertable<Project> {
       viewportJson: data.viewportJson.present
           ? data.viewportJson.value
           : this.viewportJson,
+      backgroundImagePath: data.backgroundImagePath.present
+          ? data.backgroundImagePath.value
+          : this.backgroundImagePath,
+      backgroundImageJson: data.backgroundImageJson.present
+          ? data.backgroundImageJson.value
+          : this.backgroundImageJson,
     );
   }
 
@@ -689,7 +777,9 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('useImperial: $useImperial, ')
-          ..write('viewportJson: $viewportJson')
+          ..write('viewportJson: $viewportJson, ')
+          ..write('backgroundImagePath: $backgroundImagePath, ')
+          ..write('backgroundImageJson: $backgroundImageJson')
           ..write(')'))
         .toString();
   }
@@ -703,6 +793,8 @@ class Project extends DataClass implements Insertable<Project> {
     updatedAt,
     useImperial,
     viewportJson,
+    backgroundImagePath,
+    backgroundImageJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -714,7 +806,9 @@ class Project extends DataClass implements Insertable<Project> {
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.useImperial == this.useImperial &&
-          other.viewportJson == this.viewportJson);
+          other.viewportJson == this.viewportJson &&
+          other.backgroundImagePath == this.backgroundImagePath &&
+          other.backgroundImageJson == this.backgroundImageJson);
 }
 
 class ProjectsCompanion extends UpdateCompanion<Project> {
@@ -725,6 +819,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<DateTime> updatedAt;
   final Value<bool> useImperial;
   final Value<String?> viewportJson;
+  final Value<String?> backgroundImagePath;
+  final Value<String?> backgroundImageJson;
   const ProjectsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -733,6 +829,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
     this.viewportJson = const Value.absent(),
+    this.backgroundImagePath = const Value.absent(),
+    this.backgroundImageJson = const Value.absent(),
   });
   ProjectsCompanion.insert({
     this.id = const Value.absent(),
@@ -742,6 +840,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
     this.viewportJson = const Value.absent(),
+    this.backgroundImagePath = const Value.absent(),
+    this.backgroundImageJson = const Value.absent(),
   }) : name = Value(name);
   static Insertable<Project> custom({
     Expression<int>? id,
@@ -751,6 +851,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<DateTime>? updatedAt,
     Expression<bool>? useImperial,
     Expression<String>? viewportJson,
+    Expression<String>? backgroundImagePath,
+    Expression<String>? backgroundImageJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -760,6 +862,10 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       if (updatedAt != null) 'updated_at': updatedAt,
       if (useImperial != null) 'use_imperial': useImperial,
       if (viewportJson != null) 'viewport_json': viewportJson,
+      if (backgroundImagePath != null)
+        'background_image_path': backgroundImagePath,
+      if (backgroundImageJson != null)
+        'background_image_json': backgroundImageJson,
     });
   }
 
@@ -771,6 +877,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<DateTime>? updatedAt,
     Value<bool>? useImperial,
     Value<String?>? viewportJson,
+    Value<String?>? backgroundImagePath,
+    Value<String?>? backgroundImageJson,
   }) {
     return ProjectsCompanion(
       id: id ?? this.id,
@@ -780,6 +888,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       updatedAt: updatedAt ?? this.updatedAt,
       useImperial: useImperial ?? this.useImperial,
       viewportJson: viewportJson ?? this.viewportJson,
+      backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
+      backgroundImageJson: backgroundImageJson ?? this.backgroundImageJson,
     );
   }
 
@@ -807,6 +917,16 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     if (viewportJson.present) {
       map['viewport_json'] = Variable<String>(viewportJson.value);
     }
+    if (backgroundImagePath.present) {
+      map['background_image_path'] = Variable<String>(
+        backgroundImagePath.value,
+      );
+    }
+    if (backgroundImageJson.present) {
+      map['background_image_json'] = Variable<String>(
+        backgroundImageJson.value,
+      );
+    }
     return map;
   }
 
@@ -819,7 +939,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('useImperial: $useImperial, ')
-          ..write('viewportJson: $viewportJson')
+          ..write('viewportJson: $viewportJson, ')
+          ..write('backgroundImagePath: $backgroundImagePath, ')
+          ..write('backgroundImageJson: $backgroundImageJson')
           ..write(')'))
         .toString();
   }
@@ -1626,6 +1748,8 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
       Value<String?> viewportJson,
+      Value<String?> backgroundImagePath,
+      Value<String?> backgroundImageJson,
     });
 typedef $$ProjectsTableUpdateCompanionBuilder =
     ProjectsCompanion Function({
@@ -1636,6 +1760,8 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
       Value<String?> viewportJson,
+      Value<String?> backgroundImagePath,
+      Value<String?> backgroundImageJson,
     });
 
 final class $$ProjectsTableReferences
@@ -1715,6 +1841,16 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<String> get viewportJson => $composableBuilder(
     column: $table.viewportJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get backgroundImagePath => $composableBuilder(
+    column: $table.backgroundImagePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get backgroundImageJson => $composableBuilder(
+    column: $table.backgroundImageJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1806,6 +1942,16 @@ class $$ProjectsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get backgroundImagePath => $composableBuilder(
+    column: $table.backgroundImagePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get backgroundImageJson => $composableBuilder(
+    column: $table.backgroundImageJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$FoldersTableOrderingComposer get folderId {
     final $$FoldersTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -1858,6 +2004,16 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<String> get viewportJson => $composableBuilder(
     column: $table.viewportJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get backgroundImagePath => $composableBuilder(
+    column: $table.backgroundImagePath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get backgroundImageJson => $composableBuilder(
+    column: $table.backgroundImageJson,
     builder: (column) => column,
   );
 
@@ -1945,6 +2101,8 @@ class $$ProjectsTableTableManager
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
                 Value<String?> viewportJson = const Value.absent(),
+                Value<String?> backgroundImagePath = const Value.absent(),
+                Value<String?> backgroundImageJson = const Value.absent(),
               }) => ProjectsCompanion(
                 id: id,
                 name: name,
@@ -1953,6 +2111,8 @@ class $$ProjectsTableTableManager
                 updatedAt: updatedAt,
                 useImperial: useImperial,
                 viewportJson: viewportJson,
+                backgroundImagePath: backgroundImagePath,
+                backgroundImageJson: backgroundImageJson,
               ),
           createCompanionCallback:
               ({
@@ -1963,6 +2123,8 @@ class $$ProjectsTableTableManager
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
                 Value<String?> viewportJson = const Value.absent(),
+                Value<String?> backgroundImagePath = const Value.absent(),
+                Value<String?> backgroundImageJson = const Value.absent(),
               }) => ProjectsCompanion.insert(
                 id: id,
                 name: name,
@@ -1971,6 +2133,8 @@ class $$ProjectsTableTableManager
                 updatedAt: updatedAt,
                 useImperial: useImperial,
                 viewportJson: viewportJson,
+                backgroundImagePath: backgroundImagePath,
+                backgroundImageJson: backgroundImageJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(

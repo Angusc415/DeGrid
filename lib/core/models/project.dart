@@ -11,6 +11,8 @@ class ProjectModel {
   final bool useImperial;
   final List<Room> rooms;
   final PlanViewportState? viewportState;
+  final String? backgroundImagePath;
+  final BackgroundImageState? backgroundImageState;
 
   ProjectModel({
     this.id,
@@ -20,6 +22,8 @@ class ProjectModel {
     this.useImperial = false,
     required this.rooms,
     this.viewportState,
+    this.backgroundImagePath,
+    this.backgroundImageState,
   });
 
   /// Create a copy with updated fields.
@@ -31,6 +35,8 @@ class ProjectModel {
     bool? useImperial,
     List<Room>? rooms,
     PlanViewportState? viewportState,
+    String? backgroundImagePath,
+    BackgroundImageState? backgroundImageState,
   }) {
     return ProjectModel(
       id: id ?? this.id,
@@ -40,6 +46,53 @@ class ProjectModel {
       useImperial: useImperial ?? this.useImperial,
       rooms: rooms ?? this.rooms,
       viewportState: viewportState ?? this.viewportState,
+      backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
+      backgroundImageState: backgroundImageState ?? this.backgroundImageState,
+    );
+  }
+}
+
+/// State for the floor plan background image (position and scale in world mm).
+class BackgroundImageState {
+  final double offsetX;
+  final double offsetY;
+  final double scaleMmPerPixel;
+  final double opacity;
+
+  BackgroundImageState({
+    this.offsetX = 0,
+    this.offsetY = 0,
+    this.scaleMmPerPixel = 1,
+    this.opacity = 0.7,
+  });
+
+  BackgroundImageState copyWith({
+    double? offsetX,
+    double? offsetY,
+    double? scaleMmPerPixel,
+    double? opacity,
+  }) {
+    return BackgroundImageState(
+      offsetX: offsetX ?? this.offsetX,
+      offsetY: offsetY ?? this.offsetY,
+      scaleMmPerPixel: scaleMmPerPixel ?? this.scaleMmPerPixel,
+      opacity: opacity ?? this.opacity,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'offsetX': offsetX,
+        'offsetY': offsetY,
+        'scaleMmPerPixel': scaleMmPerPixel,
+        'opacity': opacity,
+      };
+
+  factory BackgroundImageState.fromJson(Map<String, dynamic> json) {
+    return BackgroundImageState(
+      offsetX: (json['offsetX'] as num?)?.toDouble() ?? 0,
+      offsetY: (json['offsetY'] as num?)?.toDouble() ?? 0,
+      scaleMmPerPixel: (json['scaleMmPerPixel'] as num?)?.toDouble() ?? 1,
+      opacity: (json['opacity'] as num?)?.toDouble() ?? 0.7,
     );
   }
 }

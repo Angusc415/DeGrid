@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
-import 'dart:ui';
+import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'viewport.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint, defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
+import '../../core/background_image_io.dart';
 import '../../core/geometry/room.dart';
 import '../../core/units/unit_converter.dart';
 import '../../core/database/database.dart';
@@ -50,6 +55,11 @@ class PlanCanvasState extends State<PlanCanvas> {
   bool _hasUnsavedChanges = false;
   bool _isLoading = false;
 
+  // Floor plan background image (Phase 1: import, store path, draw)
+  String? _backgroundImagePath;
+  BackgroundImageState? _backgroundImageState;
+  ui.Image? _backgroundImage;
+
   // Completed rooms (polygons)
   final List<Room> _completedRooms = [];
   
@@ -73,11 +83,15 @@ class PlanCanvasState extends State<PlanCanvas> {
   Offset? _calibrationP1Screen;
   Offset? _calibrationP2Screen;
 
+  /// Move floorplan mode: drag to reposition the background image (offset).
+  bool _isMoveFloorplanMode = false;
+  bool _isMovingFloorplan = false;
+
   // Dimension tools
   /// Measure tool: temporary line between two points (tap-tap to set, tap again to clear).
   bool _isMeasureMode = false;
-  Offset? _measureP1World;
-  Offset? _measureP2World;
+  final List<Offset> _measurePointsWorld = [];
+  Offset? _measureCurrentWorld; // live point while dragging to add next segment
   /// Add dimension mode: tap two points to place a permanent dimension.
   bool _isAddDimensionMode = false;
   Offset? _addDimensionP1World;
@@ -281,11 +295,15 @@ class PlanCanvasState extends State<PlanCanvas> {
             _vp.mmPerPx = restoredViewport.mmPerPx;
             _vp.worldOriginMm = restoredViewport.worldOriginMm;
           }
-          
+          _backgroundImagePath = project.backgroundImagePath;
+          _backgroundImageState = project.backgroundImageState;
+          _backgroundImage = null; // Loaded asynchronously below
           _hasUnsavedChanges = false;
           _isLoading = false;
         });
-        
+        if (project.backgroundImagePath != null && !kIsWeb) {
+          _loadBackgroundImageFromPath(project.backgroundImagePath!);
+        }
         // Notify parent of rooms change
         widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
         
@@ -304,6 +322,86 @@ class PlanCanvasState extends State<PlanCanvas> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading project: $e')),
         );
+      }
+    }
+  }
+
+  static const String _backgroundImageDir = 'degrid_backgrounds';
+
+  Future<void> _loadBackgroundImageFromPath(String relativePath) async {
+    if (kIsWeb) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final fullPath = path.join(dir.path, relativePath);
+      final bytes = await readBackgroundImageBytes(fullPath);
+      if (bytes == null || !mounted) return;
+      final image = await decodeImageFromList(bytes);
+      if (!mounted) return;
+      setState(() {
+        _backgroundImage?.dispose();
+        _backgroundImage = image;
+      });
+    } catch (e) {
+      debugPrint('PlanCanvas: failed to load background image: $e');
+    }
+  }
+
+  Future<void> _importFloorplanImage() async {
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Import floorplan is not supported on web. Use a native app.')),
+        );
+      }
+      return;
+    }
+    if (_currentProjectId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Open or create a project first to import a floorplan.')),
+        );
+      }
+      return;
+    }
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        // `allowedExtensions` is only valid with `FileType.custom`.
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png'],
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      Uint8List? bytes = file.bytes;
+      if (bytes == null && file.path != null) {
+        bytes = await readBackgroundImageBytes(file.path!);
+      }
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not read image file')));
+        return;
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final bgDir = path.join(dir.path, _backgroundImageDir);
+      await ensureBackgroundImageDir(bgDir);
+      final ext = path.extension(file.name).isEmpty ? '.png' : path.extension(file.name);
+      final name = 'bg_${_currentProjectId ?? 0}_${DateTime.now().millisecondsSinceEpoch}$ext';
+      final relativePath = path.join(_backgroundImageDir, name);
+      final destPath = path.join(dir.path, relativePath);
+      await writeBackgroundImageBytes(destPath, bytes);
+      if (!mounted) return;
+      setState(() {
+        _backgroundImagePath = relativePath;
+        _backgroundImageState ??= BackgroundImageState();
+        _hasUnsavedChanges = true;
+      });
+      await _loadBackgroundImageFromPath(relativePath);
+      await _saveProject();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Floorplan image imported')));
+      }
+    } catch (e) {
+      debugPrint('Import floorplan error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Import failed: $e')));
       }
     }
   }
@@ -396,6 +494,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         rooms: _completedRooms,
         viewport: _vp,
         useImperial: _useImperial,
+        backgroundImagePath: _backgroundImagePath,
+        backgroundImageState: _backgroundImageState,
       );
       debugPrint('Project saved successfully with ID: $projectId');
 
@@ -681,15 +781,31 @@ class PlanCanvasState extends State<PlanCanvas> {
         _isCalibrating = true;
         _calibrationP1Screen = null;
         _calibrationP2Screen = null;
+        _isMoveFloorplanMode = false;
+        _isMovingFloorplan = false;
+        _panStartScreen = null;
         // Exit other interaction modes while calibrating
         _isPanMode = false;
         _isDragging = false;
         _isEditingVertex = false;
         _isMeasureMode = false;
-        _measureP1World = null;
-        _measureP2World = null;
+        _measurePointsWorld.clear();
+        _measureCurrentWorld = null;
         _isAddDimensionMode = false;
         _addDimensionP1World = null;
+      }
+    });
+  }
+
+  void _toggleMoveFloorplanMode() {
+    setState(() {
+      _isMoveFloorplanMode = !_isMoveFloorplanMode;
+      if (_isMoveFloorplanMode) {
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+        _isMovingFloorplan = false;
+        _panStartScreen = null;
       }
     });
   }
@@ -698,12 +814,12 @@ class PlanCanvasState extends State<PlanCanvas> {
     setState(() {
       if (_isMeasureMode) {
         _isMeasureMode = false;
-        _measureP1World = null;
-        _measureP2World = null;
+        _measurePointsWorld.clear();
+        _measureCurrentWorld = null;
       } else {
         _isMeasureMode = true;
-        _measureP1World = null;
-        _measureP2World = null;
+        _measurePointsWorld.clear();
+        _measureCurrentWorld = null;
         _isAddDimensionMode = false;
         _addDimensionP1World = null;
         _isCalibrating = false;
@@ -722,8 +838,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         _isAddDimensionMode = true;
         _addDimensionP1World = null;
         _isMeasureMode = false;
-        _measureP1World = null;
-        _measureP2World = null;
+        _measurePointsWorld.clear();
+        _measureCurrentWorld = null;
         _isCalibrating = false;
         _calibrationP1Screen = null;
         _calibrationP2Screen = null;
@@ -734,6 +850,16 @@ class PlanCanvasState extends State<PlanCanvas> {
   void _removeLastDimension() {
     if (_placedDimensions.isEmpty) return;
     setState(() => _placedDimensions.removeLast());
+  }
+
+  /// Convert a screen point to image pixel coordinates using current background image state.
+  Offset? _screenToBackgroundImagePixel(Offset screenPx) {
+    if (_backgroundImageState == null) return null;
+    final world = _vp.screenToWorld(screenPx);
+    final s = _backgroundImageState!.scaleMmPerPixel;
+    final ox = _backgroundImageState!.offsetX;
+    final oy = _backgroundImageState!.offsetY;
+    return Offset((world.dx - ox) / s, (world.dy - oy) / s);
   }
 
   Future<void> _handleCalibrationTap(Offset screenPos) async {
@@ -747,12 +873,91 @@ class PlanCanvasState extends State<PlanCanvas> {
       final p2 = _calibrationP2Screen!;
       final pxDist = (p2 - p1).distance;
       if (pxDist < 3) {
-        // Too small, reset second point
         setState(() => _calibrationP2Screen = null);
         return;
       }
 
-      // Ask user for real-world distance
+      // When a floorplan image is present, calibrate its scale (and set origin at first point).
+      if (_backgroundImage != null && _backgroundImageState != null) {
+        final p1Pixel = _screenToBackgroundImagePixel(p1);
+        final p2Pixel = _screenToBackgroundImagePixel(p2);
+        if (p1Pixel == null || p2Pixel == null) {
+          setState(() => _calibrationP2Screen = null);
+          return;
+        }
+        final pixelDist = (p2Pixel - p1Pixel).distance;
+        if (pixelDist < 1) {
+          setState(() => _calibrationP2Screen = null);
+          return;
+        }
+
+        final controller = TextEditingController();
+        final ctx = context;
+        final result = await showDialog<String>(
+          context: ctx,
+          builder: (context) => AlertDialog(
+            title: const Text('Calibrate floorplan scale'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: _useImperial ? 'Real distance (ft / in)' : 'Real distance (mm / cm / m)',
+                hintText: _useImperial ? 'e.g. 10\' 6"' : 'e.g. 3000mm, 300cm, 3m',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        );
+
+        if (!mounted) return;
+        if (result == null || result.trim().isEmpty) {
+          setState(() => _calibrationP2Screen = null);
+          return;
+        }
+
+        final mm = _parseLengthInput(result);
+        if (mm == null || mm <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid distance. Try again.')),
+          );
+          setState(() => _calibrationP2Screen = null);
+          return;
+        }
+
+        final newScale = mm / pixelDist;
+        final newOffsetX = -p1Pixel.dx * newScale;
+        final newOffsetY = -p1Pixel.dy * newScale;
+        setState(() {
+          _backgroundImageState = _backgroundImageState!.copyWith(
+            scaleMmPerPixel: newScale,
+            offsetX: newOffsetX,
+            offsetY: newOffsetY,
+          );
+          _hasUnsavedChanges = true;
+          _isCalibrating = false;
+          _calibrationP1Screen = null;
+          _calibrationP2Screen = null;
+        });
+        await _saveProject();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Floorplan scale set. You can trace rooms on top.')),
+          );
+        }
+        return;
+      }
+
+      // No background image: calibrate viewport scale (existing behavior)
       final controller = TextEditingController();
       final ctx = context;
       final result = await showDialog<String>(
@@ -782,14 +987,10 @@ class PlanCanvasState extends State<PlanCanvas> {
       );
 
       if (!mounted) return;
-      if (result == null || result.trim().isEmpty) {
-        // Keep calibrating; allow re-enter by tapping again.
-        return;
-      }
+      if (result == null || result.trim().isEmpty) return;
 
       final mm = _parseLengthInput(result);
       if (mm == null || mm <= 0) {
-        // Invalid; keep points so user can try again
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Invalid distance. Try again.')),
         );
@@ -807,7 +1008,6 @@ class PlanCanvasState extends State<PlanCanvas> {
         _calibrationP1Screen = null;
         _calibrationP2Screen = null;
       });
-      return;
     }
   }
 
@@ -1044,16 +1244,22 @@ class PlanCanvasState extends State<PlanCanvas> {
               if (kIsWeb && _isMeasureMode && e.buttons == 1) {
                 final world = _vp.screenToWorld(e.localPosition);
                 setState(() {
-                  _measureP1World = world;
-                  _measureP2World = world;
+                  if (_measurePointsWorld.isEmpty) {
+                    _measurePointsWorld.add(world);
+                    _measureCurrentWorld = world;
+                  } else {
+                    _measureCurrentWorld = world;
+                  }
                 });
               }
             },
             onPointerUp: (e) {
               if (kIsWeb && _isMeasureMode) {
                 setState(() {
-                  _measureP1World = null;
-                  _measureP2World = null;
+                  if (_measureCurrentWorld != null) {
+                    _measurePointsWorld.add(_measureCurrentWorld!);
+                    _measureCurrentWorld = null;
+                  }
                 });
               }
             },
@@ -1061,9 +1267,9 @@ class PlanCanvasState extends State<PlanCanvas> {
             // PAN (web): Shift + left-drag OR right-click drag
             // Also track hover position for preview line (when not actively dragging to draw)
       onPointerMove: (e) {
-          if (kIsWeb && _isMeasureMode && _measureP1World != null && e.buttons == 1) {
+          if (kIsWeb && _isMeasureMode && _measurePointsWorld.isNotEmpty && e.buttons == 1) {
             setState(() {
-              _measureP2World = _vp.screenToWorld(e.localPosition);
+              _measureCurrentWorld = _vp.screenToWorld(e.localPosition);
             });
           }
           // Update hover position for preview line (only when not dragging to draw walls)
@@ -1142,10 +1348,21 @@ class PlanCanvasState extends State<PlanCanvas> {
             : (details) {
                 // Check pointer count: 1 = drawing/panning/vertex-edit/measure, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
+                  if (_isMoveFloorplanMode && _backgroundImageState != null) {
+                    setState(() {
+                      _panStartScreen = details.localFocalPoint;
+                      _isMovingFloorplan = false;
+                    });
+                    return;
+                  }
                   if (_isMeasureMode) {
                     setState(() {
-                      _measureP1World = _vp.screenToWorld(details.localFocalPoint);
-                      _measureP2World = _vp.screenToWorld(details.localFocalPoint);
+                      if (_measurePointsWorld.isEmpty) {
+                        _measurePointsWorld.add(_vp.screenToWorld(details.localFocalPoint));
+                        _measureCurrentWorld = _vp.screenToWorld(details.localFocalPoint);
+                      } else {
+                        _measureCurrentWorld = _vp.screenToWorld(details.localFocalPoint);
+                      }
                     });
                     return;
                   }
@@ -1178,9 +1395,32 @@ class PlanCanvasState extends State<PlanCanvas> {
             : (details) {
                 // Check pointer count: 1 = drawing/panning/measure, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
-                  if (_isMeasureMode && _measureP1World != null) {
+                  if (_isMoveFloorplanMode && _backgroundImageState != null) {
+                    if (_panStartScreen != null) {
+                      final distance = (details.localFocalPoint - _panStartScreen!).distance;
+                      if (distance > _panSlopPx) {
+                        setState(() {
+                          _isMovingFloorplan = true;
+                          _panStartScreen = null;
+                        });
+                      }
+                    }
+                    if (_isMovingFloorplan) {
+                      setState(() {
+                        final mmPerPx = _vp.mmPerPx;
+                        _backgroundImageState = _backgroundImageState!.copyWith(
+                          offsetX: _backgroundImageState!.offsetX + details.focalPointDelta.dx * mmPerPx,
+                          offsetY: _backgroundImageState!.offsetY + details.focalPointDelta.dy * mmPerPx,
+                        );
+                        _lastScalePosition = details.localFocalPoint;
+                        _hasUnsavedChanges = true;
+                      });
+                    }
+                    return;
+                  }
+                  if (_isMeasureMode && _measurePointsWorld.isNotEmpty) {
                     setState(() {
-                      _measureP2World = _vp.screenToWorld(details.localFocalPoint);
+                      _measureCurrentWorld = _vp.screenToWorld(details.localFocalPoint);
                     });
                     return;
                   }
@@ -1233,10 +1473,18 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleEnd: kIsWeb
             ? null
             : (_) {
+                if (_isMoveFloorplanMode) {
+                  setState(() {
+                    _isMovingFloorplan = false;
+                    _panStartScreen = null;
+                  });
+                }
                 if (_isMeasureMode) {
                   setState(() {
-                    _measureP1World = null;
-                    _measureP2World = null;
+                    if (_measureCurrentWorld != null) {
+                      _measurePointsWorld.add(_measureCurrentWorld!);
+                      _measureCurrentWorld = null;
+                    }
                   });
                 }
                 // If we were panning, end panning
@@ -1319,12 +1567,14 @@ class PlanCanvasState extends State<PlanCanvas> {
                   calibrationP1Screen: _calibrationP1Screen,
                   calibrationP2Screen: _calibrationP2Screen,
                   isMeasureMode: _isMeasureMode,
-                  measureP1World: _measureP1World,
-                  measureP2World: _measureP2World,
+                  measurePointsWorld: List.from(_measurePointsWorld),
+                  measureCurrentWorld: _measureCurrentWorld,
                   isAddDimensionMode: _isAddDimensionMode,
                   addDimensionP1World: _addDimensionP1World,
                   placedDimensions: List.from(_placedDimensions),
                   drawFromStart: _drawFromStart,
+                  backgroundImage: _backgroundImage,
+                  backgroundImageState: _backgroundImageState,
                 ),
               ),
             );
@@ -1390,6 +1640,19 @@ class PlanCanvasState extends State<PlanCanvas> {
             onFitToScreen: _fitToScreen,
             onUndo: _undo,
             onRedo: _redo,
+            onImportFloorplan: _importFloorplanImage,
+            backgroundImageOpacity: _backgroundImageState?.opacity,
+            onBackgroundOpacityChanged: _backgroundImageState == null
+                ? null
+                : (v) {
+                    setState(() {
+                      _backgroundImageState = _backgroundImageState!.copyWith(opacity: v);
+                      _hasUnsavedChanges = true;
+                    });
+                  },
+            hasBackgroundImage: _backgroundImage != null,
+            isMoveFloorplanMode: _isMoveFloorplanMode,
+            onToggleMoveFloorplanMode: _backgroundImage != null ? _toggleMoveFloorplanMode : null,
           ),
         ),
       ),
@@ -1433,6 +1696,19 @@ class PlanCanvasState extends State<PlanCanvas> {
             onFitToScreen: _fitToScreen,
             onUndo: _undo,
             onRedo: _redo,
+            onImportFloorplan: _importFloorplanImage,
+            backgroundImageOpacity: _backgroundImageState?.opacity,
+            onBackgroundOpacityChanged: _backgroundImageState == null
+                ? null
+                : (v) {
+                    setState(() {
+                      _backgroundImageState = _backgroundImageState!.copyWith(opacity: v);
+                      _hasUnsavedChanges = true;
+                    });
+                  },
+            hasBackgroundImage: _backgroundImage != null,
+            isMoveFloorplanMode: _isMoveFloorplanMode,
+            onToggleMoveFloorplanMode: _backgroundImage != null ? _toggleMoveFloorplanMode : null,
           ),
         ),
       ),
@@ -1870,6 +2146,55 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  /// If the quad has exactly 90° corners (within tiny tolerance), return 4 vertices forming a perfect rectangle.
+  /// Returns null if not a quad or any angle is not 90°.
+  static List<Offset>? _makeRectangleFromQuad(List<Offset> quad) {
+    if (quad.length != 4) return null;
+    const toleranceDeg = 0.5; // Only treat as rectangle if each angle is within 0.5° of 90°
+
+    // Compute interior angle at each vertex (angle between incoming and outgoing edge)
+    for (int i = 0; i < 4; i++) {
+      final prev = quad[(i + 3) % 4];
+      final curr = quad[i];
+      final next = quad[(i + 1) % 4];
+      final v1 = Offset(prev.dx - curr.dx, prev.dy - curr.dy);
+      final v2 = Offset(next.dx - curr.dx, next.dy - curr.dy);
+      final d1 = math.sqrt(v1.dx * v1.dx + v1.dy * v1.dy);
+      final d2 = math.sqrt(v2.dx * v2.dx + v2.dy * v2.dy);
+      if (d1 < 1e-6 || d2 < 1e-6) return null;
+      final angle = math.atan2(
+        v1.dx * v2.dy - v1.dy * v2.dx,
+        v1.dx * v2.dx + v1.dy * v2.dy,
+      );
+      final angleDeg = (angle.abs() * 180 / math.pi);
+      if (angleDeg < 90 - toleranceDeg || angleDeg > 90 + toleranceDeg) return null; // Not 90°
+    }
+
+    final p0 = quad[0];
+    final p1 = quad[1];
+    final p2 = quad[2];
+    final p3 = quad[3];
+    final a = (p1 - p0).distance;
+    final b = (p2 - p1).distance;
+    final c = (p3 - p2).distance;
+    final d = (p0 - p3).distance;
+    final side1 = (a + c) / 2;
+    final side2 = (b + d) / 2;
+
+    final u = Offset(p1.dx - p0.dx, p1.dy - p0.dy);
+    final uLen = math.sqrt(u.dx * u.dx + u.dy * u.dy);
+    if (uLen < 1e-6) return null;
+    final ux = u.dx / uLen;
+    final uy = u.dy / uLen;
+    // Perpendicular (rotate 90° CCW): v = (-uy, ux)
+    return [
+      p0,
+      Offset(p0.dx + ux * side1, p0.dy + uy * side1),
+      Offset(p0.dx + ux * side1 - uy * side2, p0.dy + uy * side1 + ux * side2),
+      Offset(p0.dx - uy * side2, p0.dy + ux * side2),
+    ];
+  }
+
   /// Close the current draft room and add it to completed rooms.
   void _closeDraftRoom() {
     if (_draftRoomVertices == null || _draftRoomVertices!.length < 3) {
@@ -1878,12 +2203,14 @@ class PlanCanvasState extends State<PlanCanvas> {
     
     setState(() {
       // Create room - append first vertex to close the polygon
-      // This preserves all vertices (e.g., 4 vertices for a square stays 4 + closing vertex)
-      final vertices = List<Offset>.from(_draftRoomVertices!);
+      List<Offset> vertices = List<Offset>.from(_draftRoomVertices!);
+      if (vertices.length == 4) {
+        final rect = _makeRectangleFromQuad(vertices);
+        if (rect != null) vertices = rect;
+      }
       if (vertices.length >= 3) {
         // Add first vertex at the end to close the polygon
-        // Don't replace the last vertex - that would lose it!
-        // Example: [A, B, C, D] becomes [A, B, C, D, A] (not [A, B, C, A])
+        vertices = List<Offset>.from(vertices);
         vertices.add(vertices.first);
         
         // Create room without a name - user can name it later by clicking the button
@@ -2496,12 +2823,14 @@ class _PlanPainter extends CustomPainter {
   final Offset? calibrationP1Screen;
   final Offset? calibrationP2Screen;
   final bool isMeasureMode;
-  final Offset? measureP1World;
-  final Offset? measureP2World;
+  final List<Offset> measurePointsWorld;
+  final Offset? measureCurrentWorld;
   final bool isAddDimensionMode;
   final Offset? addDimensionP1World;
   final List<({Offset fromMm, Offset toMm})> placedDimensions;
   final bool drawFromStart;
+  final ui.Image? backgroundImage;
+  final BackgroundImageState? backgroundImageState;
 
   _PlanPainter({
     required this.vp,
@@ -2518,13 +2847,16 @@ class _PlanPainter extends CustomPainter {
     this.calibrationP1Screen,
     this.calibrationP2Screen,
     this.isMeasureMode = false,
-    this.measureP1World,
-    this.measureP2World,
+    List<Offset>? measurePointsWorld,
+    this.measureCurrentWorld,
     this.isAddDimensionMode = false,
     this.addDimensionP1World,
     List<({Offset fromMm, Offset toMm})>? placedDimensions,
     this.drawFromStart = false,
+    this.backgroundImage,
+    this.backgroundImageState,
   })  : completedRooms = completedRooms ?? [],
+        measurePointsWorld = measurePointsWorld ?? [],
         placedDimensions = placedDimensions ?? [];
 
   @override
@@ -2536,6 +2868,27 @@ class _PlanPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..color = Colors.white,
     );
+
+      // Floor plan background image (world-space: origin + size from scale)
+      if (backgroundImage != null && backgroundImageState != null) {
+        final scale = backgroundImageState!.scaleMmPerPixel;
+        final ox = backgroundImageState!.offsetX;
+        final oy = backgroundImageState!.offsetY;
+        final wMm = backgroundImage!.width * scale;
+        final hMm = backgroundImage!.height * scale;
+        final tl = vp.worldToScreen(Offset(ox, oy));
+        final tr = vp.worldToScreen(Offset(ox + wMm, oy));
+        final br = vp.worldToScreen(Offset(ox + wMm, oy + hMm));
+        final bl = vp.worldToScreen(Offset(ox, oy + hMm));
+        final minX = math.min(math.min(tl.dx, tr.dx), math.min(bl.dx, br.dx));
+        final minY = math.min(math.min(tl.dy, tr.dy), math.min(bl.dy, br.dy));
+        final maxX = math.max(math.max(tl.dx, tr.dx), math.max(bl.dx, br.dx));
+        final maxY = math.max(math.max(tl.dy, tr.dy), math.max(bl.dy, br.dy));
+        final destRect = Rect.fromLTRB(minX, minY, maxX, maxY);
+        final srcRect = Rect.fromLTWH(0, 0, backgroundImage!.width.toDouble(), backgroundImage!.height.toDouble());
+        final paint = Paint()..color = Color.fromRGBO(255, 255, 255, backgroundImageState!.opacity);
+        canvas.drawImageRect(backgroundImage!, srcRect, destRect, paint);
+      }
 
       // Draw completed rooms (filled polygons with outline) first
       // Defensive check: ensure completedRooms is a valid, iterable list
@@ -2615,18 +2968,9 @@ class _PlanPainter extends CustomPainter {
         _drawDimension(canvas, startScreen, endScreen, distanceMm, isDashed: true);
       }
 
-      // Measure mode: temporary dimension line
-      if (isMeasureMode && measureP1World != null && measureP2World != null) {
-        final startScreen = vp.worldToScreen(measureP1World!);
-        final endScreen = vp.worldToScreen(measureP2World!);
-        final distanceMm = (measureP2World! - measureP1World!).distance;
-        _drawDimension(canvas, startScreen, endScreen, distanceMm, isTemporary: true);
-      } else if (isMeasureMode && measureP1World != null) {
-        final p1Screen = vp.worldToScreen(measureP1World!);
-        final dotPaint = Paint()
-          ..color = Colors.teal
-          ..style = PaintingStyle.fill;
-        canvas.drawCircle(p1Screen, 6, dotPaint);
+      // Measure mode: straight dotted line (2 points) or bent dotted polyline (3+ points)
+      if (isMeasureMode && (measurePointsWorld.isNotEmpty || measureCurrentWorld != null)) {
+        _drawMeasureLine(canvas);
       }
 
       // Add dimension mode: preview line from first point to hover
@@ -2993,6 +3337,70 @@ class _PlanPainter extends CustomPainter {
     }
   }
   
+  /// Draw measure mode: straight dotted line (2 points) or bent dotted polyline (3+ points) with total length.
+  void _drawMeasureLine(Canvas canvas) {
+    final points = List<Offset>.from(measurePointsWorld);
+    if (measureCurrentWorld != null) points.add(measureCurrentWorld!);
+    if (points.isEmpty) return;
+
+    final teal = Colors.teal;
+    final dotPaint = Paint()..color = teal..style = PaintingStyle.fill;
+    final linePaint = Paint()
+      ..color = teal
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    // Draw dots at each point
+    for (final p in points) {
+      canvas.drawCircle(vp.worldToScreen(p), 6, dotPaint);
+    }
+
+    if (points.length < 2) return;
+
+    double totalMm = 0;
+    final screenPts = points.map((p) => vp.worldToScreen(p)).toList();
+
+    // Draw dotted segments between consecutive points
+    for (int i = 0; i < screenPts.length - 1; i++) {
+      final a = points[i];
+      final b = points[i + 1];
+      totalMm += (b - a).distance;
+      _drawDashedLine(canvas, screenPts[i], screenPts[i + 1], linePaint);
+    }
+
+    // Label: total distance
+    final measurementText = UnitConverter.formatDistance(totalMm, useImperial: useImperial);
+    final label = points.length > 2 ? 'Total: $measurementText' : measurementText;
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: teal.shade700,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          backgroundColor: Colors.white.withOpacity(0.9),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+
+    // Position label at midpoint of path (or last segment for bent)
+    Offset labelPos;
+    if (screenPts.length == 2) {
+      labelPos = Offset(
+        (screenPts[0].dx + screenPts[1].dx) / 2,
+        (screenPts[0].dy + screenPts[1].dy) / 2,
+      );
+    } else {
+      labelPos = screenPts.last;
+    }
+    textPainter.paint(
+      canvas,
+      labelPos - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+  }
+
   /// Draw a dashed/dotted line between two points (for temporary dimension styling).
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint,
       {double dashLength = 5, double gapLength = 4}) {

@@ -25,6 +25,8 @@ class Projects extends Table {
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
   BoolColumn get useImperial => boolean().withDefault(const Constant(false))();
   TextColumn get viewportJson => text().nullable()(); // JSON viewport state
+  TextColumn get backgroundImagePath => text().nullable()(); // relative path in app storage
+  TextColumn get backgroundImageJson => text().nullable()(); // JSON: offsetX, offsetY, scaleMmPerPixel, opacity
 }
 
 /// Rooms table - stores room data for each project
@@ -37,13 +39,24 @@ class Rooms extends Table {
   IntColumn get orderIndex => integer().withDefault(const Constant(0))(); // Order rooms were created
 }
 
+/// Adds a column only if it does not already exist (avoids "duplicate column name" on re-runs).
+Future<void> _addColumnIfNotExists(Migrator m, dynamic table, GeneratedColumn column) async {
+  try {
+    await m.addColumn(table, column);
+  } catch (e) {
+    final msg = e.toString().toLowerCase();
+    if (msg.contains('duplicate column name')) return;
+    rethrow;
+  }
+}
+
 /// Main database class
 @DriftDatabase(tables: [Folders, Projects, Rooms])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration {
@@ -53,7 +66,7 @@ class AppDatabase extends _$AppDatabase {
       },
       onUpgrade: (Migrator m, int from, int to) async {
         if (from < 2) {
-          await m.addColumn(projects, projects.viewportJson);
+          await _addColumnIfNotExists(m, projects, projects.viewportJson);
         }
         if (from < 4) {
           // Remove carpet/roll planning tables (if they exist from schema 3)
@@ -62,7 +75,11 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 5) {
           await m.createTable(folders);
-          await m.addColumn(projects, projects.folderId);
+          await _addColumnIfNotExists(m, projects, projects.folderId);
+        }
+        if (from < 6) {
+          await _addColumnIfNotExists(m, projects, projects.backgroundImagePath);
+          await _addColumnIfNotExists(m, projects, projects.backgroundImageJson);
         }
       },
     );

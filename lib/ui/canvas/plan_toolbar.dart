@@ -124,6 +124,12 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback? onToggleNumberPad;
   final bool drawFromStart;
   final VoidCallback? onToggleDrawFromStart;
+  final VoidCallback? onImportFloorplan;
+  final double? backgroundImageOpacity;
+  final ValueChanged<double>? onBackgroundOpacityChanged;
+  final bool hasBackgroundImage;
+  final bool isMoveFloorplanMode;
+  final VoidCallback? onToggleMoveFloorplanMode;
 
   const PlanToolbar({
     super.key,
@@ -151,6 +157,12 @@ class PlanToolbar extends StatelessWidget {
     this.onToggleNumberPad,
     this.drawFromStart = false,
     this.onToggleDrawFromStart,
+    this.onImportFloorplan,
+    this.backgroundImageOpacity,
+    this.onBackgroundOpacityChanged,
+    this.hasBackgroundImage = false,
+    this.isMoveFloorplanMode = false,
+    this.onToggleMoveFloorplanMode,
     required this.onToggleUnit,
     required this.onToggleGrid,
     required this.onTogglePanMode,
@@ -295,6 +307,16 @@ class PlanToolbar extends StatelessWidget {
               ),
             ),
           ],
+          if (onImportFloorplan != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: 'Import floorplan image',
+              child: IconButton(
+                icon: const Icon(Icons.image),
+                onPressed: onImportFloorplan,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -365,6 +387,33 @@ class PlanToolbar extends StatelessWidget {
                 onPressed: onRemoveLastDimension,
               ),
             ),
+          if (backgroundImageOpacity != null && onBackgroundOpacityChanged != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: 'Floorplan opacity',
+              child: SizedBox(
+                width: 72,
+                child: Slider(
+                  value: backgroundImageOpacity!.clamp(0.0, 1.0),
+                  onChanged: onBackgroundOpacityChanged,
+                ),
+              ),
+            ),
+          ],
+          if (hasBackgroundImage && onToggleMoveFloorplanMode != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: isMoveFloorplanMode
+                  ? 'Move floorplan: drag to position (tap to exit)'
+                  : 'Move floorplan: drag to reposition image',
+              child: IconButton(
+                icon: const Icon(Icons.pan_tool),
+                tooltip: isMoveFloorplanMode ? 'Exit move floorplan' : 'Move floorplan',
+                color: isMoveFloorplanMode ? Colors.orange : null,
+                onPressed: onToggleMoveFloorplanMode,
+              ),
+            ),
+          ],
         ],
       ),
     );

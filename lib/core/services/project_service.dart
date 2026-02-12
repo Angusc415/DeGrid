@@ -105,8 +105,18 @@ class ProjectService {
         final viewportJson = jsonDecode(project.viewportJson!) as Map<String, dynamic>;
         viewportState = PlanViewportState.fromJson(viewportJson);
       } catch (e) {
-        // If viewport JSON is invalid, use default (null)
         viewportState = null;
+      }
+    }
+
+    // Parse background image state if available
+    BackgroundImageState? backgroundImageState;
+    if (project.backgroundImageJson != null && project.backgroundImageJson!.isNotEmpty) {
+      try {
+        final bgJson = jsonDecode(project.backgroundImageJson!) as Map<String, dynamic>;
+        backgroundImageState = BackgroundImageState.fromJson(bgJson);
+      } catch (e) {
+        backgroundImageState = null;
       }
     }
 
@@ -118,6 +128,8 @@ class ProjectService {
       useImperial: project.useImperial,
       rooms: rooms,
       viewportState: viewportState,
+      backgroundImagePath: project.backgroundImagePath,
+      backgroundImageState: backgroundImageState,
     );
   }
 
@@ -162,15 +174,16 @@ class ProjectService {
   }
 
   /// Update an existing project.
-  /// Replaces all rooms for the project.
+  /// Replaces all rooms for the project when [rooms] is provided.
   Future<void> updateProject({
     required int id,
     String? name,
     List<Room>? rooms,
     PlanViewport? viewport,
     bool? useImperial,
+    String? backgroundImagePath,
+    BackgroundImageState? backgroundImageState,
   }) async {
-    // Build update companion
     final projectUpdate = ProjectsCompanion(
       id: Value(id),
       updatedAt: Value(DateTime.now()),
@@ -179,9 +192,12 @@ class ProjectService {
       viewportJson: viewport != null
           ? Value(jsonEncode(PlanViewportState.fromViewport(viewport).toJson()))
           : const Value.absent(),
+      backgroundImagePath: backgroundImagePath != null ? Value(backgroundImagePath) : const Value.absent(),
+      backgroundImageJson: backgroundImageState != null
+          ? Value(jsonEncode(backgroundImageState.toJson()))
+          : const Value.absent(),
     );
 
-    // Update project
     await (_db.update(_db.projects)..where((p) => p.id.equals(id))).write(projectUpdate);
 
     // If rooms are provided, replace all rooms
@@ -220,11 +236,11 @@ class ProjectService {
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
+    String? backgroundImagePath,
+    BackgroundImageState? backgroundImageState,
   }) async {
     try {
       if (id == null) {
-        // Create new project
-        debugPrint('Creating new project: $name with ${rooms.length} rooms');
         final projectId = await createProject(
           name: name,
           rooms: rooms,
@@ -232,19 +248,24 @@ class ProjectService {
           useImperial: useImperial,
           folderId: folderId,
         );
-        debugPrint('Created project with ID: $projectId');
+        if (backgroundImagePath != null || backgroundImageState != null) {
+          await updateProject(
+            id: projectId,
+            backgroundImagePath: backgroundImagePath,
+            backgroundImageState: backgroundImageState,
+          );
+        }
         return projectId;
       } else {
-        // Update existing project
-        debugPrint('Updating project $id: $name with ${rooms.length} rooms');
         await updateProject(
           id: id,
           name: name,
           rooms: rooms,
           viewport: viewport,
           useImperial: useImperial,
+          backgroundImagePath: backgroundImagePath,
+          backgroundImageState: backgroundImageState,
         );
-        debugPrint('Updated project $id');
         return id;
       }
     } catch (e, stackTrace) {

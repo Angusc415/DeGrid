@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/export/pdf_export.dart';
+import '../canvas/viewport.dart';
 import 'editor_screen.dart';
 
 /// Payload for drag-and-drop of projects and folders.
@@ -342,13 +343,40 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     );
 
     if (confirmed == true && nameController.text.trim().isNotEmpty) {
-      // Navigate to editor with new project
-      if (mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => EditorScreen(projectId: null, projectName: nameController.text.trim()),
-          ),
-        ).then((_) => _loadData()); // Reload projects when returning
+      final name = nameController.text.trim();
+      if (_projectService == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cannot create project: database not ready.')),
+          );
+        }
+        return;
+      }
+      try {
+        // Save empty project immediately so it exists with the chosen name
+        final defaultViewport = PlanViewport(
+          mmPerPx: 5.0,
+          worldOriginMm: const Offset(-500, -500),
+        );
+        final projectId = await _projectService!.saveProject(
+          name: name,
+          rooms: [],
+          viewport: defaultViewport,
+        );
+        if (mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => EditorScreen(projectId: projectId, projectName: name),
+            ),
+          ).then((_) => _loadData());
+        }
+      } catch (e) {
+        debugPrint('Error creating project: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error saving project: $e')),
+          );
+        }
       }
     }
   }
