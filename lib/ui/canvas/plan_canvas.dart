@@ -60,6 +60,13 @@ class PlanCanvasState extends State<PlanCanvas> {
   BackgroundImageState? _backgroundImageState;
   ui.Image? _backgroundImage;
 
+  // Floorplan contextual menu (pan mode, tap on image)
+  bool _showFloorplanMenu = false;
+  Offset? _floorplanResizeStartGlobal;
+  Offset? _floorplanResizeStartCornerScreen;
+  int? _floorplanResizeCornerIndex; // 0=TL, 1=TR, 2=BR, 3=BL
+  Offset? _floorplanResizeAnchorWorld;
+
   // Completed rooms (polygons)
   final List<Room> _completedRooms = [];
   
@@ -673,6 +680,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   void _togglePanMode() {
     setState(() {
       _isPanMode = !_isPanMode;
+      _showFloorplanMenu = false;
       _isPanning = false;
       _panStartScreen = null;
       _pendingSelectedVertex = null;
@@ -706,6 +714,16 @@ class PlanCanvasState extends State<PlanCanvas> {
     }
     if (_draftRoomVertices == null) {
       if (_isPanMode) {
+        // Floorplan contextual menu: tap on image opens menu; tap outside closes it.
+        if (_backgroundImage != null && _backgroundImageState != null) {
+          if (_isPointOnBackgroundImage(localPosition)) {
+            setState(() => _showFloorplanMenu = true);
+            return;
+          }
+          if (_showFloorplanMenu) {
+            setState(() => _showFloorplanMenu = false);
+          }
+        }
         final clickedVertex = _findVertexAtPosition(localPosition);
         if (clickedVertex != null) {
           if (_selectedVertex != null &&
@@ -810,6 +828,56 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  void _toggleFloorplanLock() {
+    if (_backgroundImageState == null) return;
+    setState(() {
+      _backgroundImageState = _backgroundImageState!.copyWith(locked: !_backgroundImageState!.locked);
+      if (_backgroundImageState!.locked) {
+        _showFloorplanMenu = false;
+        _isMoveFloorplanMode = false;
+      }
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  void _fitFloorplanToView() {
+    if (_backgroundImage == null || _backgroundImageState == null || !mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+    final eff = _backgroundImageState!.effectiveScaleMmPerPixel;
+    final ox = _backgroundImageState!.offsetX;
+    final oy = _backgroundImageState!.offsetY;
+    final wMm = _backgroundImage!.width * eff;
+    final hMm = _backgroundImage!.height * eff;
+    double minX = ox;
+    double minY = oy;
+    double maxX = ox + wMm;
+    double maxY = oy + hMm;
+    const padding = 24.0;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+    final width = maxX - minX;
+    final height = maxY - minY;
+    final center = Offset((minX + maxX) / 2, (minY + maxY) / 2);
+    final scaleX = screenSize.width / width;
+    final scaleY = screenSize.height / height;
+    final scale = (scaleX < scaleY ? scaleX : scaleY) * 0.9;
+    setState(() {
+      _vp.mmPerPx = (1.0 / scale).clamp(PlanViewport.minMmPerPx, PlanViewport.maxMmPerPx);
+      _vp.worldOriginMm = center - Offset(screenSize.width / 2, screenSize.height / 2) * _vp.mmPerPx;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  void _resetFloorplanTransform() {
+    if (_backgroundImageState == null) return;
+    setState(() {
+      _backgroundImageState = _backgroundImageState!.copyWith(scaleFactor: 1.0);
+      _hasUnsavedChanges = true;
+    });
+  }
+
   void _toggleMeasureMode() {
     setState(() {
       if (_isMeasureMode) {
@@ -856,10 +924,130 @@ class PlanCanvasState extends State<PlanCanvas> {
   Offset? _screenToBackgroundImagePixel(Offset screenPx) {
     if (_backgroundImageState == null) return null;
     final world = _vp.screenToWorld(screenPx);
-    final s = _backgroundImageState!.scaleMmPerPixel;
+    final s = _backgroundImageState!.effectiveScaleMmPerPixel;
     final ox = _backgroundImageState!.offsetX;
     final oy = _backgroundImageState!.offsetY;
     return Offset((world.dx - ox) / s, (world.dy - oy) / s);
+  }
+
+  /// True if the given screen point lies inside the drawn background image bounds.
+  bool _isPointOnBackgroundImage(Offset screenPx) {
+    if (_backgroundImage == null || _backgroundImageState == null) return false;
+    final px = _screenToBackgroundImagePixel(screenPx);
+    if (px == null) return false;
+    final w = _backgroundImage!.width.toDouble();
+    final h = _backgroundImage!.height.toDouble();
+    return px.dx >= 0 && px.dx <= w && px.dy >= 0 && px.dy <= h;
+  }
+
+  /// Screen-space rectangle of the drawn background image (for anchoring the floorplan toolbar).
+  Rect? _backgroundImageScreenRect() {
+    if (_backgroundImage == null || _backgroundImageState == null) return null;
+    final scale = _backgroundImageState!.effectiveScaleMmPerPixel;
+    final ox = _backgroundImageState!.offsetX;
+    final oy = _backgroundImageState!.offsetY;
+    final wMm = _backgroundImage!.width * scale;
+    final hMm = _backgroundImage!.height * scale;
+    final tl = _vp.worldToScreen(Offset(ox, oy));
+    final tr = _vp.worldToScreen(Offset(ox + wMm, oy));
+    final br = _vp.worldToScreen(Offset(ox + wMm, oy + hMm));
+    final bl = _vp.worldToScreen(Offset(ox, oy + hMm));
+    final minX = math.min(math.min(tl.dx, tr.dx), math.min(bl.dx, br.dx));
+    final minY = math.min(math.min(tl.dy, tr.dy), math.min(bl.dy, br.dy));
+    final maxX = math.max(math.max(tl.dx, tr.dx), math.max(bl.dx, br.dx));
+    final maxY = math.max(math.max(tl.dy, tr.dy), math.max(bl.dy, br.dy));
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  /// Start resize by corner; [cornerIndex] 0=TL, 1=TR, 2=BR, 3=BL. Opposite corner stays fixed.
+  void _startFloorplanResize(int cornerIndex, Offset cornerScreen, Offset globalPosition) {
+    if (_backgroundImageState == null || _backgroundImage == null) return;
+    final s = _backgroundImageState!.effectiveScaleMmPerPixel;
+    final ox = _backgroundImageState!.offsetX;
+    final oy = _backgroundImageState!.offsetY;
+    final w = _backgroundImage!.width.toDouble();
+    final h = _backgroundImage!.height.toDouble();
+    final wMm = w * s;
+    final hMm = h * s;
+    // Anchor is opposite corner: TL<->BR, TR<->BL
+    final anchorWorld = switch (cornerIndex) {
+      0 => Offset(ox + wMm, oy + hMm), // TL dragged -> BR anchor
+      1 => Offset(ox, oy + hMm),        // TR dragged -> BL anchor
+      2 => Offset(ox, oy),              // BR dragged -> TL anchor
+      3 => Offset(ox + wMm, oy),        // BL dragged -> TR anchor
+      _ => Offset(ox, oy),
+    };
+    _floorplanResizeStartGlobal = globalPosition;
+    _floorplanResizeStartCornerScreen = cornerScreen;
+    _floorplanResizeCornerIndex = cornerIndex;
+    _floorplanResizeAnchorWorld = anchorWorld;
+  }
+
+  void _updateFloorplanResize(Offset globalPosition) {
+    if (_backgroundImageState == null ||
+        _backgroundImage == null ||
+        _floorplanResizeStartGlobal == null ||
+        _floorplanResizeCornerIndex == null ||
+        _floorplanResizeAnchorWorld == null) {
+      return;
+    }
+    final cornerIndex = _floorplanResizeCornerIndex!;
+    final anchorWorld = _floorplanResizeAnchorWorld!;
+    final dragVec = globalPosition - _floorplanResizeStartGlobal!;
+    final newCornerScreen = _floorplanResizeStartCornerScreen! + dragVec;
+    final newCornerWorld = _vp.screenToWorld(newCornerScreen);
+
+    final w = _backgroundImage!.width.toDouble();
+    final h = _backgroundImage!.height.toDouble();
+    final diag = math.sqrt(w * w + h * h);
+    if (diag <= 0) return;
+    final scaleMmPerPixel = _backgroundImageState!.scaleMmPerPixel;
+    // Effective scale s = distance(corner, anchor) / diag (in mm: diag is in pixels, so world diag = diag * s)
+    final distMm = (newCornerWorld - anchorWorld).distance;
+    var newS = distMm / diag;
+    if (newS <= 0) return;
+    var newScaleFactor = scaleMmPerPixel / newS;
+    newScaleFactor = newScaleFactor.clamp(0.25, 2.0);
+    newS = scaleMmPerPixel / newScaleFactor;
+
+    double newOx;
+    double newOy;
+    switch (cornerIndex) {
+      case 0: // TL dragged, BR anchor
+        newOx = anchorWorld.dx - w * newS;
+        newOy = anchorWorld.dy - h * newS;
+        break;
+      case 1: // TR dragged, BL anchor
+        newOx = anchorWorld.dx;
+        newOy = anchorWorld.dy - h * newS;
+        break;
+      case 2: // BR dragged, TL anchor
+        newOx = anchorWorld.dx;
+        newOy = anchorWorld.dy;
+        break;
+      case 3: // BL dragged, TR anchor
+        newOx = anchorWorld.dx - w * newS;
+        newOy = anchorWorld.dy;
+        break;
+      default:
+        return;
+    }
+
+    setState(() {
+      _backgroundImageState = _backgroundImageState!.copyWith(
+        scaleFactor: newScaleFactor,
+        offsetX: newOx,
+        offsetY: newOy,
+      );
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  void _endFloorplanResize() {
+    _floorplanResizeStartGlobal = null;
+    _floorplanResizeStartCornerScreen = null;
+    _floorplanResizeCornerIndex = null;
+    _floorplanResizeAnchorWorld = null;
   }
 
   Future<void> _handleCalibrationTap(Offset screenPos) async {
@@ -1651,11 +1839,99 @@ class PlanCanvasState extends State<PlanCanvas> {
                     });
                   },
             hasBackgroundImage: _backgroundImage != null,
+            isFloorplanLocked: _backgroundImageState?.locked ?? false,
+            onToggleFloorplanLock: _backgroundImage != null ? _toggleFloorplanLock : null,
+            onFitFloorplan: _backgroundImage != null ? _fitFloorplanToView : null,
+            onResetFloorplan: _backgroundImage != null ? _resetFloorplanTransform : null,
+            backgroundImageScaleFactor: _backgroundImageState?.scaleFactor,
+            onBackgroundScaleFactorChanged: _backgroundImageState == null
+                ? null
+                : (v) {
+                    setState(() {
+                      _backgroundImageState = _backgroundImageState!.copyWith(scaleFactor: v);
+                      _hasUnsavedChanges = true;
+                    });
+                  },
             isMoveFloorplanMode: _isMoveFloorplanMode,
             onToggleMoveFloorplanMode: _backgroundImage != null ? _toggleMoveFloorplanMode : null,
           ),
         ),
       ),
+      if (_showFloorplanMenu &&
+          _backgroundImage != null &&
+          _backgroundImageState != null)
+        Builder(
+          builder: (context) {
+            final imageRect = _backgroundImageScreenRect();
+            if (imageRect == null) return const SizedBox.shrink();
+            final locked = _backgroundImageState!.locked;
+            final topLeft = imageRect.topLeft;
+            final topRight = imageRect.topRight;
+            final bottomRight = imageRect.bottomRight;
+            final bottomLeft = imageRect.bottomLeft;
+            const handleSize = 16.0;
+
+            Widget buildHandle(Offset corner, int cornerIndex) {
+              if (locked) return const SizedBox.shrink();
+              return Positioned(
+                left: corner.dx - handleSize / 2,
+                top: corner.dy - handleSize / 2,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) {
+                    _startFloorplanResize(cornerIndex, corner, details.globalPosition);
+                  },
+                  onPanUpdate: (details) {
+                    _updateFloorplanResize(details.globalPosition);
+                  },
+                  onPanEnd: (_) {
+                    _endFloorplanResize();
+                  },
+                  child: Container(
+                    width: handleSize,
+                    height: handleSize,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return Stack(
+              children: [
+                Positioned(
+                  left: imageRect.left,
+                  top: imageRect.top,
+                  width: imageRect.width,
+                  child: _FloorplanContextMenu(
+                    locked: locked,
+                    opacity: _backgroundImageState!.opacity,
+                    isMoveMode: _isMoveFloorplanMode,
+                    onToggleLock: _toggleFloorplanLock,
+                    onFit: _fitFloorplanToView,
+                    onReset: _resetFloorplanTransform,
+                    onToggleMoveMode: _toggleMoveFloorplanMode,
+                    onOpacityChanged: (v) {
+                      setState(() {
+                        _backgroundImageState = _backgroundImageState!.copyWith(opacity: v);
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                  ),
+                ),
+                buildHandle(topLeft, 0),
+                buildHandle(topRight, 1),
+                buildHandle(bottomRight, 2),
+                buildHandle(bottomLeft, 3),
+              ],
+            );
+          },
+        ),
       // Bottom-right: collapsible Dimensions menu (calibrate, measure, add dimension, remove last)
       Positioned(
         bottom: 8,
@@ -1707,6 +1983,19 @@ class PlanCanvasState extends State<PlanCanvas> {
                     });
                   },
             hasBackgroundImage: _backgroundImage != null,
+            isFloorplanLocked: _backgroundImageState?.locked ?? false,
+            onToggleFloorplanLock: _backgroundImage != null ? _toggleFloorplanLock : null,
+            onFitFloorplan: _backgroundImage != null ? _fitFloorplanToView : null,
+            onResetFloorplan: _backgroundImage != null ? _resetFloorplanTransform : null,
+            backgroundImageScaleFactor: _backgroundImageState?.scaleFactor,
+            onBackgroundScaleFactorChanged: _backgroundImageState == null
+                ? null
+                : (v) {
+                    setState(() {
+                      _backgroundImageState = _backgroundImageState!.copyWith(scaleFactor: v);
+                      _hasUnsavedChanges = true;
+                    });
+                  },
             isMoveFloorplanMode: _isMoveFloorplanMode,
             onToggleMoveFloorplanMode: _backgroundImage != null ? _toggleMoveFloorplanMode : null,
           ),
@@ -2869,9 +3158,9 @@ class _PlanPainter extends CustomPainter {
       Paint()..color = Colors.white,
     );
 
-      // Floor plan background image (world-space: origin + size from scale)
+      // Floor plan background image (world-space: origin + size from effective scale)
       if (backgroundImage != null && backgroundImageState != null) {
-        final scale = backgroundImageState!.scaleMmPerPixel;
+        final scale = backgroundImageState!.effectiveScaleMmPerPixel;
         final ox = backgroundImageState!.offsetX;
         final oy = backgroundImageState!.offsetY;
         final wMm = backgroundImage!.width * scale;
@@ -3815,4 +4104,87 @@ class _PlanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PlanPainter oldDelegate) => true;
+}
+
+class _FloorplanContextMenu extends StatelessWidget {
+  final bool locked;
+  final double opacity;
+  final bool isMoveMode;
+  final VoidCallback onToggleLock;
+  final VoidCallback onFit;
+  final VoidCallback onReset;
+  final VoidCallback onToggleMoveMode;
+  final ValueChanged<double> onOpacityChanged;
+
+  const _FloorplanContextMenu({
+    required this.locked,
+    required this.opacity,
+    required this.isMoveMode,
+    required this.onToggleLock,
+    required this.onFit,
+    required this.onReset,
+    required this.onToggleMoveMode,
+    required this.onOpacityChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 8,
+      borderRadius: BorderRadius.zero,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Floorplan',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                icon: Icon(locked ? Icons.lock : Icons.lock_open),
+                tooltip: locked ? 'Unlock' : 'Lock',
+                color: locked ? Colors.orange : null,
+                onPressed: onToggleLock,
+              ),
+              IconButton(
+                icon: const Icon(Icons.fit_screen),
+                tooltip: 'Fit to view',
+                onPressed: onFit,
+              ),
+              IconButton(
+                icon: const Icon(Icons.restart_alt),
+                tooltip: 'Reset size',
+                onPressed: onReset,
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.pan_tool,
+                  color: isMoveMode ? Theme.of(context).colorScheme.primary : null,
+                ),
+                tooltip: 'Move floorplan',
+                onPressed: locked ? null : onToggleMoveMode,
+              ),
+              const SizedBox(width: 12),
+              Text('Opacity', style: Theme.of(context).textTheme.bodySmall),
+              SizedBox(
+                width: 120,
+                child: Slider(
+                  value: opacity.clamp(0.0, 1.0),
+                  onChanged: onOpacityChanged,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

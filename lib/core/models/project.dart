@@ -53,30 +53,45 @@ class ProjectModel {
 }
 
 /// State for the floor plan background image (position and scale in world mm).
+/// [scaleMmPerPixel] is the real-world scale (from calibration); [scaleFactor] is a
+/// display multiplier (1 = 100%, 2 = image twice as large, 0.5 = half size).
 class BackgroundImageState {
   final double offsetX;
   final double offsetY;
   final double scaleMmPerPixel;
+  /// Display size multiplier: effective scale = scaleMmPerPixel / scaleFactor.
+  final double scaleFactor;
   final double opacity;
+  /// When true, the floorplan cannot be moved (move mode disabled).
+  final bool locked;
 
   BackgroundImageState({
     this.offsetX = 0,
     this.offsetY = 0,
     this.scaleMmPerPixel = 1,
+    this.scaleFactor = 1,
     this.opacity = 0.7,
+    this.locked = false,
   });
+
+  /// Effective mm per pixel when drawing (calibrated scale divided by display scale factor).
+  double get effectiveScaleMmPerPixel => scaleMmPerPixel / scaleFactor;
 
   BackgroundImageState copyWith({
     double? offsetX,
     double? offsetY,
     double? scaleMmPerPixel,
+    double? scaleFactor,
     double? opacity,
+    bool? locked,
   }) {
     return BackgroundImageState(
       offsetX: offsetX ?? this.offsetX,
       offsetY: offsetY ?? this.offsetY,
       scaleMmPerPixel: scaleMmPerPixel ?? this.scaleMmPerPixel,
+      scaleFactor: scaleFactor ?? this.scaleFactor,
       opacity: opacity ?? this.opacity,
+      locked: locked ?? this.locked,
     );
   }
 
@@ -84,7 +99,9 @@ class BackgroundImageState {
         'offsetX': offsetX,
         'offsetY': offsetY,
         'scaleMmPerPixel': scaleMmPerPixel,
+        'scaleFactor': scaleFactor,
         'opacity': opacity,
+        'locked': locked,
       };
 
   factory BackgroundImageState.fromJson(Map<String, dynamic> json) {
@@ -92,7 +109,9 @@ class BackgroundImageState {
       offsetX: (json['offsetX'] as num?)?.toDouble() ?? 0,
       offsetY: (json['offsetY'] as num?)?.toDouble() ?? 0,
       scaleMmPerPixel: (json['scaleMmPerPixel'] as num?)?.toDouble() ?? 1,
+      scaleFactor: (json['scaleFactor'] as num?)?.toDouble() ?? 1,
       opacity: (json['opacity'] as num?)?.toDouble() ?? 0.7,
+      locked: json['locked'] == true,
     );
   }
 }

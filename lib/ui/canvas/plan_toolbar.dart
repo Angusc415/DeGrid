@@ -127,7 +127,13 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback? onImportFloorplan;
   final double? backgroundImageOpacity;
   final ValueChanged<double>? onBackgroundOpacityChanged;
+  final double? backgroundImageScaleFactor;
+  final ValueChanged<double>? onBackgroundScaleFactorChanged;
   final bool hasBackgroundImage;
+  final bool isFloorplanLocked;
+  final VoidCallback? onToggleFloorplanLock;
+  final VoidCallback? onFitFloorplan;
+  final VoidCallback? onResetFloorplan;
   final bool isMoveFloorplanMode;
   final VoidCallback? onToggleMoveFloorplanMode;
 
@@ -160,7 +166,13 @@ class PlanToolbar extends StatelessWidget {
     this.onImportFloorplan,
     this.backgroundImageOpacity,
     this.onBackgroundOpacityChanged,
+    this.backgroundImageScaleFactor,
+    this.onBackgroundScaleFactorChanged,
     this.hasBackgroundImage = false,
+    this.isFloorplanLocked = false,
+    this.onToggleFloorplanLock,
+    this.onFitFloorplan,
+    this.onResetFloorplan,
     this.isMoveFloorplanMode = false,
     this.onToggleMoveFloorplanMode,
     required this.onToggleUnit,
@@ -400,7 +412,56 @@ class PlanToolbar extends StatelessWidget {
               ),
             ),
           ],
-          if (hasBackgroundImage && onToggleMoveFloorplanMode != null) ...[
+          if (backgroundImageScaleFactor != null && onBackgroundScaleFactorChanged != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: 'Floorplan size (${(backgroundImageScaleFactor! * 100).round()}%)',
+              child: SizedBox(
+                width: 72,
+                child: Slider(
+                  value: backgroundImageScaleFactor!.clamp(0.25, 2.0),
+                  min: 0.25,
+                  max: 2.0,
+                  onChanged: onBackgroundScaleFactorChanged,
+                ),
+              ),
+            ),
+          ],
+          if (hasBackgroundImage && onToggleFloorplanLock != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: isFloorplanLocked ? 'Unlock floorplan (allow move)' : 'Lock floorplan (prevent move)',
+              child: IconButton(
+                icon: Icon(isFloorplanLocked ? Icons.lock : Icons.lock_open),
+                tooltip: isFloorplanLocked ? 'Unlock' : 'Lock',
+                color: isFloorplanLocked ? Colors.orange : null,
+                onPressed: onToggleFloorplanLock,
+              ),
+            ),
+          ],
+          if (hasBackgroundImage && onFitFloorplan != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: 'Fit floorplan to view',
+              child: IconButton(
+                icon: const Icon(Icons.fit_screen),
+                tooltip: 'Fit floorplan',
+                onPressed: onFitFloorplan,
+              ),
+            ),
+          ],
+          if (hasBackgroundImage && onResetFloorplan != null) ...[
+            const VerticalDivider(width: 8),
+            Tooltip(
+              message: 'Reset floorplan position and size to default',
+              child: IconButton(
+                icon: const Icon(Icons.restore),
+                tooltip: 'Reset floorplan',
+                onPressed: onResetFloorplan,
+              ),
+            ),
+          ],
+          if (hasBackgroundImage && onToggleMoveFloorplanMode != null && !isFloorplanLocked) ...[
             const VerticalDivider(width: 8),
             Tooltip(
               message: isMoveFloorplanMode
