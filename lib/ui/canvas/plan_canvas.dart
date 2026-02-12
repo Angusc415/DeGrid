@@ -1973,31 +1973,7 @@ class PlanCanvasState extends State<PlanCanvas> {
             onUndo: _undo,
             onRedo: _redo,
             onImportFloorplan: _importFloorplanImage,
-            backgroundImageOpacity: _backgroundImageState?.opacity,
-            onBackgroundOpacityChanged: _backgroundImageState == null
-                ? null
-                : (v) {
-                    setState(() {
-                      _backgroundImageState = _backgroundImageState!.copyWith(opacity: v);
-                      _hasUnsavedChanges = true;
-                    });
-                  },
             hasBackgroundImage: _backgroundImage != null,
-            isFloorplanLocked: _backgroundImageState?.locked ?? false,
-            onToggleFloorplanLock: _backgroundImage != null ? _toggleFloorplanLock : null,
-            onFitFloorplan: _backgroundImage != null ? _fitFloorplanToView : null,
-            onResetFloorplan: _backgroundImage != null ? _resetFloorplanTransform : null,
-            backgroundImageScaleFactor: _backgroundImageState?.scaleFactor,
-            onBackgroundScaleFactorChanged: _backgroundImageState == null
-                ? null
-                : (v) {
-                    setState(() {
-                      _backgroundImageState = _backgroundImageState!.copyWith(scaleFactor: v);
-                      _hasUnsavedChanges = true;
-                    });
-                  },
-            isMoveFloorplanMode: _isMoveFloorplanMode,
-            onToggleMoveFloorplanMode: _backgroundImage != null ? _toggleMoveFloorplanMode : null,
           ),
         ),
       ),
