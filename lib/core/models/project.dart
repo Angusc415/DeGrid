@@ -1,5 +1,6 @@
 import 'dart:ui';
 import '../geometry/room.dart';
+import '../geometry/opening.dart';
 import '../../ui/canvas/viewport.dart';
 
 /// Represents a saved project with its rooms and viewport state.
@@ -10,6 +11,7 @@ class ProjectModel {
   final DateTime updatedAt;
   final bool useImperial;
   final List<Room> rooms;
+  final List<Opening> openings;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -21,10 +23,11 @@ class ProjectModel {
     required this.updatedAt,
     this.useImperial = false,
     required this.rooms,
+    List<Opening>? openings,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
-  });
+  }) : openings = openings ?? const [];
 
   /// Create a copy with updated fields.
   ProjectModel copyWith({
@@ -34,6 +37,7 @@ class ProjectModel {
     DateTime? updatedAt,
     bool? useImperial,
     List<Room>? rooms,
+    List<Opening>? openings,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -45,6 +49,7 @@ class ProjectModel {
       updatedAt: updatedAt ?? this.updatedAt,
       useImperial: useImperial ?? this.useImperial,
       rooms: rooms ?? this.rooms,
+      openings: openings ?? this.openings,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,

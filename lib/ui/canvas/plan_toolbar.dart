@@ -115,6 +115,8 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback? onToggleMeasureMode;
   final bool isAddDimensionMode;
   final VoidCallback? onToggleAddDimensionMode;
+  final bool isAddDoorMode;
+  final VoidCallback? onToggleAddDoorMode;
   final bool hasPlacedDimensions;
   final VoidCallback? onRemoveLastDimension;
   final bool isAngleLocked;
@@ -154,6 +156,8 @@ class PlanToolbar extends StatelessWidget {
     this.onToggleMeasureMode,
     this.isAddDimensionMode = false,
     this.onToggleAddDimensionMode,
+    this.isAddDoorMode = false,
+    this.onToggleAddDoorMode,
     this.hasPlacedDimensions = false,
     this.onRemoveLastDimension,
     this.isAngleLocked = false,
@@ -388,6 +392,18 @@ class PlanToolbar extends StatelessWidget {
                 tooltip: isAddDimensionMode ? 'Exit Add Dimension' : 'Add Dimension',
                 color: isAddDimensionMode ? Colors.teal : null,
                 onPressed: onToggleAddDimensionMode,
+              ),
+            ),
+          if (onToggleAddDoorMode != null)
+            Tooltip(
+              message: isAddDoorMode
+                  ? 'Add door: tap near a wall to place'
+                  : 'Add door or opening (tap near a wall)',
+              child: IconButton(
+                icon: const Icon(Icons.door_front_door),
+                tooltip: isAddDoorMode ? 'Exit Add Door' : 'Add Door',
+                color: isAddDoorMode ? Colors.brown : null,
+                onPressed: onToggleAddDoorMode,
               ),
             ),
           if (hasPlacedDimensions && onRemoveLastDimension != null)

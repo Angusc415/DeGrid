@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:drift/drift.dart';
 import '../database/database.dart';
 import '../geometry/room.dart';
+import '../geometry/opening.dart';
 import '../models/project.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -120,6 +121,17 @@ class ProjectService {
       }
     }
 
+    // Parse openings if available
+    List<Opening> openings = const [];
+    if (project.openingsJson != null && project.openingsJson!.isNotEmpty) {
+      try {
+        final list = jsonDecode(project.openingsJson!) as List<dynamic>;
+        openings = Opening.listFromJson(list);
+      } catch (e) {
+        openings = [];
+      }
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -127,6 +139,7 @@ class ProjectService {
       updatedAt: project.updatedAt,
       useImperial: project.useImperial,
       rooms: rooms,
+      openings: openings,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -179,6 +192,7 @@ class ProjectService {
     required int id,
     String? name,
     List<Room>? rooms,
+    List<Opening>? openings,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -195,6 +209,9 @@ class ProjectService {
       backgroundImagePath: backgroundImagePath != null ? Value(backgroundImagePath) : const Value.absent(),
       backgroundImageJson: backgroundImageState != null
           ? Value(jsonEncode(backgroundImageState.toJson()))
+          : const Value.absent(),
+      openingsJson: openings != null
+          ? Value(jsonEncode(Opening.listToJson(openings)))
           : const Value.absent(),
     );
 
@@ -233,6 +250,7 @@ class ProjectService {
     int? id,
     required String name,
     required List<Room> rooms,
+    List<Opening>? openings,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -248,11 +266,12 @@ class ProjectService {
           useImperial: useImperial,
           folderId: folderId,
         );
-        if (backgroundImagePath != null || backgroundImageState != null) {
+        if (backgroundImagePath != null || backgroundImageState != null || (openings != null && openings.isNotEmpty)) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
             backgroundImageState: backgroundImageState,
+            openings: openings,
           );
         }
         return projectId;
@@ -261,6 +280,7 @@ class ProjectService {
           id: id,
           name: name,
           rooms: rooms,
+          openings: openings,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

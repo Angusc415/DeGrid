@@ -475,6 +475,17 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _openingsJsonMeta = const VerificationMeta(
+    'openingsJson',
+  );
+  @override
+  late final GeneratedColumn<String> openingsJson = GeneratedColumn<String>(
+    'openings_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -486,6 +497,7 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     viewportJson,
     backgroundImagePath,
     backgroundImageJson,
+    openingsJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -564,6 +576,15 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         ),
       );
     }
+    if (data.containsKey('openings_json')) {
+      context.handle(
+        _openingsJsonMeta,
+        openingsJson.isAcceptableOrUnknown(
+          data['openings_json']!,
+          _openingsJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -609,6 +630,10 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.string,
         data['${effectivePrefix}background_image_json'],
       ),
+      openingsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}openings_json'],
+      ),
     );
   }
 
@@ -628,6 +653,7 @@ class Project extends DataClass implements Insertable<Project> {
   final String? viewportJson;
   final String? backgroundImagePath;
   final String? backgroundImageJson;
+  final String? openingsJson;
   const Project({
     required this.id,
     required this.name,
@@ -638,6 +664,7 @@ class Project extends DataClass implements Insertable<Project> {
     this.viewportJson,
     this.backgroundImagePath,
     this.backgroundImageJson,
+    this.openingsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -658,6 +685,9 @@ class Project extends DataClass implements Insertable<Project> {
     }
     if (!nullToAbsent || backgroundImageJson != null) {
       map['background_image_json'] = Variable<String>(backgroundImageJson);
+    }
+    if (!nullToAbsent || openingsJson != null) {
+      map['openings_json'] = Variable<String>(openingsJson);
     }
     return map;
   }
@@ -681,6 +711,9 @@ class Project extends DataClass implements Insertable<Project> {
       backgroundImageJson: backgroundImageJson == null && nullToAbsent
           ? const Value.absent()
           : Value(backgroundImageJson),
+      openingsJson: openingsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(openingsJson),
     );
   }
 
@@ -703,6 +736,7 @@ class Project extends DataClass implements Insertable<Project> {
       backgroundImageJson: serializer.fromJson<String?>(
         json['backgroundImageJson'],
       ),
+      openingsJson: serializer.fromJson<String?>(json['openingsJson']),
     );
   }
   @override
@@ -718,6 +752,7 @@ class Project extends DataClass implements Insertable<Project> {
       'viewportJson': serializer.toJson<String?>(viewportJson),
       'backgroundImagePath': serializer.toJson<String?>(backgroundImagePath),
       'backgroundImageJson': serializer.toJson<String?>(backgroundImageJson),
+      'openingsJson': serializer.toJson<String?>(openingsJson),
     };
   }
 
@@ -731,6 +766,7 @@ class Project extends DataClass implements Insertable<Project> {
     Value<String?> viewportJson = const Value.absent(),
     Value<String?> backgroundImagePath = const Value.absent(),
     Value<String?> backgroundImageJson = const Value.absent(),
+    Value<String?> openingsJson = const Value.absent(),
   }) => Project(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -745,6 +781,7 @@ class Project extends DataClass implements Insertable<Project> {
     backgroundImageJson: backgroundImageJson.present
         ? backgroundImageJson.value
         : this.backgroundImageJson,
+    openingsJson: openingsJson.present ? openingsJson.value : this.openingsJson,
   );
   Project copyWithCompanion(ProjectsCompanion data) {
     return Project(
@@ -765,6 +802,9 @@ class Project extends DataClass implements Insertable<Project> {
       backgroundImageJson: data.backgroundImageJson.present
           ? data.backgroundImageJson.value
           : this.backgroundImageJson,
+      openingsJson: data.openingsJson.present
+          ? data.openingsJson.value
+          : this.openingsJson,
     );
   }
 
@@ -779,7 +819,8 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('useImperial: $useImperial, ')
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
-          ..write('backgroundImageJson: $backgroundImageJson')
+          ..write('backgroundImageJson: $backgroundImageJson, ')
+          ..write('openingsJson: $openingsJson')
           ..write(')'))
         .toString();
   }
@@ -795,6 +836,7 @@ class Project extends DataClass implements Insertable<Project> {
     viewportJson,
     backgroundImagePath,
     backgroundImageJson,
+    openingsJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -808,7 +850,8 @@ class Project extends DataClass implements Insertable<Project> {
           other.useImperial == this.useImperial &&
           other.viewportJson == this.viewportJson &&
           other.backgroundImagePath == this.backgroundImagePath &&
-          other.backgroundImageJson == this.backgroundImageJson);
+          other.backgroundImageJson == this.backgroundImageJson &&
+          other.openingsJson == this.openingsJson);
 }
 
 class ProjectsCompanion extends UpdateCompanion<Project> {
@@ -821,6 +864,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<String?> viewportJson;
   final Value<String?> backgroundImagePath;
   final Value<String?> backgroundImageJson;
+  final Value<String?> openingsJson;
   const ProjectsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -831,6 +875,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
+    this.openingsJson = const Value.absent(),
   });
   ProjectsCompanion.insert({
     this.id = const Value.absent(),
@@ -842,6 +887,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
+    this.openingsJson = const Value.absent(),
   }) : name = Value(name);
   static Insertable<Project> custom({
     Expression<int>? id,
@@ -853,6 +899,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<String>? viewportJson,
     Expression<String>? backgroundImagePath,
     Expression<String>? backgroundImageJson,
+    Expression<String>? openingsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -866,6 +913,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
         'background_image_path': backgroundImagePath,
       if (backgroundImageJson != null)
         'background_image_json': backgroundImageJson,
+      if (openingsJson != null) 'openings_json': openingsJson,
     });
   }
 
@@ -879,6 +927,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<String?>? viewportJson,
     Value<String?>? backgroundImagePath,
     Value<String?>? backgroundImageJson,
+    Value<String?>? openingsJson,
   }) {
     return ProjectsCompanion(
       id: id ?? this.id,
@@ -890,6 +939,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       viewportJson: viewportJson ?? this.viewportJson,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageJson: backgroundImageJson ?? this.backgroundImageJson,
+      openingsJson: openingsJson ?? this.openingsJson,
     );
   }
 
@@ -927,6 +977,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
         backgroundImageJson.value,
       );
     }
+    if (openingsJson.present) {
+      map['openings_json'] = Variable<String>(openingsJson.value);
+    }
     return map;
   }
 
@@ -941,7 +994,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('useImperial: $useImperial, ')
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
-          ..write('backgroundImageJson: $backgroundImageJson')
+          ..write('backgroundImageJson: $backgroundImageJson, ')
+          ..write('openingsJson: $openingsJson')
           ..write(')'))
         .toString();
   }
@@ -1750,6 +1804,7 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<String?> viewportJson,
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
+      Value<String?> openingsJson,
     });
 typedef $$ProjectsTableUpdateCompanionBuilder =
     ProjectsCompanion Function({
@@ -1762,6 +1817,7 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<String?> viewportJson,
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
+      Value<String?> openingsJson,
     });
 
 final class $$ProjectsTableReferences
@@ -1851,6 +1907,11 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<String> get backgroundImageJson => $composableBuilder(
     column: $table.backgroundImageJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get openingsJson => $composableBuilder(
+    column: $table.openingsJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1952,6 +2013,11 @@ class $$ProjectsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get openingsJson => $composableBuilder(
+    column: $table.openingsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$FoldersTableOrderingComposer get folderId {
     final $$FoldersTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -2014,6 +2080,11 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<String> get backgroundImageJson => $composableBuilder(
     column: $table.backgroundImageJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get openingsJson => $composableBuilder(
+    column: $table.openingsJson,
     builder: (column) => column,
   );
 
@@ -2103,6 +2174,7 @@ class $$ProjectsTableTableManager
                 Value<String?> viewportJson = const Value.absent(),
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
+                Value<String?> openingsJson = const Value.absent(),
               }) => ProjectsCompanion(
                 id: id,
                 name: name,
@@ -2113,6 +2185,7 @@ class $$ProjectsTableTableManager
                 viewportJson: viewportJson,
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,
+                openingsJson: openingsJson,
               ),
           createCompanionCallback:
               ({
@@ -2125,6 +2198,7 @@ class $$ProjectsTableTableManager
                 Value<String?> viewportJson = const Value.absent(),
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
+                Value<String?> openingsJson = const Value.absent(),
               }) => ProjectsCompanion.insert(
                 id: id,
                 name: name,
@@ -2135,6 +2209,7 @@ class $$ProjectsTableTableManager
                 viewportJson: viewportJson,
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,
+                openingsJson: openingsJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(

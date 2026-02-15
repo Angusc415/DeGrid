@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import '../../core/background_image_io.dart';
 import '../../core/geometry/room.dart';
+import '../../core/geometry/opening.dart';
 import '../../core/units/unit_converter.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
@@ -69,7 +70,9 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   // Completed rooms (polygons)
   final List<Room> _completedRooms = [];
-  
+  // Door/openings between rooms (roomIndex, edgeIndex, offsetMm, widthMm)
+  final List<Opening> _openings = [];
+
   // Counter for default room names
   int _roomCounter = 1;
   
@@ -104,6 +107,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   Offset? _addDimensionP1World;
   /// Placed dimensions (world mm); persisted with project later.
   final List<({Offset fromMm, Offset toMm})> _placedDimensions = [];
+  /// Add door/opening mode: tap near a wall to place an opening.
+  bool _isAddDoorMode = false;
   
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
@@ -137,6 +142,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   // Currently drawing a room (null = not drawing)
   List<Offset>? _draftRoomVertices;
+  /// True when the single-point draft was started by tapping a vertex/door (so untap = deselect). False when started from empty tap.
+  bool _draftStartedFromVertexOrDoor = false;
   /// When true, new segments are drawn from the first vertex; when false, from the last.
   bool _drawFromStart = false;
 
@@ -157,6 +164,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   // Drag state: track if we're currently dragging to draw a wall
   bool _isDragging = false;
+  /// True once the user has moved during this drag (so we know to add a point on release, not stay "connected").
+  bool _dragMoved = false;
   Offset? _dragStartPositionWorldMm;
   
   // Vertex editing state: true when dragging a vertex to reshape room
@@ -295,7 +304,9 @@ class PlanCanvasState extends State<PlanCanvas> {
           _useImperial = project.useImperial;
           _completedRooms.clear();
           _completedRooms.addAll(project.rooms);
-          
+          _openings.clear();
+          _openings.addAll(project.openings);
+
           // Restore viewport if available
           if (project.viewportState != null) {
             final restoredViewport = project.viewportState!.toViewport();
@@ -397,10 +408,11 @@ class PlanCanvasState extends State<PlanCanvas> {
       if (!mounted) return;
       setState(() {
         _backgroundImagePath = relativePath;
-        _backgroundImageState ??= BackgroundImageState();
+        _backgroundImageState = BackgroundImageState();
         _hasUnsavedChanges = true;
       });
       await _loadBackgroundImageFromPath(relativePath);
+      if (mounted) _fitFloorplanToView();
       await _saveProject();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Floorplan image imported')));
@@ -499,6 +511,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         id: _currentProjectId,
         name: projectName,
         rooms: _completedRooms,
+        openings: _openings,
         viewport: _vp,
         useImperial: _useImperial,
         backgroundImagePath: _backgroundImagePath,
@@ -622,6 +635,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         _draftRoomVertices = state.draftVertices != null
             ? List<Offset>.from(state.draftVertices!)
             : null;
+        _draftStartedFromVertexOrDoor = false;
         
         // Clear selection and hover state
         _selectedRoomIndex = null;
@@ -648,6 +662,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         _draftRoomVertices = state.draftVertices != null
             ? List<Offset>.from(state.draftVertices!)
             : null;
+        _draftStartedFromVertexOrDoor = false;
         
         // Clear selection and hover state
         _selectedRoomIndex = null;
@@ -687,6 +702,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       _selectedVertex = null;
       _hoveredVertex = null;
       _isEditingVertex = false;
+      if (!_isPanMode) _isAddDoorMode = false; // exit add-door when switching to draw mode
     });
   }
 
@@ -696,6 +712,21 @@ class PlanCanvasState extends State<PlanCanvas> {
     // Calibration tap handling (takes priority over drawing/selecting)
     if (_isCalibrating) {
       _handleCalibrationTap(localPosition);
+      return;
+    }
+    // Add door mode: tap near a wall to place an opening
+    if (_isAddDoorMode) {
+      final worldPos = _vp.screenToWorld(localPosition);
+      const defaultWidthMm = 900.0;
+      const maxDistanceMm = 200.0; // tap must be within 200mm of wall
+      final result = _findClosestEdgeToPoint(worldPos, maxDistanceMm: maxDistanceMm);
+      if (result != null) {
+        final offsetMm = (result.offsetAlongEdgeMm - defaultWidthMm / 2).clamp(0.0, result.edgeLenMm - defaultWidthMm);
+        setState(() {
+          _openings.add(Opening(roomIndex: result.roomIndex, edgeIndex: result.edgeIndex, offsetMm: offsetMm, widthMm: defaultWidthMm));
+          _hasUnsavedChanges = true;
+        });
+      }
       return;
     }
     // Measure mode: now click-and-drag (handled in scale gesture / pointer events); no tap handling
@@ -712,18 +743,105 @@ class PlanCanvasState extends State<PlanCanvas> {
       });
       return;
     }
-    if (_draftRoomVertices == null) {
-      if (_isPanMode) {
-        // Floorplan contextual menu: tap on image opens menu; tap outside closes it.
-        if (_backgroundImage != null && _backgroundImageState != null) {
-          if (_isPointOnBackgroundImage(localPosition)) {
-            setState(() => _showFloorplanMenu = true);
-            return;
-          }
-          if (_showFloorplanMenu) {
-            setState(() => _showFloorplanMenu = false);
-          }
+    // Draw mode, draft has only one point from vertex/door: tap same vertex/door again → deselect; tap empty → deselect
+    if (_draftRoomVertices != null &&
+        _draftRoomVertices!.length == 1 &&
+        _draftStartedFromVertexOrDoor &&
+        !_isPanMode) {
+      final draftPoint = _draftRoomVertices!.single;
+      final clickedVertex = _findVertexAtPosition(localPosition);
+      if (clickedVertex != null) {
+        final vertexWorld = _getVertexWorldPosition(clickedVertex.roomIndex, clickedVertex.vertexIndex);
+        if ((vertexWorld - draftPoint).distance < 0.01) {
+          setState(() {
+            _draftRoomVertices = null;
+            _draftStartedFromVertexOrDoor = false;
+            _dragMoved = false;
+            _dragStartPositionWorldMm = null;
+            _hoverPositionWorldMm = null;
+            _lengthInputController.clear();
+            _desiredLengthMm = null;
+          });
+          return;
         }
+      }
+      final doorEdgePoint = _findDoorEdgePointAtPosition(localPosition);
+      if (doorEdgePoint != null && (doorEdgePoint - draftPoint).distance < 0.01) {
+        setState(() {
+          _draftRoomVertices = null;
+          _draftStartedFromVertexOrDoor = false;
+          _dragMoved = false;
+          _dragStartPositionWorldMm = null;
+          _hoverPositionWorldMm = null;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+        });
+        return;
+      }
+      if (_findVertexAtPosition(localPosition) == null && _findDoorEdgePointAtPosition(localPosition) == null) {
+        setState(() {
+          _draftRoomVertices = null;
+          _draftStartedFromVertexOrDoor = false;
+          _dragMoved = false;
+          _dragStartPositionWorldMm = null;
+          _hoverPositionWorldMm = null;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+        });
+        return;
+      }
+    }
+
+    // Draw mode, no draft yet: tap on vertex or door edge → start drawing from that point (web tap path)
+    if (_draftRoomVertices == null && !_isPanMode) {
+      final clickedVertex = _findVertexAtPosition(localPosition);
+      if (clickedVertex != null) {
+        final firstPoint = _getVertexWorldPosition(clickedVertex.roomIndex, clickedVertex.vertexIndex);
+        setState(() {
+          _selectedVertex = null;
+          _isEditingVertex = false;
+          _draftRoomVertices = [firstPoint];
+          _draftStartedFromVertexOrDoor = true;
+          _dragStartPositionWorldMm = firstPoint;
+          _isDragging = false;
+          _hoverPositionWorldMm = firstPoint;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+          _saveHistoryState();
+        });
+        return;
+      }
+      final doorEdgePoint = _findDoorEdgePointAtPosition(localPosition);
+      if (doorEdgePoint != null) {
+        setState(() {
+          _selectedVertex = null;
+          _isEditingVertex = false;
+          _draftRoomVertices = [doorEdgePoint];
+          _draftStartedFromVertexOrDoor = true;
+          _dragStartPositionWorldMm = doorEdgePoint;
+          _isDragging = false;
+          _hoverPositionWorldMm = doorEdgePoint;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+          _saveHistoryState();
+        });
+        return;
+      }
+    }
+
+    if (_draftRoomVertices == null) {
+      final worldPos = _vp.screenToWorld(localPosition);
+      final clickedRoomIndex = _findRoomAtPosition(worldPos);
+      final tapOnImage = _backgroundImage != null &&
+          _backgroundImageState != null &&
+          _isPointOnBackgroundImage(localPosition);
+
+      if (_isPanMode) {
+        // Tap outside image closes floorplan menu
+        if (_showFloorplanMenu && !tapOnImage) {
+          setState(() => _showFloorplanMenu = false);
+        }
+        // Priority 1: vertex (exact hit on room vertex) — vertex wins over image
         final clickedVertex = _findVertexAtPosition(localPosition);
         if (clickedVertex != null) {
           if (_selectedVertex != null &&
@@ -736,7 +854,6 @@ class PlanCanvasState extends State<PlanCanvas> {
             });
             return;
           }
-          // Set synchronously so next touch (drag) sees it before setState rebuilds
           _pendingSelectedVertex = clickedVertex;
           setState(() {
             _selectedVertex = clickedVertex;
@@ -753,6 +870,11 @@ class PlanCanvasState extends State<PlanCanvas> {
             _isEditingVertex = false;
           });
         }
+        // Open image menu when tap is on image and not on vertex/room (canvas content wins)
+        if (tapOnImage && clickedRoomIndex == null) {
+          setState(() => _showFloorplanMenu = true);
+          return;
+        }
       } else {
         if (_selectedVertex != null) {
           setState(() {
@@ -762,9 +884,18 @@ class PlanCanvasState extends State<PlanCanvas> {
         }
       }
 
-      final worldPos = _vp.screenToWorld(localPosition);
-      final clickedRoomIndex = _findRoomAtPosition(worldPos);
+      // Priority 2: room (tap inside a drawn room) — room wins over image when tap hits both
       if (clickedRoomIndex != null) {
+        // Second tap on same room: deselect
+        if (_selectedRoomIndex == clickedRoomIndex) {
+          _pendingSelectedVertex = null;
+          setState(() {
+            _selectedVertex = null;
+            _selectedRoomIndex = null;
+            _isEditingVertex = false;
+          });
+          return;
+        }
         final room = _completedRooms[clickedRoomIndex];
         final center = _getRoomCenter(room.vertices);
         final centerScreen = _vp.worldToScreen(center);
@@ -778,14 +909,15 @@ class PlanCanvasState extends State<PlanCanvas> {
         if (distance < 40) {
           _editRoomName(clickedRoomIndex);
         }
-      } else {
-        _pendingSelectedVertex = null;
-        setState(() {
-          _selectedRoomIndex = null;
-          _selectedVertex = null;
-          _isEditingVertex = false;
-        });
+        return;
       }
+
+      _pendingSelectedVertex = null;
+      setState(() {
+        _selectedRoomIndex = null;
+        _selectedVertex = null;
+        _isEditingVertex = false;
+      });
     }
   }
 
@@ -811,6 +943,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         _measureCurrentWorld = null;
         _isAddDimensionMode = false;
         _addDimensionP1World = null;
+        _isAddDoorMode = false;
       }
     });
   }
@@ -878,6 +1011,19 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  void _removeFloorplanImage() {
+    _endFloorplanResize();
+    setState(() {
+      _backgroundImage?.dispose();
+      _backgroundImagePath = null;
+      _backgroundImageState = null;
+      _backgroundImage = null;
+      _showFloorplanMenu = false;
+      _isMoveFloorplanMode = false;
+      _hasUnsavedChanges = true;
+    });
+  }
+
   void _toggleMeasureMode() {
     setState(() {
       if (_isMeasureMode) {
@@ -890,6 +1036,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         _measureCurrentWorld = null;
         _isAddDimensionMode = false;
         _addDimensionP1World = null;
+        _isAddDoorMode = false;
         _isCalibrating = false;
         _calibrationP1Screen = null;
         _calibrationP2Screen = null;
@@ -908,6 +1055,25 @@ class PlanCanvasState extends State<PlanCanvas> {
         _isMeasureMode = false;
         _measurePointsWorld.clear();
         _measureCurrentWorld = null;
+        _isAddDoorMode = false;
+        _isCalibrating = false;
+        _calibrationP1Screen = null;
+        _calibrationP2Screen = null;
+      }
+    });
+  }
+
+  void _toggleAddDoorMode() {
+    setState(() {
+      if (_isAddDoorMode) {
+        _isAddDoorMode = false;
+      } else {
+        _isAddDoorMode = true;
+        _isMeasureMode = false;
+        _measurePointsWorld.clear();
+        _measureCurrentWorld = null;
+        _isAddDimensionMode = false;
+        _addDimensionP1World = null;
         _isCalibrating = false;
         _calibrationP1Screen = null;
         _calibrationP2Screen = null;
@@ -931,13 +1097,15 @@ class PlanCanvasState extends State<PlanCanvas> {
   }
 
   /// True if the given screen point lies inside the drawn background image bounds.
+  /// Uses a 1px tolerance so edge taps are not missed due to rounding.
   bool _isPointOnBackgroundImage(Offset screenPx) {
     if (_backgroundImage == null || _backgroundImageState == null) return false;
     final px = _screenToBackgroundImagePixel(screenPx);
     if (px == null) return false;
     final w = _backgroundImage!.width.toDouble();
     final h = _backgroundImage!.height.toDouble();
-    return px.dx >= 0 && px.dx <= w && px.dy >= 0 && px.dy <= h;
+    const tol = 1.0;
+    return px.dx >= -tol && px.dx <= w + tol && px.dy >= -tol && px.dy <= h + tol;
   }
 
   /// Screen-space rectangle of the drawn background image (for anchoring the floorplan toolbar).
@@ -1375,6 +1543,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                 _saveHistoryState();
                 setState(() {
                   _draftRoomVertices = null;
+                  _draftStartedFromVertexOrDoor = false;
                   _drawFromStart = false;
                   _hoverPositionWorldMm = null;
                 });
@@ -1554,17 +1723,24 @@ class PlanCanvasState extends State<PlanCanvas> {
                     });
                     return;
                   }
+                  if (_isAddDoorMode) {
+                    setState(() => _panStartScreen = details.localFocalPoint);
+                    return;
+                  }
                   if (_isPanMode) {
-                    // Pan mode: if a vertex is selected (state or pending from tap), treat this drag as vertex edit
+                    // Pan mode: tap on background image should open floorplan menu, not vertex edit
+                    final touchOnImage = _backgroundImage != null &&
+                        _backgroundImageState != null &&
+                        _isPointOnBackgroundImage(details.localFocalPoint);
                     final hasSelectedVertex = (_selectedVertex != null || _pendingSelectedVertex != null) && _draftRoomVertices == null;
-                    if (hasSelectedVertex) {
+                    if (hasSelectedVertex && !touchOnImage) {
                       _scaleGestureIsVertexEdit = true;
                       final v = _selectedVertex ?? _pendingSelectedVertex;
                       if (_debugVertexEdit) debugPrint('PlanCanvas: scaleStart → vertex edit (vertex=${v!.roomIndex},${v.vertexIndex})');
                       _handlePanStart(details.localFocalPoint);
                     } else {
                       _scaleGestureIsVertexEdit = false;
-                      if (_debugVertexEdit) debugPrint('PlanCanvas: scaleStart → potential pan (no selected vertex)');
+                      if (_debugVertexEdit) debugPrint('PlanCanvas: scaleStart → potential pan/tap (no vertex or tap on image)');
                       setState(() {
                         _panStartScreen = details.localFocalPoint;
                       });
@@ -1698,8 +1874,23 @@ class PlanCanvasState extends State<PlanCanvas> {
                 }
                 // If we were drawing (single finger gesture), finish drawing
                 if (_isDragging && _lastScalePosition != null) {
-                  _handlePanEnd(_lastScalePosition!);
-                  _lastScalePosition = null;
+                  // Connected to vertex/door with 1 point and lifted without moving: stay connected (tap same vertex again to deselect)
+                  final stayedConnected = _draftRoomVertices != null &&
+                      _draftRoomVertices!.length == 1 &&
+                      _draftStartedFromVertexOrDoor &&
+                      !_dragMoved &&
+                      !_isPanMode;
+                  if (stayedConnected) {
+                    setState(() {
+                      _isDragging = false;
+                      _dragMoved = false;
+                    });
+                    _lastScalePosition = null;
+                  } else {
+                    _handlePanEnd(_lastScalePosition!);
+                    setState(() => _dragMoved = false);
+                    _lastScalePosition = null;
+                  }
                 }
               },
         
@@ -1741,6 +1932,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                 painter: _PlanPainter(
                   vp: _vp,
                   completedRooms: _safeCopyRooms(_completedRooms),
+                  openings: List<Opening>.from(_openings),
                   draftRoomVertices: _draftRoomVertices != null
                       ? List<Offset>.from(_draftRoomVertices!)
                       : null,
@@ -1821,6 +2013,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             onToggleMeasureMode: _toggleMeasureMode,
             isAddDimensionMode: _isAddDimensionMode,
             onToggleAddDimensionMode: _toggleAddDimensionMode,
+            isAddDoorMode: _isAddDoorMode,
+            onToggleAddDoorMode: _toggleAddDoorMode,
             hasPlacedDimensions: _placedDimensions.isNotEmpty,
             onRemoveLastDimension: _removeLastDimension,
             onZoomIn: _zoomIn,
@@ -1916,6 +2110,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                     onFit: _fitFloorplanToView,
                     onReset: _resetFloorplanTransform,
                     onToggleMoveMode: _toggleMoveFloorplanMode,
+                    onDelete: _removeFloorplanImage,
                     onOpacityChanged: (v) {
                       setState(() {
                         _backgroundImageState = _backgroundImageState!.copyWith(opacity: v);
@@ -1965,6 +2160,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             onToggleMeasureMode: _toggleMeasureMode,
             isAddDimensionMode: _isAddDimensionMode,
             onToggleAddDimensionMode: _toggleAddDimensionMode,
+            isAddDoorMode: _isAddDoorMode,
+            onToggleAddDoorMode: _toggleAddDoorMode,
             hasPlacedDimensions: _placedDimensions.isNotEmpty,
             onRemoveLastDimension: _removeLastDimension,
             onZoomIn: _zoomIn,
@@ -2027,6 +2224,55 @@ class PlanCanvasState extends State<PlanCanvas> {
     );
   }
 
+  /// If [worldPositionMm] is near an existing vertex or a door opening endpoint (in screen space),
+  /// return that point in world coordinates so new segments can snap to it. Otherwise return null.
+  Offset? _snapToVertexOrDoor(Offset worldPositionMm) {
+    final screen = _vp.worldToScreen(worldPositionMm);
+    final tolerancePx = _vertexSelectTolerancePx;
+    double closestDist = tolerancePx;
+    Offset? closestWorld;
+
+    for (int ri = 0; ri < _completedRooms.length; ri++) {
+      final room = _completedRooms[ri];
+      final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+          ? room.vertices.sublist(0, room.vertices.length - 1)
+          : room.vertices;
+      for (int vi = 0; vi < verts.length; vi++) {
+        final screenPos = _vp.worldToScreen(verts[vi]);
+        final d = (screen - screenPos).distance;
+        if (d < closestDist) {
+          closestDist = d;
+          closestWorld = verts[vi];
+        }
+      }
+    }
+
+    for (final o in _openings) {
+      if (o.roomIndex < 0 || o.roomIndex >= _completedRooms.length) continue;
+      final room = _completedRooms[o.roomIndex];
+      final verts = room.vertices;
+      if (o.edgeIndex >= verts.length) continue;
+      final i1 = (o.edgeIndex + 1) % verts.length;
+      final v0 = verts[o.edgeIndex];
+      final v1 = verts[i1];
+      final edgeLen = (v1 - v0).distance;
+      if (edgeLen <= 0) continue;
+      final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+      final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+      for (final world in [gapStart, gapEnd]) {
+        final screenPos = _vp.worldToScreen(world);
+        final d = (screen - screenPos).distance;
+        if (d < closestDist) {
+          closestDist = d;
+          closestWorld = world;
+        }
+      }
+    }
+    return closestWorld;
+  }
+
   /// Snap a world-space position to the nearest grid point.
   /// 
   /// This ensures vertices align to the grid for precise floor plan drawing.
@@ -2065,7 +2311,10 @@ class PlanCanvasState extends State<PlanCanvas> {
   }
 
   /// Grid-snap then optionally angle-snap from last draft vertex. Use when updating hover or adding a vertex.
+  /// Snaps to existing vertices and door-edge points first if within tolerance.
   Offset _snapToGridAndAngle(Offset worldPositionMm) {
+    final vertexOrDoor = _snapToVertexOrDoor(worldPositionMm);
+    if (vertexOrDoor != null) return vertexOrDoor;
     final snapped = _snapToGrid(worldPositionMm);
     if (_drawAngleLock == DrawAngleLock.none) return snapped;
     if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty) return snapped;
@@ -2131,6 +2380,44 @@ class PlanCanvasState extends State<PlanCanvas> {
     
     if (uniqueVertices.isEmpty) return Offset.zero;
     return Offset(centerX / uniqueVertices.length, centerY / uniqueVertices.length);
+  }
+
+  /// World position of a room vertex (by room index and vertex index).
+  Offset _getVertexWorldPosition(int roomIndex, int vertexIndex) {
+    final room = _completedRooms[roomIndex];
+    return room.vertices[vertexIndex];
+  }
+
+  /// If the screen position is near one of the door opening endpoints (gap start/end),
+  /// returns that point in world coordinates. Used to start drawing from a door edge.
+  Offset? _findDoorEdgePointAtPosition(Offset screenPosition) {
+    final tolerancePx = _vertexSelectTolerancePx;
+    double closestDist = tolerancePx;
+    Offset? closestWorld;
+    for (final o in _openings) {
+      if (o.roomIndex < 0 || o.roomIndex >= _completedRooms.length) continue;
+      final room = _completedRooms[o.roomIndex];
+      final verts = room.vertices;
+      if (o.edgeIndex >= verts.length) continue;
+      final i1 = (o.edgeIndex + 1) % verts.length;
+      final v0 = verts[o.edgeIndex];
+      final v1 = verts[i1];
+      final edgeLen = (v1 - v0).distance;
+      if (edgeLen <= 0) continue;
+      final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+      final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+      for (final world in [gapStart, gapEnd]) {
+        final screen = _vp.worldToScreen(world);
+        final d = (screenPosition - screen).distance;
+        if (d < closestDist) {
+          closestDist = d;
+          closestWorld = world;
+        }
+      }
+    }
+    return closestWorld;
   }
 
   /// Find the closest vertex to a screen position, if within tolerance.
@@ -2220,11 +2507,87 @@ class PlanCanvasState extends State<PlanCanvas> {
     }
     
     // In draw mode, or if no vertex clicked: proceed with drawing
-    // This allows drawing over existing room lines when in draw mode
-    
-    // Otherwise, proceed with normal room drawing
     final worldPosition = _vp.screenToWorld(screenPosition);
-    final snappedPosition = _snapToGrid(worldPosition);
+    
+    // In draw mode, connected to vertex/door (1 point): tap same vertex/door again → deselect so user can draw as normal
+    if (_draftRoomVertices != null &&
+        _draftRoomVertices!.length == 1 &&
+        _draftStartedFromVertexOrDoor &&
+        !_isPanMode) {
+      final draftPoint = _draftRoomVertices!.single;
+      final clickedVertex = _findVertexAtPosition(screenPosition);
+      if (clickedVertex != null) {
+        final vertexWorld = _getVertexWorldPosition(clickedVertex.roomIndex, clickedVertex.vertexIndex);
+        if ((vertexWorld - draftPoint).distance < 0.01) {
+          setState(() {
+            _draftRoomVertices = null;
+            _draftStartedFromVertexOrDoor = false;
+            _dragMoved = false;
+            _dragStartPositionWorldMm = null;
+            _hoverPositionWorldMm = null;
+            _lengthInputController.clear();
+            _desiredLengthMm = null;
+          });
+          return;
+        }
+      }
+      final doorEdgePoint = _findDoorEdgePointAtPosition(screenPosition);
+      if (doorEdgePoint != null && (doorEdgePoint - draftPoint).distance < 0.01) {
+        setState(() {
+          _draftRoomVertices = null;
+          _draftStartedFromVertexOrDoor = false;
+          _dragMoved = false;
+          _dragStartPositionWorldMm = null;
+          _hoverPositionWorldMm = null;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+        });
+        return;
+      }
+    }
+    
+    // In draw mode, starting a new room: if tap is on an existing vertex or door edge, use that exact point so the new room shares it
+    if (_draftRoomVertices == null && !_isPanMode) {
+      final clickedVertex = _findVertexAtPosition(screenPosition);
+      if (clickedVertex != null) {
+        final firstPoint = _getVertexWorldPosition(clickedVertex.roomIndex, clickedVertex.vertexIndex);
+        _pendingSelectedVertex = null;
+        setState(() {
+          _selectedVertex = null;
+          _isEditingVertex = false;
+          _draftRoomVertices = [firstPoint];
+          _draftStartedFromVertexOrDoor = true;
+          _dragMoved = false;
+          _dragStartPositionWorldMm = firstPoint;
+          _isDragging = true;
+          _hoverPositionWorldMm = firstPoint;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+          _saveHistoryState();
+        });
+        return;
+      }
+      final doorEdgePoint = _findDoorEdgePointAtPosition(screenPosition);
+      if (doorEdgePoint != null) {
+        _pendingSelectedVertex = null;
+        setState(() {
+          _selectedVertex = null;
+          _isEditingVertex = false;
+          _draftRoomVertices = [doorEdgePoint];
+          _draftStartedFromVertexOrDoor = true;
+          _dragMoved = false;
+          _dragStartPositionWorldMm = doorEdgePoint;
+          _isDragging = true;
+          _hoverPositionWorldMm = doorEdgePoint;
+          _lengthInputController.clear();
+          _desiredLengthMm = null;
+          _saveHistoryState();
+        });
+        return;
+      }
+    }
+    
+    final snappedPosition = _snapToGridAndAngle(worldPosition);
     
     _pendingSelectedVertex = null;
     setState(() {
@@ -2232,8 +2595,10 @@ class PlanCanvasState extends State<PlanCanvas> {
       _isEditingVertex = false;
       
       if (_draftRoomVertices == null) {
-        // Start a new room with first vertex (snapped to grid)
+        // Start a new room with first vertex (snapped to grid, or to existing vertex/door if near)
         _draftRoomVertices = [snappedPosition];
+        _draftStartedFromVertexOrDoor = false;
+        _dragMoved = false;
         _dragStartPositionWorldMm = snappedPosition;
         _isDragging = true;
         _hoverPositionWorldMm = snappedPosition;
@@ -2322,6 +2687,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     final snappedPosition = _snapToGridAndAngle(worldPosition);
     
     setState(() {
+      _dragMoved = true;
       // Update hover position to show preview line (snapped to grid and optionally angle)
       // Don't apply length constraint during drawing - user draws freely first
       _hoverPositionWorldMm = snappedPosition;
@@ -2485,6 +2851,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       
       // Clear draft
       _draftRoomVertices = null;
+      _draftStartedFromVertexOrDoor = false;
       _drawFromStart = false;
       _hoverPositionWorldMm = null;
       _lengthInputController.clear();
@@ -2672,6 +3039,49 @@ class PlanCanvasState extends State<PlanCanvas> {
     );
   }
   
+  /// Closest point on segment [a, b] to point p; returns t in [0,1] and distance.
+  static ({double t, double distanceMm}) _closestPointOnSegment(Offset p, Offset a, Offset b) {
+    final v = Offset(b.dx - a.dx, b.dy - a.dy);
+    final w = Offset(p.dx - a.dx, p.dy - a.dy);
+    final c1 = w.dx * v.dx + w.dy * v.dy;
+    final c2 = v.dx * v.dx + v.dy * v.dy;
+    final t = c2 <= 0 ? 0.0 : (c1 / c2).clamp(0.0, 1.0);
+    final proj = Offset(a.dx + t * v.dx, a.dy + t * v.dy);
+    final dist = (p - proj).distance;
+    return (t: t, distanceMm: dist);
+  }
+
+  /// Find the edge (room index + edge index) closest to the given world point.
+  /// Returns null if no edge is within [maxDistanceMm].
+  ({int roomIndex, int edgeIndex, double offsetAlongEdgeMm, double edgeLenMm})? _findClosestEdgeToPoint(Offset worldPosMm, {double maxDistanceMm = 200}) {
+    double bestDist = double.infinity;
+    int? bestRoom;
+    int? bestEdge;
+    double? bestT;
+    double? bestLen;
+    for (int ri = 0; ri < _completedRooms.length; ri++) {
+      final room = _completedRooms[ri];
+      final verts = room.vertices;
+      for (int i = 0; i < verts.length; i++) {
+        final i1 = (i + 1) % verts.length;
+        final a = verts[i];
+        final b = verts[i1];
+        final len = (b - a).distance;
+        if (len <= 0) continue;
+        final res = _closestPointOnSegment(worldPosMm, a, b);
+        if (res.distanceMm < bestDist && res.distanceMm <= maxDistanceMm) {
+          bestDist = res.distanceMm;
+          bestRoom = ri;
+          bestEdge = i;
+          bestT = res.t;
+          bestLen = len;
+        }
+      }
+    }
+    if (bestRoom == null || bestEdge == null || bestT == null || bestLen == null) return null;
+    return (roomIndex: bestRoom, edgeIndex: bestEdge, offsetAlongEdgeMm: bestT * bestLen, edgeLenMm: bestLen);
+  }
+
   /// Find which room (if any) contains the given world position.
   /// Returns the index of the room, or null if no room contains the point.
   int? _findRoomAtPosition(Offset worldPosMm) {
@@ -3096,6 +3506,7 @@ class _PlanPainter extends CustomPainter {
   final bool drawFromStart;
   final ui.Image? backgroundImage;
   final BackgroundImageState? backgroundImageState;
+  final List<Opening> openings;
 
   _PlanPainter({
     required this.vp,
@@ -3120,9 +3531,11 @@ class _PlanPainter extends CustomPainter {
     this.drawFromStart = false,
     this.backgroundImage,
     this.backgroundImageState,
+    List<Opening>? openings,
   })  : completedRooms = completedRooms ?? [],
         measurePointsWorld = measurePointsWorld ?? [],
-        placedDimensions = placedDimensions ?? [];
+        placedDimensions = placedDimensions ?? [],
+        openings = openings ?? [];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3173,9 +3586,7 @@ class _PlanPainter extends CustomPainter {
                 try {
                   final room = completedRooms[i];
                   if (room != null && room.vertices.isNotEmpty) {
-                    // Pass selection state to highlight selected room
-                    _drawRoom(canvas, room, isDraft: false, isSelected: i == selectedRoomIndex);
-                    // Draw vertices for this room
+                    _drawRoom(canvas, room, roomIndex: i, isDraft: false, isSelected: i == selectedRoomIndex);
                     _drawRoomVertices(canvas, room, roomIndex: i);
                   }
                 } catch (e) {
@@ -3192,8 +3603,7 @@ class _PlanPainter extends CustomPainter {
               for (final room in completedRooms) {
                 try {
                     if (room != null && room.vertices.isNotEmpty) {
-                      _drawRoom(canvas, room, isDraft: false, isSelected: index == selectedRoomIndex);
-                      // Draw vertices for this room
+                      _drawRoom(canvas, room, roomIndex: index, isDraft: false, isSelected: index == selectedRoomIndex);
                       _drawRoomVertices(canvas, room, roomIndex: index);
                       index++;
                     }
@@ -3210,6 +3620,9 @@ class _PlanPainter extends CustomPainter {
         // Handle case where completedRooms is not accessible at all (hot reload issue)
         debugPrint('Error accessing completedRooms: $e');
       }
+
+      // Draw door-edge interaction points (gap start/end) so users can snap or start drawing from them
+      _drawDoorEdgePoints(canvas);
 
       // Draw draft room (vertices and lines, with preview)
       try {
@@ -3307,8 +3720,40 @@ class _PlanPainter extends CustomPainter {
     }
   }
 
+  /// Draw small handles at each door opening endpoint so they are visible as interaction points.
+  void _drawDoorEdgePoints(Canvas canvas) {
+    const radius = 5.0;
+    final fillPaint = Paint()
+      ..color = Colors.brown.shade600
+      ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final o in openings) {
+      if (o.roomIndex < 0 || o.roomIndex >= completedRooms.length) continue;
+      final room = completedRooms[o.roomIndex];
+      final verts = room.vertices;
+      if (o.edgeIndex >= verts.length) continue;
+      final i1 = (o.edgeIndex + 1) % verts.length;
+      final v0 = verts[o.edgeIndex];
+      final v1 = verts[i1];
+      final edgeLen = (v1 - v0).distance;
+      if (edgeLen <= 0) continue;
+      final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+      final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+      for (final world in [gapStart, gapEnd]) {
+        final screen = vp.worldToScreen(world);
+        canvas.drawCircle(screen, radius, fillPaint);
+        canvas.drawCircle(screen, radius, strokePaint);
+      }
+    }
+  }
+
   /// Draw a completed room as a filled polygon with outline.
-  void _drawRoom(Canvas canvas, Room room, {required bool isDraft, bool isSelected = false}) {
+  void _drawRoom(Canvas canvas, Room room, {required int roomIndex, required bool isDraft, bool isSelected = false}) {
     if (room.vertices.isEmpty) return;
 
     final screenPoints = room.vertices
@@ -3328,17 +3773,61 @@ class _PlanPainter extends CustomPainter {
     );
 
     // Outline - visible stroke (thicker so lines don’t disappear when zoomed)
-    final outlinePath = Path();
-    outlinePath.addPolygon(screenPoints, true);
-    canvas.drawPath(
-      outlinePath,
-      Paint()
-        ..color = isSelected ? Colors.orange : Colors.blue.shade700
+    final outlineColor = isSelected ? Colors.orange : Colors.blue.shade700;
+    final strokeWidth = isSelected ? 3.5 : 2.5;
+    final outlinePaint = Paint()
+      ..color = outlineColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+
+    final n = room.vertices.length;
+    for (int i = 0; i < n; i++) {
+      final i1 = (i + 1) % n;
+      final v0 = room.vertices[i];
+      final v1 = room.vertices[i1];
+      final p0 = vp.worldToScreen(v0);
+      final p1 = vp.worldToScreen(v1);
+      final edgeLenMm = (v1 - v0).distance;
+      if (edgeLenMm <= 0) continue;
+
+      Opening? openingOnEdge;
+      for (final o in openings) {
+        if (o.roomIndex == roomIndex && o.edgeIndex == i) {
+          openingOnEdge = o;
+          break;
+        }
+      }
+      if (openingOnEdge == null) {
+        canvas.drawLine(p0, p1, outlinePaint);
+        continue;
+      }
+
+      final offsetMm = openingOnEdge.offsetMm.clamp(0.0, edgeLenMm);
+      final widthMm = openingOnEdge.widthMm.clamp(0.0, edgeLenMm - offsetMm);
+      final t0 = offsetMm / edgeLenMm;
+      final t1 = (offsetMm + widthMm) / edgeLenMm;
+      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+      final gapStartScreen = vp.worldToScreen(gapStart);
+      final gapEndScreen = vp.worldToScreen(gapEnd);
+
+      canvas.drawLine(p0, gapStartScreen, outlinePaint);
+      canvas.drawLine(gapEndScreen, p1, outlinePaint);
+
+      final doorPaint = Paint()
+        ..color = Colors.brown.shade700
         ..style = PaintingStyle.stroke
-        ..strokeWidth = isSelected ? 3.5 : 2.5,
-    );
-    
-    // Draw room name/label or name button centered on the room
+        ..strokeWidth = strokeWidth;
+      final gapMid = vp.worldToScreen(Offset(
+        (gapStart.dx + gapEnd.dx) / 2,
+        (gapStart.dy + gapEnd.dy) / 2,
+      ));
+      final gapVec = gapEndScreen - gapStartScreen;
+      final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
+      final rect = Rect.fromCircle(center: gapMid, radius: radius);
+      canvas.drawArc(rect, 0, math.pi / 2, false, doorPaint);
+    }
+
     _drawRoomLabel(canvas, room, screenPoints);
     
     // Draw wall measurements/dimensions
@@ -4090,6 +4579,7 @@ class _FloorplanContextMenu extends StatelessWidget {
   final VoidCallback onFit;
   final VoidCallback onReset;
   final VoidCallback onToggleMoveMode;
+  final VoidCallback onDelete;
   final ValueChanged<double> onOpacityChanged;
 
   const _FloorplanContextMenu({
@@ -4100,6 +4590,7 @@ class _FloorplanContextMenu extends StatelessWidget {
     required this.onFit,
     required this.onReset,
     required this.onToggleMoveMode,
+    required this.onDelete,
     required this.onOpacityChanged,
   });
 
@@ -4147,6 +4638,12 @@ class _FloorplanContextMenu extends StatelessWidget {
                 ),
                 tooltip: 'Move floorplan',
                 onPressed: locked ? null : onToggleMoveMode,
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                tooltip: 'Remove floorplan image',
+                onPressed: onDelete,
               ),
               const SizedBox(width: 12),
               Text('Opacity', style: Theme.of(context).textTheme.bodySmall),
