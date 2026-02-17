@@ -318,7 +318,6 @@ class _RoomListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final roomName = room.name ?? 'Unnamed Room';
     final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
 
     return InkWell(
@@ -340,55 +339,14 @@ class _RoomListItem extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Room icon
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                Icons.room,
-                color: Theme.of(context).primaryColor,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Room name and area
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    roomName,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.square_foot,
-                        size: 14,
-                        color: Theme.of(context).textTheme.bodySmall?.color,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        areaText,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7),
-                            ),
-                      ),
-                    ],
-                  ),
-                ],
+              child: Text(
+                areaText,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
-            // Delete button
             if (onDelete != null)
               IconButton(
                 icon: const Icon(Icons.delete_outline, size: 20),

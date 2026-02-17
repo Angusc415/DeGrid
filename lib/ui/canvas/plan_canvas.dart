@@ -109,6 +109,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   final List<({Offset fromMm, Offset toMm})> _placedDimensions = [];
   /// Add door/opening mode: tap near a wall to place an opening.
   bool _isAddDoorMode = false;
+  /// When set, user has tapped a wall; show highlight and dialog to confirm width/position before placing.
+  ({int roomIndex, int edgeIndex, double edgeLenMm})? _pendingDoorEdge;
   
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
@@ -714,18 +716,20 @@ class PlanCanvasState extends State<PlanCanvas> {
       _handleCalibrationTap(localPosition);
       return;
     }
-    // Add door mode: tap near a wall to place an opening
+    // Add door mode: tap near a wall to select it, then show dialog for accurate width/position
     if (_isAddDoorMode) {
       final worldPos = _vp.screenToWorld(localPosition);
-      const defaultWidthMm = 900.0;
-      const maxDistanceMm = 200.0; // tap must be within 200mm of wall
+      const maxDistanceMm = 150.0; // tap must be within 150mm of wall
       final result = _findClosestEdgeToPoint(worldPos, maxDistanceMm: maxDistanceMm);
       if (result != null) {
-        final offsetMm = (result.offsetAlongEdgeMm - defaultWidthMm / 2).clamp(0.0, result.edgeLenMm - defaultWidthMm);
         setState(() {
-          _openings.add(Opening(roomIndex: result.roomIndex, edgeIndex: result.edgeIndex, offsetMm: offsetMm, widthMm: defaultWidthMm));
-          _hasUnsavedChanges = true;
+          _pendingDoorEdge = (roomIndex: result.roomIndex, edgeIndex: result.edgeIndex, edgeLenMm: result.edgeLenMm);
         });
+        _showAddDoorDialog(
+          roomIndex: result.roomIndex,
+          edgeIndex: result.edgeIndex,
+          edgeLenMm: result.edgeLenMm,
+        );
       }
       return;
     }
@@ -1933,6 +1937,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                   vp: _vp,
                   completedRooms: _safeCopyRooms(_completedRooms),
                   openings: List<Opening>.from(_openings),
+                  pendingDoorEdge: _pendingDoorEdge,
                   draftRoomVertices: _draftRoomVertices != null
                       ? List<Offset>.from(_draftRoomVertices!)
                       : null,
@@ -3038,6 +3043,167 @@ class PlanCanvasState extends State<PlanCanvas> {
       ),
     );
   }
+
+  /// Show dialog to set door/opening width and position (mm). Called after user taps a wall in add-door mode.
+  Future<void> _showAddDoorDialog({
+    required int roomIndex,
+    required int edgeIndex,
+    required double edgeLenMm,
+  }) async {
+    final context = this.context;
+    if (!context.mounted) return;
+    final edgeLenRound = (edgeLenMm.round()).toDouble();
+    double widthMm = 900;
+    bool centerOnWall = true;
+    bool isDoor = true;
+    double offsetMm = (edgeLenRound - widthMm) / 2;
+    final widthController = TextEditingController(text: '900');
+    final offsetController = TextEditingController(text: offsetMm.round().toString());
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void updateOffsetFromCenter() {
+              if (centerOnWall) {
+                offsetMm = (edgeLenRound - widthMm).clamp(0.0, double.infinity) / 2;
+                offsetController.text = offsetMm.round().toString();
+              }
+            }
+            return AlertDialog(
+              title: const Text('Add door or opening'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Wall length: ${edgeLenRound.round()} mm',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Type', style: TextStyle(fontWeight: FontWeight.w500)),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Door'),
+                          selected: isDoor,
+                          onSelected: (v) => setDialogState(() => isDoor = true),
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: const Text('Opening'),
+                          selected: !isDoor,
+                          onSelected: (v) => setDialogState(() => isDoor = false),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      isDoor ? 'Door width (mm)' : 'Opening width (mm)',
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<double>(
+                      value: widthMm,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 600, child: Text('600 mm')),
+                        DropdownMenuItem(value: 750, child: Text('750 mm')),
+                        DropdownMenuItem(value: 900, child: Text('900 mm (standard)')),
+                        DropdownMenuItem(value: 1000, child: Text('1000 mm')),
+                        DropdownMenuItem(value: 1200, child: Text('1200 mm')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setDialogState(() {
+                          widthMm = v;
+                          widthController.text = v.round().toString();
+                          updateOffsetFromCenter();
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: centerOnWall,
+                          onChanged: (v) {
+                            setDialogState(() {
+                              centerOnWall = v ?? true;
+                              if (centerOnWall) {
+                                offsetMm = (edgeLenRound - widthMm).clamp(0.0, double.infinity) / 2;
+                                offsetController.text = offsetMm.round().toString();
+                              }
+                            });
+                          },
+                        ),
+                        const Expanded(child: Text('Center on wall')),
+                      ],
+                    ),
+                    if (!centerOnWall) ...[
+                      const SizedBox(height: 8),
+                      const Text('Offset from wall start (mm)', style: TextStyle(fontWeight: FontWeight.w500)),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: offsetController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          hintText: '0',
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    if (mounted) setState(() => _pendingDoorEdge = null);
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final w = double.tryParse(widthController.text) ?? widthMm;
+                    final width = w.clamp(0.0, edgeLenRound);
+                    final off = centerOnWall
+                        ? (edgeLenRound - width) / 2
+                        : (double.tryParse(offsetController.text) ?? offsetMm).clamp(0.0, edgeLenRound - width);
+                    if (!mounted) return;
+                    setState(() {
+                      _openings.add(Opening(
+                        roomIndex: roomIndex,
+                        edgeIndex: edgeIndex,
+                        offsetMm: off,
+                        widthMm: width,
+                        isDoor: isDoor,
+                      ));
+                      _pendingDoorEdge = null;
+                      _hasUnsavedChanges = true;
+                    });
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: Text(isDoor ? 'Place door' : 'Place opening'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (mounted && _pendingDoorEdge != null) setState(() => _pendingDoorEdge = null);
+  }
   
   /// Closest point on segment [a, b] to point p; returns t in [0,1] and distance.
   static ({double t, double distanceMm}) _closestPointOnSegment(Offset p, Offset a, Offset b) {
@@ -3507,10 +3673,12 @@ class _PlanPainter extends CustomPainter {
   final ui.Image? backgroundImage;
   final BackgroundImageState? backgroundImageState;
   final List<Opening> openings;
+  final ({int roomIndex, int edgeIndex, double edgeLenMm})? pendingDoorEdge;
 
   _PlanPainter({
     required this.vp,
     List<Room>? completedRooms,
+    this.pendingDoorEdge,
     required this.draftRoomVertices,
     required this.hoverPositionWorldMm,
     this.previewLineAngleDeg,
@@ -3624,6 +3792,9 @@ class _PlanPainter extends CustomPainter {
       // Draw door-edge interaction points (gap start/end) so users can snap or start drawing from them
       _drawDoorEdgePoints(canvas);
 
+      // Highlight pending door edge and show preview gap when placing a door
+      if (pendingDoorEdge != null) _drawPendingDoorPreview(canvas);
+
       // Draw draft room (vertices and lines, with preview)
       try {
         if (draftRoomVertices != null && draftRoomVertices!.isNotEmpty) {
@@ -3720,6 +3891,41 @@ class _PlanPainter extends CustomPainter {
     }
   }
 
+  /// When placing a door, highlight the selected wall and show a preview gap (center, 900mm).
+  void _drawPendingDoorPreview(Canvas canvas) {
+    final pending = pendingDoorEdge!;
+    if (pending.roomIndex < 0 || pending.roomIndex >= completedRooms.length) return;
+    final room = completedRooms[pending.roomIndex];
+    final verts = room.vertices;
+    if (pending.edgeIndex >= verts.length) return;
+    final i1 = (pending.edgeIndex + 1) % verts.length;
+    final v0 = verts[pending.edgeIndex];
+    final v1 = verts[i1];
+    final edgeLen = pending.edgeLenMm;
+    if (edgeLen <= 0) return;
+    final p0 = vp.worldToScreen(v0);
+    final p1 = vp.worldToScreen(v1);
+    final highlightPaint = Paint()
+      ..color = Colors.orange
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(p0, p1, highlightPaint);
+    const previewWidthMm = 900.0;
+    final offsetMm = ((edgeLen - previewWidthMm) / 2).clamp(0.0, edgeLen - previewWidthMm);
+    final t0 = offsetMm / edgeLen;
+    final t1 = (offsetMm + previewWidthMm) / edgeLen;
+    final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+    final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+    final g0 = vp.worldToScreen(gapStart);
+    final g1 = vp.worldToScreen(gapEnd);
+    final gapPaint = Paint()
+      ..color = Colors.orange.withOpacity(0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    canvas.drawLine(g0, g1, gapPaint);
+  }
+
   /// Draw small handles at each door opening endpoint so they are visible as interaction points.
   void _drawDoorEdgePoints(Canvas canvas) {
     const radius = 5.0;
@@ -3752,7 +3958,7 @@ class _PlanPainter extends CustomPainter {
     }
   }
 
-  /// Draw a completed room as a filled polygon with outline.
+  /// Draw a completed room as wall lines only (no fill). Walls in neutral dark color.
   void _drawRoom(Canvas canvas, Room room, {required int roomIndex, required bool isDraft, bool isSelected = false}) {
     if (room.vertices.isEmpty) return;
 
@@ -3760,25 +3966,17 @@ class _PlanPainter extends CustomPainter {
         .map((v) => vp.worldToScreen(v))
         .toList();
 
-    // Fill - highlight selected room
-    final fillPath = Path();
-    fillPath.addPolygon(screenPoints, true); // true = closed
-    canvas.drawPath(
-      fillPath,
-      Paint()
-        ..color = isSelected 
-            ? Colors.blue.withOpacity(0.3) // More visible when selected
-            : Colors.blue.withOpacity(0.2)
-        ..style = PaintingStyle.fill,
-    );
+    // No fill - rooms drawn as wall outlines only (real wall look)
 
     // Outline - visible stroke (thicker so lines don’t disappear when zoomed)
-    final outlineColor = isSelected ? Colors.orange : Colors.blue.shade700;
-    final strokeWidth = isSelected ? 3.5 : 2.5;
+    final wallColor = isSelected ? Colors.orange.shade700 : const Color(0xFF2C2C2C);
+    final strokeWidth = isSelected ? 3.5 : 2.8;
     final outlinePaint = Paint()
-      ..color = outlineColor
+      ..color = wallColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth;
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.miter;
 
     final n = room.vertices.length;
     for (int i = 0; i < n; i++) {
@@ -3814,18 +4012,22 @@ class _PlanPainter extends CustomPainter {
       canvas.drawLine(p0, gapStartScreen, outlinePaint);
       canvas.drawLine(gapEndScreen, p1, outlinePaint);
 
-      final doorPaint = Paint()
-        ..color = Colors.brown.shade700
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth;
-      final gapMid = vp.worldToScreen(Offset(
-        (gapStart.dx + gapEnd.dx) / 2,
-        (gapStart.dy + gapEnd.dy) / 2,
-      ));
-      final gapVec = gapEndScreen - gapStartScreen;
-      final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
-      final rect = Rect.fromCircle(center: gapMid, radius: radius);
-      canvas.drawArc(rect, 0, math.pi / 2, false, doorPaint);
+      if (openingOnEdge.isDoor) {
+        final doorPaint = Paint()
+          ..color = Colors.brown.shade700
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.miter;
+        final gapMid = vp.worldToScreen(Offset(
+          (gapStart.dx + gapEnd.dx) / 2,
+          (gapStart.dy + gapEnd.dy) / 2,
+        ));
+        final gapVec = gapEndScreen - gapStartScreen;
+        final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
+        final rect = Rect.fromCircle(center: gapMid, radius: radius);
+        canvas.drawArc(rect, 0, math.pi / 2, false, doorPaint);
+      }
     }
 
     _drawRoomLabel(canvas, room, screenPoints);
@@ -3834,81 +4036,24 @@ class _PlanPainter extends CustomPainter {
     _drawWallMeasurements(canvas, room, screenPoints);
   }
   
-  /// Draw the room name/label or name button centered on the room.
+  /// Draw only the name button (tap to add name) when room has no name. No name/area on canvas; area shown in sidemenu.
   void _drawRoomLabel(Canvas canvas, Room room, List<Offset> screenPoints) {
-    // Calculate centroid (center point) of the polygon
+    if (room.name != null && room.name!.isNotEmpty) return; // Named room: nothing on canvas
+    // Room has no name: draw tap target so user can add name
     double centerX = 0;
     double centerY = 0;
     int count = 0;
-    
-    // Use unique vertices (skip the closing vertex if it's a duplicate of first)
-    final uniquePoints = screenPoints.length > 1 && 
-                         screenPoints.first == screenPoints.last
+    final uniquePoints = screenPoints.length > 1 && screenPoints.first == screenPoints.last
         ? screenPoints.sublist(0, screenPoints.length - 1)
         : screenPoints;
-    
     for (final point in uniquePoints) {
       centerX += point.dx;
       centerY += point.dy;
       count++;
     }
-    
     if (count == 0) return;
-    
-    centerX /= count;
-    centerY /= count;
-    final center = Offset(centerX, centerY);
-    
-    // Always draw area prominently
-    final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
-    
-    if (room.name != null && room.name!.isNotEmpty) {
-      // Draw room name with area below it (enhanced display)
-      final namePainter = TextPainter(
-        text: TextSpan(
-          text: room.name!,
-          style: const TextStyle(
-            color: Colors.blue,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            shadows: [
-              Shadow(
-                color: Colors.white,
-                blurRadius: 3,
-              ),
-            ],
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-        textAlign: TextAlign.center,
-      );
-      
-      namePainter.layout();
-      
-      // Calculate spacing: name height + gap + area height
-      final nameHeight = namePainter.height;
-      final areaHeight = 30.0; // Approximate area label height (text + padding)
-      final gap = 16.0; // Increased gap to prevent overlap
-      final totalHeight = nameHeight + gap + areaHeight;
-      
-      // Draw room name (positioned above center to make room for area below)
-      namePainter.paint(
-        canvas,
-        Offset(
-          center.dx - namePainter.width / 2,
-          center.dy - totalHeight / 2,
-        ),
-      );
-      
-      // Draw area with prominent background box (below name with gap)
-      _drawAreaLabel(canvas, center, areaText, offsetY: nameHeight / 2 + gap + areaHeight / 2);
-    } else {
-      // Draw name button (icon) when room has no name
-      _drawNameButton(canvas, center);
-      
-      // Draw area prominently below button
-      _drawAreaLabel(canvas, center, areaText, offsetY: 30);
-    }
+    final center = Offset(centerX / count, centerY / count);
+    _drawNameButton(canvas, center);
   }
   
   /// Draw area label with prominent background for better visibility.
