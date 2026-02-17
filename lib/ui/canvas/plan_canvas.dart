@@ -4036,10 +4036,8 @@ class _PlanPainter extends CustomPainter {
     _drawWallMeasurements(canvas, room, screenPoints);
   }
   
-  /// Draw only the name button (tap to add name) when room has no name. No name/area on canvas; area shown in sidemenu.
+  /// Draw room name when set, or the name button (tap to add name) when no name. Area only in sidemenu.
   void _drawRoomLabel(Canvas canvas, Room room, List<Offset> screenPoints) {
-    if (room.name != null && room.name!.isNotEmpty) return; // Named room: nothing on canvas
-    // Room has no name: draw tap target so user can add name
     double centerX = 0;
     double centerY = 0;
     int count = 0;
@@ -4053,6 +4051,27 @@ class _PlanPainter extends CustomPainter {
     }
     if (count == 0) return;
     final center = Offset(centerX / count, centerY / count);
+
+    if (room.name != null && room.name!.isNotEmpty) {
+      final namePainter = TextPainter(
+        text: TextSpan(
+          text: room.name!,
+          style: const TextStyle(
+            color: Color(0xFF2C2C2C),
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+      );
+      namePainter.layout();
+      namePainter.paint(
+        canvas,
+        Offset(center.dx - namePainter.width / 2, center.dy - namePainter.height / 2),
+      );
+      return;
+    }
     _drawNameButton(canvas, center);
   }
   

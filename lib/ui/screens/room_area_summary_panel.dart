@@ -318,6 +318,7 @@ class _RoomListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final name = room.name ?? 'Room ${roomIndex + 1}';
     final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
 
     return InkWell(
@@ -340,11 +341,26 @@ class _RoomListItem extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: Text(
-                areaText,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    areaText,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                        ),
+                  ),
+                ],
               ),
             ),
             if (onDelete != null)
