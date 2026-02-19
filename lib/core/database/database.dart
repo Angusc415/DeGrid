@@ -28,6 +28,8 @@ class Projects extends Table {
   TextColumn get backgroundImagePath => text().nullable()(); // relative path in app storage
   TextColumn get backgroundImageJson => text().nullable()(); // JSON: offsetX, offsetY, scaleMmPerPixel, opacity
   TextColumn get openingsJson => text().nullable()(); // JSON array of Opening: roomIndex, edgeIndex, offsetMm, widthMm
+  TextColumn get carpetProductsJson => text().nullable()(); // JSON array of CarpetProduct: name, rollWidthMm, rollLengthM?, costPerSqm?
+  TextColumn get roomCarpetAssignmentsJson => text().nullable()(); // JSON: list of {roomIndex, productIndex}
 }
 
 /// Rooms table - stores room data for each project
@@ -57,7 +59,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration {
@@ -84,6 +86,12 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 7) {
           await _addColumnIfNotExists(m, projects, projects.openingsJson);
+        }
+        if (from < 8) {
+          await _addColumnIfNotExists(m, projects, projects.carpetProductsJson);
+        }
+        if (from < 9) {
+          await _addColumnIfNotExists(m, projects, projects.roomCarpetAssignmentsJson);
         }
       },
     );

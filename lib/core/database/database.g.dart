@@ -486,6 +486,28 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _carpetProductsJsonMeta =
+      const VerificationMeta('carpetProductsJson');
+  @override
+  late final GeneratedColumn<String> carpetProductsJson =
+      GeneratedColumn<String>(
+        'carpet_products_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _roomCarpetAssignmentsJsonMeta =
+      const VerificationMeta('roomCarpetAssignmentsJson');
+  @override
+  late final GeneratedColumn<String> roomCarpetAssignmentsJson =
+      GeneratedColumn<String>(
+        'room_carpet_assignments_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -498,6 +520,8 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     backgroundImagePath,
     backgroundImageJson,
     openingsJson,
+    carpetProductsJson,
+    roomCarpetAssignmentsJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -585,6 +609,24 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         ),
       );
     }
+    if (data.containsKey('carpet_products_json')) {
+      context.handle(
+        _carpetProductsJsonMeta,
+        carpetProductsJson.isAcceptableOrUnknown(
+          data['carpet_products_json']!,
+          _carpetProductsJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('room_carpet_assignments_json')) {
+      context.handle(
+        _roomCarpetAssignmentsJsonMeta,
+        roomCarpetAssignmentsJson.isAcceptableOrUnknown(
+          data['room_carpet_assignments_json']!,
+          _roomCarpetAssignmentsJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -634,6 +676,14 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.string,
         data['${effectivePrefix}openings_json'],
       ),
+      carpetProductsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}carpet_products_json'],
+      ),
+      roomCarpetAssignmentsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}room_carpet_assignments_json'],
+      ),
     );
   }
 
@@ -654,6 +704,8 @@ class Project extends DataClass implements Insertable<Project> {
   final String? backgroundImagePath;
   final String? backgroundImageJson;
   final String? openingsJson;
+  final String? carpetProductsJson;
+  final String? roomCarpetAssignmentsJson;
   const Project({
     required this.id,
     required this.name,
@@ -665,6 +717,8 @@ class Project extends DataClass implements Insertable<Project> {
     this.backgroundImagePath,
     this.backgroundImageJson,
     this.openingsJson,
+    this.carpetProductsJson,
+    this.roomCarpetAssignmentsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -688,6 +742,14 @@ class Project extends DataClass implements Insertable<Project> {
     }
     if (!nullToAbsent || openingsJson != null) {
       map['openings_json'] = Variable<String>(openingsJson);
+    }
+    if (!nullToAbsent || carpetProductsJson != null) {
+      map['carpet_products_json'] = Variable<String>(carpetProductsJson);
+    }
+    if (!nullToAbsent || roomCarpetAssignmentsJson != null) {
+      map['room_carpet_assignments_json'] = Variable<String>(
+        roomCarpetAssignmentsJson,
+      );
     }
     return map;
   }
@@ -714,6 +776,13 @@ class Project extends DataClass implements Insertable<Project> {
       openingsJson: openingsJson == null && nullToAbsent
           ? const Value.absent()
           : Value(openingsJson),
+      carpetProductsJson: carpetProductsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(carpetProductsJson),
+      roomCarpetAssignmentsJson:
+          roomCarpetAssignmentsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(roomCarpetAssignmentsJson),
     );
   }
 
@@ -737,6 +806,12 @@ class Project extends DataClass implements Insertable<Project> {
         json['backgroundImageJson'],
       ),
       openingsJson: serializer.fromJson<String?>(json['openingsJson']),
+      carpetProductsJson: serializer.fromJson<String?>(
+        json['carpetProductsJson'],
+      ),
+      roomCarpetAssignmentsJson: serializer.fromJson<String?>(
+        json['roomCarpetAssignmentsJson'],
+      ),
     );
   }
   @override
@@ -753,6 +828,10 @@ class Project extends DataClass implements Insertable<Project> {
       'backgroundImagePath': serializer.toJson<String?>(backgroundImagePath),
       'backgroundImageJson': serializer.toJson<String?>(backgroundImageJson),
       'openingsJson': serializer.toJson<String?>(openingsJson),
+      'carpetProductsJson': serializer.toJson<String?>(carpetProductsJson),
+      'roomCarpetAssignmentsJson': serializer.toJson<String?>(
+        roomCarpetAssignmentsJson,
+      ),
     };
   }
 
@@ -767,6 +846,8 @@ class Project extends DataClass implements Insertable<Project> {
     Value<String?> backgroundImagePath = const Value.absent(),
     Value<String?> backgroundImageJson = const Value.absent(),
     Value<String?> openingsJson = const Value.absent(),
+    Value<String?> carpetProductsJson = const Value.absent(),
+    Value<String?> roomCarpetAssignmentsJson = const Value.absent(),
   }) => Project(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -782,6 +863,12 @@ class Project extends DataClass implements Insertable<Project> {
         ? backgroundImageJson.value
         : this.backgroundImageJson,
     openingsJson: openingsJson.present ? openingsJson.value : this.openingsJson,
+    carpetProductsJson: carpetProductsJson.present
+        ? carpetProductsJson.value
+        : this.carpetProductsJson,
+    roomCarpetAssignmentsJson: roomCarpetAssignmentsJson.present
+        ? roomCarpetAssignmentsJson.value
+        : this.roomCarpetAssignmentsJson,
   );
   Project copyWithCompanion(ProjectsCompanion data) {
     return Project(
@@ -805,6 +892,12 @@ class Project extends DataClass implements Insertable<Project> {
       openingsJson: data.openingsJson.present
           ? data.openingsJson.value
           : this.openingsJson,
+      carpetProductsJson: data.carpetProductsJson.present
+          ? data.carpetProductsJson.value
+          : this.carpetProductsJson,
+      roomCarpetAssignmentsJson: data.roomCarpetAssignmentsJson.present
+          ? data.roomCarpetAssignmentsJson.value
+          : this.roomCarpetAssignmentsJson,
     );
   }
 
@@ -820,7 +913,9 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
           ..write('backgroundImageJson: $backgroundImageJson, ')
-          ..write('openingsJson: $openingsJson')
+          ..write('openingsJson: $openingsJson, ')
+          ..write('carpetProductsJson: $carpetProductsJson, ')
+          ..write('roomCarpetAssignmentsJson: $roomCarpetAssignmentsJson')
           ..write(')'))
         .toString();
   }
@@ -837,6 +932,8 @@ class Project extends DataClass implements Insertable<Project> {
     backgroundImagePath,
     backgroundImageJson,
     openingsJson,
+    carpetProductsJson,
+    roomCarpetAssignmentsJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -851,7 +948,9 @@ class Project extends DataClass implements Insertable<Project> {
           other.viewportJson == this.viewportJson &&
           other.backgroundImagePath == this.backgroundImagePath &&
           other.backgroundImageJson == this.backgroundImageJson &&
-          other.openingsJson == this.openingsJson);
+          other.openingsJson == this.openingsJson &&
+          other.carpetProductsJson == this.carpetProductsJson &&
+          other.roomCarpetAssignmentsJson == this.roomCarpetAssignmentsJson);
 }
 
 class ProjectsCompanion extends UpdateCompanion<Project> {
@@ -865,6 +964,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<String?> backgroundImagePath;
   final Value<String?> backgroundImageJson;
   final Value<String?> openingsJson;
+  final Value<String?> carpetProductsJson;
+  final Value<String?> roomCarpetAssignmentsJson;
   const ProjectsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -876,6 +977,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
     this.openingsJson = const Value.absent(),
+    this.carpetProductsJson = const Value.absent(),
+    this.roomCarpetAssignmentsJson = const Value.absent(),
   });
   ProjectsCompanion.insert({
     this.id = const Value.absent(),
@@ -888,6 +991,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
     this.openingsJson = const Value.absent(),
+    this.carpetProductsJson = const Value.absent(),
+    this.roomCarpetAssignmentsJson = const Value.absent(),
   }) : name = Value(name);
   static Insertable<Project> custom({
     Expression<int>? id,
@@ -900,6 +1005,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<String>? backgroundImagePath,
     Expression<String>? backgroundImageJson,
     Expression<String>? openingsJson,
+    Expression<String>? carpetProductsJson,
+    Expression<String>? roomCarpetAssignmentsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -914,6 +1021,10 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       if (backgroundImageJson != null)
         'background_image_json': backgroundImageJson,
       if (openingsJson != null) 'openings_json': openingsJson,
+      if (carpetProductsJson != null)
+        'carpet_products_json': carpetProductsJson,
+      if (roomCarpetAssignmentsJson != null)
+        'room_carpet_assignments_json': roomCarpetAssignmentsJson,
     });
   }
 
@@ -928,6 +1039,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<String?>? backgroundImagePath,
     Value<String?>? backgroundImageJson,
     Value<String?>? openingsJson,
+    Value<String?>? carpetProductsJson,
+    Value<String?>? roomCarpetAssignmentsJson,
   }) {
     return ProjectsCompanion(
       id: id ?? this.id,
@@ -940,6 +1053,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageJson: backgroundImageJson ?? this.backgroundImageJson,
       openingsJson: openingsJson ?? this.openingsJson,
+      carpetProductsJson: carpetProductsJson ?? this.carpetProductsJson,
+      roomCarpetAssignmentsJson:
+          roomCarpetAssignmentsJson ?? this.roomCarpetAssignmentsJson,
     );
   }
 
@@ -980,6 +1096,14 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     if (openingsJson.present) {
       map['openings_json'] = Variable<String>(openingsJson.value);
     }
+    if (carpetProductsJson.present) {
+      map['carpet_products_json'] = Variable<String>(carpetProductsJson.value);
+    }
+    if (roomCarpetAssignmentsJson.present) {
+      map['room_carpet_assignments_json'] = Variable<String>(
+        roomCarpetAssignmentsJson.value,
+      );
+    }
     return map;
   }
 
@@ -995,7 +1119,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
           ..write('backgroundImageJson: $backgroundImageJson, ')
-          ..write('openingsJson: $openingsJson')
+          ..write('openingsJson: $openingsJson, ')
+          ..write('carpetProductsJson: $carpetProductsJson, ')
+          ..write('roomCarpetAssignmentsJson: $roomCarpetAssignmentsJson')
           ..write(')'))
         .toString();
   }
@@ -1805,6 +1931,8 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
       Value<String?> openingsJson,
+      Value<String?> carpetProductsJson,
+      Value<String?> roomCarpetAssignmentsJson,
     });
 typedef $$ProjectsTableUpdateCompanionBuilder =
     ProjectsCompanion Function({
@@ -1818,6 +1946,8 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
       Value<String?> openingsJson,
+      Value<String?> carpetProductsJson,
+      Value<String?> roomCarpetAssignmentsJson,
     });
 
 final class $$ProjectsTableReferences
@@ -1912,6 +2042,16 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<String> get openingsJson => $composableBuilder(
     column: $table.openingsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get carpetProductsJson => $composableBuilder(
+    column: $table.carpetProductsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get roomCarpetAssignmentsJson => $composableBuilder(
+    column: $table.roomCarpetAssignmentsJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2018,6 +2158,16 @@ class $$ProjectsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get carpetProductsJson => $composableBuilder(
+    column: $table.carpetProductsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get roomCarpetAssignmentsJson => $composableBuilder(
+    column: $table.roomCarpetAssignmentsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$FoldersTableOrderingComposer get folderId {
     final $$FoldersTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -2085,6 +2235,16 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<String> get openingsJson => $composableBuilder(
     column: $table.openingsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get carpetProductsJson => $composableBuilder(
+    column: $table.carpetProductsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get roomCarpetAssignmentsJson => $composableBuilder(
+    column: $table.roomCarpetAssignmentsJson,
     builder: (column) => column,
   );
 
@@ -2175,6 +2335,8 @@ class $$ProjectsTableTableManager
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
                 Value<String?> openingsJson = const Value.absent(),
+                Value<String?> carpetProductsJson = const Value.absent(),
+                Value<String?> roomCarpetAssignmentsJson = const Value.absent(),
               }) => ProjectsCompanion(
                 id: id,
                 name: name,
@@ -2186,6 +2348,8 @@ class $$ProjectsTableTableManager
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,
                 openingsJson: openingsJson,
+                carpetProductsJson: carpetProductsJson,
+                roomCarpetAssignmentsJson: roomCarpetAssignmentsJson,
               ),
           createCompanionCallback:
               ({
@@ -2199,6 +2363,8 @@ class $$ProjectsTableTableManager
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
                 Value<String?> openingsJson = const Value.absent(),
+                Value<String?> carpetProductsJson = const Value.absent(),
+                Value<String?> roomCarpetAssignmentsJson = const Value.absent(),
               }) => ProjectsCompanion.insert(
                 id: id,
                 name: name,
@@ -2210,6 +2376,8 @@ class $$ProjectsTableTableManager
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,
                 openingsJson: openingsJson,
+                carpetProductsJson: carpetProductsJson,
+                roomCarpetAssignmentsJson: roomCarpetAssignmentsJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(

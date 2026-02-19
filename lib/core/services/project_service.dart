@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import '../database/database.dart';
 import '../geometry/room.dart';
 import '../geometry/opening.dart';
+import '../geometry/carpet_product.dart';
 import '../models/project.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -132,6 +133,31 @@ class ProjectService {
       }
     }
 
+    // Parse carpet products if available
+    List<CarpetProduct> carpetProducts = const [];
+    if (project.carpetProductsJson != null && project.carpetProductsJson!.isNotEmpty) {
+      try {
+        final list = jsonDecode(project.carpetProductsJson!) as List<dynamic>;
+        carpetProducts = CarpetProduct.listFromJson(list);
+      } catch (e) {
+        carpetProducts = [];
+      }
+    }
+
+    // Parse room carpet assignments if available
+    Map<int, int> roomCarpetAssignments = {};
+    if (project.roomCarpetAssignmentsJson != null && project.roomCarpetAssignmentsJson!.isNotEmpty) {
+      try {
+        final list = jsonDecode(project.roomCarpetAssignmentsJson!) as List<dynamic>;
+        for (final e in list) {
+          final m = e as Map<String, dynamic>;
+          final ri = m['roomIndex'] as int?;
+          final pi = m['productIndex'] as int?;
+          if (ri != null && pi != null) roomCarpetAssignments[ri] = pi;
+        }
+      } catch (_) {}
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -140,6 +166,8 @@ class ProjectService {
       useImperial: project.useImperial,
       rooms: rooms,
       openings: openings,
+      carpetProducts: carpetProducts,
+      roomCarpetAssignments: roomCarpetAssignments,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -193,6 +221,8 @@ class ProjectService {
     String? name,
     List<Room>? rooms,
     List<Opening>? openings,
+    List<CarpetProduct>? carpetProducts,
+    Map<int, int>? roomCarpetAssignments,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -212,6 +242,14 @@ class ProjectService {
           : const Value.absent(),
       openingsJson: openings != null
           ? Value(jsonEncode(Opening.listToJson(openings)))
+          : const Value.absent(),
+      carpetProductsJson: carpetProducts != null
+          ? Value(jsonEncode(CarpetProduct.listToJson(carpetProducts)))
+          : const Value.absent(),
+      roomCarpetAssignmentsJson: roomCarpetAssignments != null
+          ? Value(jsonEncode(roomCarpetAssignments.entries
+              .map((e) => {'roomIndex': e.key, 'productIndex': e.value})
+              .toList()))
           : const Value.absent(),
     );
 
@@ -251,6 +289,8 @@ class ProjectService {
     required String name,
     required List<Room> rooms,
     List<Opening>? openings,
+    List<CarpetProduct>? carpetProducts,
+    Map<int, int>? roomCarpetAssignments,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -266,12 +306,18 @@ class ProjectService {
           useImperial: useImperial,
           folderId: folderId,
         );
-        if (backgroundImagePath != null || backgroundImageState != null || (openings != null && openings.isNotEmpty)) {
+        if (backgroundImagePath != null ||
+            backgroundImageState != null ||
+            (openings != null && openings.isNotEmpty) ||
+            (carpetProducts != null && carpetProducts.isNotEmpty) ||
+            (roomCarpetAssignments != null && roomCarpetAssignments.isNotEmpty)) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
             backgroundImageState: backgroundImageState,
             openings: openings,
+            carpetProducts: carpetProducts,
+            roomCarpetAssignments: roomCarpetAssignments,
           );
         }
         return projectId;
@@ -281,6 +327,8 @@ class ProjectService {
           name: name,
           rooms: rooms,
           openings: openings,
+          carpetProducts: carpetProducts,
+          roomCarpetAssignments: roomCarpetAssignments,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

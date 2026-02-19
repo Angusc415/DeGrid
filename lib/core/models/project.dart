@@ -1,6 +1,7 @@
 import 'dart:ui';
 import '../geometry/room.dart';
 import '../geometry/opening.dart';
+import '../geometry/carpet_product.dart';
 import '../../ui/canvas/viewport.dart';
 
 /// Represents a saved project with its rooms and viewport state.
@@ -12,6 +13,9 @@ class ProjectModel {
   final bool useImperial;
   final List<Room> rooms;
   final List<Opening> openings;
+  final List<CarpetProduct> carpetProducts;
+  /// Room index -> carpet product index. Only entries for rooms that have a product assigned.
+  final Map<int, int> roomCarpetAssignments;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -24,10 +28,14 @@ class ProjectModel {
     this.useImperial = false,
     required this.rooms,
     List<Opening>? openings,
+    List<CarpetProduct>? carpetProducts,
+    Map<int, int>? roomCarpetAssignments,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
-  }) : openings = openings ?? const [];
+  })  : openings = openings ?? const [],
+        carpetProducts = carpetProducts ?? const [],
+        roomCarpetAssignments = roomCarpetAssignments ?? const {};
 
   /// Create a copy with updated fields.
   ProjectModel copyWith({
@@ -38,6 +46,8 @@ class ProjectModel {
     bool? useImperial,
     List<Room>? rooms,
     List<Opening>? openings,
+    List<CarpetProduct>? carpetProducts,
+    Map<int, int>? roomCarpetAssignments,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -50,6 +60,8 @@ class ProjectModel {
       useImperial: useImperial ?? this.useImperial,
       rooms: rooms ?? this.rooms,
       openings: openings ?? this.openings,
+      carpetProducts: carpetProducts ?? this.carpetProducts,
+      roomCarpetAssignments: roomCarpetAssignments ?? this.roomCarpetAssignments,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,

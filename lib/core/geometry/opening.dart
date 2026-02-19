@@ -1,6 +1,3 @@
-import 'dart:ui';
-import 'dart:convert';
-
 /// Represents a door or opening in a wall between two rooms.
 ///
 /// The opening is defined on one room's edge: [roomIndex] and [edgeIndex]

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'viewport.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint, defaultTargetPlatform;
 import 'package:flutter/services.dart';
@@ -12,6 +11,9 @@ import 'package:path/path.dart' as path;
 import '../../core/background_image_io.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/opening.dart';
+import '../../core/geometry/carpet_product.dart';
+import '../../core/roll_planning/carpet_layout_options.dart';
+import '../../core/roll_planning/roll_planner.dart';
 import '../../core/units/unit_converter.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
@@ -26,6 +28,7 @@ class PlanCanvas extends StatefulWidget {
   final String? initialProjectName;
   final Function(List<Room>, bool, int?)? onRoomsChanged; // Callback for rooms, useImperial, selectedIndex
   final Function(int)? onSelectRoomRequested; // Callback when external code wants to select a room
+  final void Function(Map<int, int>)? onRoomCarpetAssignmentsChanged;
 
   const PlanCanvas({
     super.key,
@@ -33,6 +36,7 @@ class PlanCanvas extends StatefulWidget {
     this.initialProjectName,
     this.onRoomsChanged,
     this.onSelectRoomRequested,
+    this.onRoomCarpetAssignmentsChanged,
   });
 
   @override
@@ -72,6 +76,10 @@ class PlanCanvasState extends State<PlanCanvas> {
   final List<Room> _completedRooms = [];
   // Door/openings between rooms (roomIndex, edgeIndex, offsetMm, widthMm)
   final List<Opening> _openings = [];
+  // Carpet products (roll width etc.) for this project
+  final List<CarpetProduct> _carpetProducts = [];
+  // Room index -> carpet product index (Phase 2)
+  final Map<int, int> _roomCarpetAssignments = {};
 
   // Counter for default room names
   int _roomCounter = 1;
@@ -308,6 +316,11 @@ class PlanCanvasState extends State<PlanCanvas> {
           _completedRooms.addAll(project.rooms);
           _openings.clear();
           _openings.addAll(project.openings);
+          _carpetProducts.clear();
+          _carpetProducts.addAll(project.carpetProducts);
+          _roomCarpetAssignments.clear();
+          _roomCarpetAssignments.addAll(project.roomCarpetAssignments);
+          widget.onRoomCarpetAssignmentsChanged?.call(Map<int, int>.from(_roomCarpetAssignments));
 
           // Restore viewport if available
           if (project.viewportState != null) {
@@ -514,6 +527,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         name: projectName,
         rooms: _completedRooms,
         openings: _openings,
+        carpetProducts: _carpetProducts,
+        roomCarpetAssignments: _roomCarpetAssignments,
         viewport: _vp,
         useImperial: _useImperial,
         backgroundImagePath: _backgroundImagePath,
@@ -1480,6 +1495,32 @@ class PlanCanvasState extends State<PlanCanvas> {
     _showDeleteRoomDialog(roomIndex);
   }
 
+  /// Carpet products for this project (for Phase 1 carpet planning).
+  List<CarpetProduct> get carpetProducts => List<CarpetProduct>.from(_carpetProducts);
+
+  void setCarpetProducts(List<CarpetProduct> list) {
+    setState(() {
+      _carpetProducts.clear();
+      _carpetProducts.addAll(list);
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  /// Room carpet assignments (roomIndex -> productIndex). Read-only copy.
+  Map<int, int> get roomCarpetAssignments => Map<int, int>.from(_roomCarpetAssignments);
+
+  void setRoomCarpet(int roomIndex, int? productIndex) {
+    setState(() {
+      if (productIndex == null) {
+        _roomCarpetAssignments.remove(roomIndex);
+      } else {
+        _roomCarpetAssignments[roomIndex] = productIndex;
+      }
+      _hasUnsavedChanges = true;
+    });
+    widget.onRoomCarpetAssignmentsChanged?.call(Map<int, int>.from(_roomCarpetAssignments));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -1561,16 +1602,40 @@ class PlanCanvasState extends State<PlanCanvas> {
             case LogicalKeyboardKey.backspace:
               // Delete selected room
               if (_selectedRoomIndex != null && _draftRoomVertices == null) {
-                setState(() {
-                  if (_selectedRoomIndex! >= 0 && 
-                      _selectedRoomIndex! < _completedRooms.length) {
-                    _completedRooms.removeAt(_selectedRoomIndex!);
+                final idx = _selectedRoomIndex!;
+                if (idx >= 0 && idx < _completedRooms.length) {
+                  setState(() {
+                    _completedRooms.removeAt(idx);
+                    _openings.removeWhere((o) => o.roomIndex == idx);
+                    final newOpenings = _openings.map((o) {
+                      if (o.roomIndex > idx) {
+                        return Opening(
+                          roomIndex: o.roomIndex - 1,
+                          edgeIndex: o.edgeIndex,
+                          offsetMm: o.offsetMm,
+                          widthMm: o.widthMm,
+                          isDoor: o.isDoor,
+                        );
+                      }
+                      return o;
+                    }).toList();
+                    _openings
+                      ..clear()
+                      ..addAll(newOpenings);
+                    final newAssignments = <int, int>{};
+                    for (final e in _roomCarpetAssignments.entries) {
+                      if (e.key == idx) continue;
+                      newAssignments[e.key > idx ? e.key - 1 : e.key] = e.value;
+                    }
+                    _roomCarpetAssignments
+                      ..clear()
+                      ..addAll(newAssignments);
                     _selectedRoomIndex = null;
                     _hasUnsavedChanges = true;
-                    // Save state to history after room deletion
                     _saveHistoryState();
-                  }
-                });
+                    widget.onRoomCarpetAssignmentsChanged?.call(Map<int, int>.from(_roomCarpetAssignments));
+                  });
+                }
               }
               break;
             case LogicalKeyboardKey.keyZ:
@@ -1937,6 +2002,8 @@ class PlanCanvasState extends State<PlanCanvas> {
                   vp: _vp,
                   completedRooms: _safeCopyRooms(_completedRooms),
                   openings: List<Opening>.from(_openings),
+                  roomCarpetAssignments: _roomCarpetAssignments,
+                  carpetProducts: _carpetProducts,
                   pendingDoorEdge: _pendingDoorEdge,
                   draftRoomVertices: _draftRoomVertices != null
                       ? List<Offset>.from(_draftRoomVertices!)
@@ -3312,18 +3379,41 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (confirmed == true) {
       setState(() {
         _completedRooms.removeAt(roomIndex);
+        // Reindex openings: remove for deleted room, decrement roomIndex for rooms after
+        _openings.removeWhere((o) => o.roomIndex == roomIndex);
+        final newOpenings = _openings.map((o) {
+          if (o.roomIndex > roomIndex) {
+            return Opening(
+              roomIndex: o.roomIndex - 1,
+              edgeIndex: o.edgeIndex,
+              offsetMm: o.offsetMm,
+              widthMm: o.widthMm,
+              isDoor: o.isDoor,
+            );
+          }
+          return o;
+        }).toList();
+        _openings
+          ..clear()
+          ..addAll(newOpenings);
+        // Reindex room carpet assignments
+        final newAssignments = <int, int>{};
+        for (final e in _roomCarpetAssignments.entries) {
+          if (e.key == roomIndex) continue;
+          newAssignments[e.key > roomIndex ? e.key - 1 : e.key] = e.value;
+        }
+        _roomCarpetAssignments
+          ..clear()
+          ..addAll(newAssignments);
         if (_selectedRoomIndex == roomIndex) {
           _selectedRoomIndex = null;
         } else if (_selectedRoomIndex != null && _selectedRoomIndex! > roomIndex) {
-          // Adjust selection index if room before it was deleted
           _selectedRoomIndex = _selectedRoomIndex! - 1;
         }
         _hasUnsavedChanges = true;
-        // Save state to history after room deletion
         _saveHistoryState();
-        
-        // Notify parent of rooms change
         widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+        widget.onRoomCarpetAssignmentsChanged?.call(Map<int, int>.from(_roomCarpetAssignments));
       });
     }
   }
@@ -3674,6 +3764,9 @@ class _PlanPainter extends CustomPainter {
   final BackgroundImageState? backgroundImageState;
   final List<Opening> openings;
   final ({int roomIndex, int edgeIndex, double edgeLenMm})? pendingDoorEdge;
+  /// Room index -> carpet product index; rooms with an entry get a carpet tint and strip lines.
+  final Map<int, int> roomCarpetAssignments;
+  final List<CarpetProduct> carpetProducts;
 
   _PlanPainter({
     required this.vp,
@@ -3700,10 +3793,14 @@ class _PlanPainter extends CustomPainter {
     this.backgroundImage,
     this.backgroundImageState,
     List<Opening>? openings,
+    Map<int, int>? roomCarpetAssignments,
+    List<CarpetProduct>? carpetProducts,
   })  : completedRooms = completedRooms ?? [],
         measurePointsWorld = measurePointsWorld ?? [],
         placedDimensions = placedDimensions ?? [],
-        openings = openings ?? [];
+        openings = openings ?? [],
+        roomCarpetAssignments = roomCarpetAssignments ?? const {},
+        carpetProducts = carpetProducts ?? const [];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3754,7 +3851,15 @@ class _PlanPainter extends CustomPainter {
                 try {
                   final room = completedRooms[i];
                   if (room != null && room.vertices.isNotEmpty) {
-                    _drawRoom(canvas, room, roomIndex: i, isDraft: false, isSelected: i == selectedRoomIndex);
+                    _drawRoom(
+                      canvas,
+                      room,
+                      roomIndex: i,
+                      isDraft: false,
+                      isSelected: i == selectedRoomIndex,
+                      hasCarpet: roomCarpetAssignments.containsKey(i),
+                      stripLayout: _getStripLayoutForRoom(i, room),
+                    );
                     _drawRoomVertices(canvas, room, roomIndex: i);
                   }
                 } catch (e) {
@@ -3771,7 +3876,15 @@ class _PlanPainter extends CustomPainter {
               for (final room in completedRooms) {
                 try {
                     if (room != null && room.vertices.isNotEmpty) {
-                      _drawRoom(canvas, room, roomIndex: index, isDraft: false, isSelected: index == selectedRoomIndex);
+                      _drawRoom(
+                        canvas,
+                        room,
+                        roomIndex: index,
+                        isDraft: false,
+                        isSelected: index == selectedRoomIndex,
+                        hasCarpet: roomCarpetAssignments.containsKey(index),
+                        stripLayout: _getStripLayoutForRoom(index, room),
+                      );
                       _drawRoomVertices(canvas, room, roomIndex: index);
                       index++;
                     }
@@ -3958,15 +4071,150 @@ class _PlanPainter extends CustomPainter {
     }
   }
 
+  void _drawCarpetRollArrow(Canvas canvas, Room room, StripLayout layout) {
+    if (layout.numStrips < 1 || layout.rollWidthMm <= 0) return;
+
+    // Simple line arrow: shaft + two lines for arrowhead
+    const shaftLenMm = 350.0;
+    const headLenMm = 80.0;
+    const headWidthMm = 60.0;
+
+    final linePaint = Paint()
+      ..color = Colors.brown.shade800.withOpacity(0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final angleRad = layout.layAngleDeg * math.pi / 180;
+    final cos = math.cos(angleRad);
+    final sin = math.sin(angleRad);
+    Offset rotate(Offset p) => Offset(p.dx * cos - p.dy * sin, p.dx * sin + p.dy * cos);
+
+    // Perpendicular extent of room (direction strips are stacked)
+    final perpLen = layout.layAlongX ? layout.bboxHeight : layout.bboxWidth;
+
+    for (int i = 0; i < layout.numStrips; i++) {
+      final stripStart = i * layout.rollWidthMm;
+      final stripEnd = ((i + 1) * layout.rollWidthMm).clamp(0.0, perpLen);
+      final stripCenterPerp = (stripStart + stripEnd) / 2;
+
+      final center = layout.layAlongX
+          ? Offset(
+              layout.bboxMinX + layout.bboxWidth / 2,
+              layout.bboxMinY + stripCenterPerp,
+            )
+          : Offset(
+              layout.bboxMinX + stripCenterPerp,
+              layout.bboxMinY + layout.bboxHeight / 2,
+            );
+
+      // Shaft: base to tip (local coords: base at -shaftLen, tip at +shaftLen)
+      final baseWorld = center + rotate(Offset(-shaftLenMm, 0));
+      final tipWorld = center + rotate(Offset(shaftLenMm, 0));
+      canvas.drawLine(
+        vp.worldToScreen(baseWorld),
+        vp.worldToScreen(tipWorld),
+        linePaint,
+      );
+
+      // Arrowhead: two lines from tip going back and out
+      final headL = center + rotate(Offset(shaftLenMm - headLenMm, headWidthMm));
+      final headR = center + rotate(Offset(shaftLenMm - headLenMm, -headWidthMm));
+      canvas.drawLine(vp.worldToScreen(tipWorld), vp.worldToScreen(headL), linePaint);
+      canvas.drawLine(vp.worldToScreen(tipWorld), vp.worldToScreen(headR), linePaint);
+    }
+  }
+
+  void _drawCarpetStrips(Canvas canvas, Room room, StripLayout layout) {
+    if (layout.rollWidthMm <= 0 || layout.numStrips < 2) return;
+    final verts = room.vertices;
+    if (verts.length < 3) return;
+
+    // Blue dotted line = end of each carpet strip width
+    final stripPaint = Paint()
+      ..color = Colors.blue.withOpacity(0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    // Boundaries are perpendicular to strip length: when strips run along X (horizontal),
+    // they're stacked vertically → boundaries are horizontal. When strips run along Y (vertical),
+    // they're stacked horizontally → boundaries are vertical.
+    for (int i = 1; i < layout.numStrips; i++) {
+      final perpOffset = i * layout.rollWidthMm;
+      Offset p1World;
+      Offset p2World;
+      if (layout.layAlongX) {
+        // Strips run horizontal; boundaries are horizontal (constant Y)
+        final y = layout.bboxMinY + perpOffset;
+        p1World = Offset(layout.bboxMinX, y);
+        p2World = Offset(layout.bboxMinX + layout.bboxWidth, y);
+      } else {
+        // Strips run vertical; boundaries are vertical (constant X)
+        final x = layout.bboxMinX + perpOffset;
+        p1World = Offset(x, layout.bboxMinY);
+        p2World = Offset(x, layout.bboxMinY + layout.bboxHeight);
+      }
+      final p1Screen = vp.worldToScreen(p1World);
+      final p2Screen = vp.worldToScreen(p2World);
+      _drawDashedLine(canvas, p1Screen, p2Screen, stripPaint,
+          dashLength: 4, gapLength: 5);
+    }
+  }
+
+  StripLayout? _getStripLayoutForRoom(int roomIndex, Room room) {
+    final productIndex = roomCarpetAssignments[roomIndex];
+    if (productIndex == null ||
+        productIndex < 0 ||
+        productIndex >= carpetProducts.length) return null;
+    final product = carpetProducts[productIndex];
+    if (product.rollWidthMm <= 0) return null;
+    final opts = CarpetLayoutOptions(
+      minStripWidthMm: product.minStripWidthMm ?? 100,
+      trimAllowanceMm: product.trimAllowanceMm ?? 75,
+      patternRepeatMm: product.patternRepeatMm ?? 0,
+      wasteAllowancePercent: 5,
+      openings: openings,
+      roomIndex: roomIndex,
+    );
+    return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+  }
+
   /// Draw a completed room as wall lines only (no fill). Walls in neutral dark color.
-  void _drawRoom(Canvas canvas, Room room, {required int roomIndex, required bool isDraft, bool isSelected = false}) {
+  /// When [hasCarpet] is true, draw a subtle fill to indicate carpet assignment.
+  /// When [stripLayout] is provided, draw strip boundary lines.
+  void _drawRoom(Canvas canvas, Room room, {
+    required int roomIndex,
+    required bool isDraft,
+    bool isSelected = false,
+    bool hasCarpet = false,
+    StripLayout? stripLayout,
+  }) {
     if (room.vertices.isEmpty) return;
 
     final screenPoints = room.vertices
         .map((v) => vp.worldToScreen(v))
         .toList();
 
-    // No fill - rooms drawn as wall outlines only (real wall look)
+    // Optional carpet tint (light fill) when room has a product assigned
+    if (hasCarpet && screenPoints.length >= 3) {
+      final path = Path()..addPolygon(screenPoints, true);
+      final carpetFill = Paint()
+        ..color = Colors.brown.shade100.withOpacity(0.35)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(path, carpetFill);
+    }
+
+    // Strip lines (Phase 3) - draw boundaries between carpet strips
+    if (stripLayout != null &&
+        stripLayout.numStrips > 1 &&
+        room.vertices.length >= 3) {
+      _drawCarpetStrips(canvas, room, stripLayout);
+    }
+
+    // Roll direction arrow - shows which way to roll the carpet
+    if (stripLayout != null && stripLayout.numStrips > 0 && room.vertices.length >= 3) {
+      _drawCarpetRollArrow(canvas, room, stripLayout);
+    }
 
     // Outline - visible stroke (thicker so lines don’t disappear when zoomed)
     final wallColor = isSelected ? Colors.orange.shade700 : const Color(0xFF2C2C2C);
