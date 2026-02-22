@@ -24,6 +24,10 @@ class StripLayout {
   final double? totalLinearWithWasteMm;
   /// When layout used seam overrides, this holds the actual seam positions (mm from reference).
   final List<double>? seamPositionsMmOverride;
+  /// True when room fits within roll width: one template cut in room shape (no seams).
+  final bool isSinglePiece;
+  /// Room polygon in world mm for single-piece visualization. Null in strip mode.
+  final List<Offset>? roomShapeVerticesMm;
 
   StripLayout({
     required this.numStrips,
@@ -39,6 +43,8 @@ class StripLayout {
     this.seamCount = 0,
     this.totalLinearWithWasteMm,
     this.seamPositionsMmOverride,
+    this.isSinglePiece = false,
+    this.roomShapeVerticesMm,
   });
 
   /// True if strip at [index] is narrower than [minWidthMm].
@@ -107,6 +113,43 @@ class RollPlanner {
     final bboxW = maxX - minX;
     final bboxH = maxY - minY;
 
+    final perpLen0 = bboxH; // perpendicular when strips run along x
+    final perpLen90 = bboxW;
+    final fits0 = perpLen0 <= rollWidthMm;
+    final fits90 = perpLen90 <= rollWidthMm;
+
+    // Phase 1: single-piece mode when room fits within roll width (template cut, no seams)
+    if (fits0 || fits90) {
+      final layAlongX = (fits0 && fits90)
+          ? (bboxW <= bboxH) // prefer shorter cut length
+          : fits0;
+      final perpLen = layAlongX ? perpLen0 : perpLen90;
+      final alongLen = layAlongX ? bboxW : bboxH;
+      double cutLen = alongLen + trimAllowance * 2;
+      if (patternRepeat > 0) {
+        cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
+      }
+      final totalWithWaste = cutLen * (1 + wastePercent / 100);
+      return StripLayout(
+        numStrips: 1,
+        stripLengthsMm: [cutLen],
+        stripWidthsMm: [perpLen],
+        layAngleDeg: layAlongX ? 0 : 90,
+        bboxMinX: minX,
+        bboxMinY: minY,
+        bboxWidth: bboxW,
+        bboxHeight: bboxH,
+        layAlongX: layAlongX,
+        rollWidthMm: rollWidthMm,
+        seamCount: 0,
+        totalLinearWithWasteMm: totalWithWaste,
+        seamPositionsMmOverride: null,
+        isSinglePiece: true,
+        roomShapeVerticesMm: List<Offset>.from(room.vertices),
+      );
+    }
+
+    // Strip mode: room wider than roll
     final bool layAlongX;
     if (opts.layDirectionDeg != null) {
       layAlongX = opts.layDirectionDeg! == 0;
@@ -133,6 +176,8 @@ class RollPlanner {
       seamCount: r.seamCount,
       totalLinearWithWasteMm: totalWithWaste,
       seamPositionsMmOverride: r.seamPositionsUsed,
+      isSinglePiece: false,
+      roomShapeVerticesMm: null,
     );
   }
 
@@ -219,85 +264,59 @@ class RollPlanner {
     }
 
     if (boundaries != null) {
-      // Use override boundaries: strips [0, b[0]), [b[0], b[1]), ..., [b[n-1], perpLen]
+      // Phase 2: Apply sweep-based logic to user seam overrides.
+      // Each band [stripStart, stripEnd] can produce multiple strips for L/T-shaped rooms.
+      final bandEnds = [...boundaries, perpLen];
       double stripStart = 0;
-      for (final end in boundaries) {
-        final stripEnd = end;
+      for (final stripEnd in bandEnds) {
         final stripWidth = stripEnd - stripStart;
-        final double left, top, right, bottom;
-        if (layAlongX) {
-          left = minX; right = minX + bboxW;
-          top = minY + stripStart; bottom = minY + stripEnd;
-        } else {
-          left = minX + stripStart; right = minX + stripEnd;
-          top = minY; bottom = minY + bboxH;
-        }
-        final clipped = clipPolygonToRect(room.vertices, left, top, right, bottom);
-        if (clipped.length >= 3) {
-          double segmentLen = _extentAlong(clipped, layAlongX);
-          if (segmentLen > 0) {
-            double cutLen = segmentLen + trimAllowance * 2;
-            if (patternRepeat > 0) cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
-            stripLengths.add(cutLen);
-            stripWidths.add(stripWidth);
-            if (stripWidth < minStripWidth) sliverCount++;
+        final left = layAlongX ? minX : minX + stripStart;
+        final top = layAlongX ? minY + stripStart : minY;
+        final right = layAlongX ? minX + bboxW : minX + stripEnd;
+        final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
+
+        for (final region in sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX)) {
+          final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
+          if (clipped.length >= 3) {
+            double segmentLen = _extentAlong(clipped, layAlongX);
+            if (segmentLen > 0) {
+              double cutLen = segmentLen + trimAllowance * 2;
+              if (patternRepeat > 0) cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
+              stripLengths.add(cutLen);
+              stripWidths.add(stripWidth);
+              if (stripWidth < minStripWidth) sliverCount++;
+            }
           }
         }
         stripStart = stripEnd;
       }
-      // Last strip: stripStart to perpLen
-      final stripWidth = perpLen - stripStart;
-      final double left, top, right, bottom;
-      if (layAlongX) {
-        left = minX; right = minX + bboxW;
-        top = minY + stripStart; bottom = minY + perpLen;
-      } else {
-        left = minX + stripStart; right = minX + perpLen;
-        top = minY; bottom = minY + bboxH;
-      }
-      final clipped = clipPolygonToRect(room.vertices, left, top, right, bottom);
-      if (clipped.length >= 3) {
-        double segmentLen = _extentAlong(clipped, layAlongX);
-        if (segmentLen > 0) {
-          double cutLen = segmentLen + trimAllowance * 2;
-          if (patternRepeat > 0) cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
-          stripLengths.add(cutLen);
-          stripWidths.add(stripWidth);
-          if (stripWidth < minStripWidth) sliverCount++;
-        }
-      }
     } else {
+      // Phase 1 non-rectangular: sweep each band to find all disconnected regions
+      // (e.g. L-shape vertical + horizontal legs). Output one strip per region.
       int i = 0;
       while (i < 1000) {
         final stripStart = i * rollWidthMm;
         if (stripStart >= perpLen) break;
         final stripEnd = math.min((i + 1) * rollWidthMm, perpLen);
         final stripWidth = stripEnd - stripStart;
+        final left = layAlongX ? minX : minX + stripStart;
+        final top = layAlongX ? minY + stripStart : minY;
+        final right = layAlongX ? minX + bboxW : minX + stripEnd;
+        final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
 
-        final double left, top, right, bottom;
-        if (layAlongX) {
-          left = minX;
-          right = minX + bboxW;
-          top = minY + stripStart;
-          bottom = minY + stripEnd;
-        } else {
-          left = minX + stripStart;
-          right = minX + stripEnd;
-          top = minY;
-          bottom = minY + bboxH;
-        }
-
-        final clipped = clipPolygonToRect(room.vertices, left, top, right, bottom);
-        if (clipped.length >= 3) {
-          double segmentLen = _extentAlong(clipped, layAlongX);
-          if (segmentLen > 0) {
-            double cutLen = segmentLen + trimAllowance * 2;
-            if (patternRepeat > 0) {
-              cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
+        for (final region in sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX)) {
+          final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
+          if (clipped.length >= 3) {
+            double segmentLen = _extentAlong(clipped, layAlongX);
+            if (segmentLen > 0) {
+              double cutLen = segmentLen + trimAllowance * 2;
+              if (patternRepeat > 0) {
+                cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
+              }
+              stripLengths.add(cutLen);
+              stripWidths.add(stripWidth);
+              if (stripWidth < minStripWidth) sliverCount++;
             }
-            stripLengths.add(cutLen);
-            stripWidths.add(stripWidth);
-            if (stripWidth < minStripWidth) sliverCount++;
           }
         }
         i++;
@@ -316,8 +335,9 @@ class RollPlanner {
     final seamPenalty = _seamPenalty(seamCount, opts);
     final sliverPenalty = sliverCount * opts.sliverPenaltyPerStripMm;
     final cost = totalLinear + seamPenalty + sliverPenalty;
-    // Only expose override positions when strip count matches (all strips produced)
-    final used = boundaries != null && stripLengths.length == boundaries.length + 1 ? boundaries : null;
+    // Expose override positions when we used them (seam lines on plan). Strip count may exceed
+    // boundaries.length + 1 for L/T-shaped rooms (multiple strips per band).
+    final used = boundaries;
 
     return (stripLengthsMm: stripLengths, stripWidthsMm: stripWidths, totalLinearMm: totalLinear, seamCount: seamCount, cost: cost, seamPositionsUsed: used);
   }

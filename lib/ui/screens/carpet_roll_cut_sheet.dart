@@ -22,6 +22,10 @@ class RollCutPiece {
   final double breadthMm; // strip width
   final bool isSliver;
   final double? patternRepeatMm;
+  /// Room polygon in mm for single-piece template cuts. Null for strip cuts.
+  final List<Offset>? roomShapeVerticesMm;
+  /// Lay direction for single-piece: true = strips run along x. Used to transform room shape.
+  final bool? layAlongX;
 
   const RollCutPiece({
     required this.cutId,
@@ -35,6 +39,8 @@ class RollCutPiece {
     required this.breadthMm,
     required this.isSliver,
     this.patternRepeatMm,
+    this.roomShapeVerticesMm,
+    this.layAlongX,
   });
 }
 
@@ -67,12 +73,15 @@ class RollLaneData {
   }
 }
 
+/// 2D placement on the roll: (alongMm, perpMm). Along = roll length axis, perp = roll width axis.
+typedef RollCutPlacement = Offset;
+
 /// State for the roll planning board: all cuts, lanes, placements, selection.
 class RollPlanState {
   final List<RollCutPiece> allCuts;
   final List<RollLaneData> lanes;
-  /// cutId -> (startMm on that cut's roll lane). Absent = unplaced.
-  final Map<String, double> placements;
+  /// cutId -> 2D position (dx = alongMm, dy = perpMm). Absent = unplaced.
+  final Map<String, RollCutPlacement> placements;
   final String? selectedCutId;
   final bool cutListExpanded;
 
@@ -91,7 +100,12 @@ class RollPlanState {
     return allCuts
         .where((c) => c.rollLaneIndex == rollIndex && placements.containsKey(c.cutId))
         .toList()
-      ..sort((a, b) => (placements[a.cutId] ?? 0).compareTo(placements[b.cutId] ?? 0));
+      ..sort((a, b) {
+        final pa = placements[a.cutId]!;
+        final pb = placements[b.cutId]!;
+        final cmp = pa.dx.compareTo(pb.dx);
+        return cmp != 0 ? cmp : pa.dy.compareTo(pb.dy);
+      });
   }
 
   double totalLinearMm() =>
@@ -100,14 +114,21 @@ class RollPlanState {
   double wasteMmForLane(int rollIndex) {
     final placed = placedCutsOnLane(rollIndex);
     if (placed.isEmpty) return 0;
-    double used = 0;
-    double lastEnd = 0;
-    for (final c in placed) {
-      final start = placements[c.cutId] ?? 0;
-      if (start > lastEnd) used += start - lastEnd; // gap
-      lastEnd = start + c.lengthMm;
-    }
-    return used;
+    final lane = lanes[rollIndex];
+    final rollArea = lane.rollLengthMm * lane.rollWidthMm;
+    final usedArea = placed.fold<double>(0, (s, c) => s + c.lengthMm * c.breadthMm);
+    return ((rollArea - usedArea) / lane.rollWidthMm).clamp(0, double.infinity);
+  }
+
+  /// 2D axis-aligned overlap: cut A at (ax,ay) size (aLength, aBreadth) vs B.
+  bool _cutsOverlap(RollCutPiece a, RollCutPiece b, RollLaneData lane) {
+    final pa = placements[a.cutId]!;
+    final pb = placements[b.cutId]!;
+    final aRight = pa.dx + a.lengthMm;
+    final aBottom = pa.dy + a.breadthMm;
+    final bRight = pb.dx + b.lengthMm;
+    final bBottom = pb.dy + b.breadthMm;
+    return pa.dx < bRight && pb.dx < aRight && pa.dy < bBottom && pb.dy < aBottom;
   }
 
   int get overlapCount {
@@ -115,14 +136,8 @@ class RollPlanState {
     for (final lane in lanes) {
       final placed = placedCutsOnLane(lane.rollIndex);
       for (int i = 0; i < placed.length; i++) {
-        final a = placed[i];
-        final aStart = placements[a.cutId]!;
-        final aEnd = aStart + a.lengthMm;
         for (int j = i + 1; j < placed.length; j++) {
-          final b = placed[j];
-          final bStart = placements[b.cutId]!;
-          final bEnd = bStart + b.lengthMm;
-          if (aStart < bEnd && bStart < aEnd) n++;
+          if (_cutsOverlap(placed[i], placed[j], lane)) n++;
         }
       }
     }
@@ -135,17 +150,11 @@ class RollPlanState {
     for (final lane in lanes) {
       final placed = placedCutsOnLane(lane.rollIndex);
       for (int i = 0; i < placed.length; i++) {
-        final a = placed[i];
-        final aStart = placements[a.cutId]!;
-        final aEnd = aStart + a.lengthMm;
         for (int j = 0; j < placed.length; j++) {
           if (i == j) continue;
-          final b = placed[j];
-          final bStart = placements[b.cutId]!;
-          final bEnd = bStart + b.lengthMm;
-          if (aStart < bEnd && bStart < aEnd) {
-            out.add(a.cutId);
-            out.add(b.cutId);
+          if (_cutsOverlap(placed[i], placed[j], lane)) {
+            out.add(placed[i].cutId);
+            out.add(placed[j].cutId);
           }
         }
       }
@@ -156,7 +165,7 @@ class RollPlanState {
   RollPlanState copyWith({
     List<RollCutPiece>? allCuts,
     List<RollLaneData>? lanes,
-    Map<String, double>? placements,
+    Map<String, RollCutPlacement>? placements,
     String? selectedCutId,
     bool clearSelection = false,
     bool? cutListExpanded,
@@ -274,11 +283,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       return;
     }
     final allCuts = <RollCutPiece>[];
-    final placements = <String, double>{};
-    // One roll for all rooms: use first room's product for roll dimensions.
+    final placements = <String, RollCutPlacement>{};
     final first = list.first;
     double totalLinear = 0;
-    double pos = 0;
+    double alongPos = 0;
     for (int li = 0; li < list.length; li++) {
       final r = list[li];
       final roomName = r.room.name ?? 'Room ${r.roomIndex + 1}';
@@ -295,7 +303,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           cutId: cutId,
           roomIndex: r.roomIndex,
           roomName: roomName,
-          rollLaneIndex: 0, // all cuts on the single roll
+          rollLaneIndex: 0,
           product: r.product,
           stripIndex: si,
           lengthMm: lengthMm,
@@ -303,9 +311,11 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           breadthMm: breadthMm,
           isSliver: isSliver,
           patternRepeatMm: r.product.patternRepeatMm,
+          roomShapeVerticesMm: r.layout.isSinglePiece ? r.layout.roomShapeVerticesMm : null,
+          layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
         ));
-        placements[cutId] = pos;
-        pos += lengthMm;
+        placements[cutId] = Offset(alongPos, 0);
+        alongPos += lengthMm;
       }
     }
     final lanes = [
@@ -341,16 +351,30 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     }
   }
 
-  void _updatePlacement(String cutId, double startMm) {
+  void _updatePlacement(String cutId, RollCutPlacement pos) {
     if (_planState == null) return;
-    final next = Map<String, double>.from(_planState!.placements);
-    next[cutId] = startMm;
+    final next = Map<String, RollCutPlacement>.from(_planState!.placements);
+    next[cutId] = pos;
     setState(() => _planState = _planState!.copyWith(placements: next));
+  }
+
+  void _applyPlacementDelta(String cutId, double deltaAlongMm, double deltaPerpMm) {
+    if (_planState == null) return;
+    final p = _planState!.placements[cutId];
+    if (p == null) return;
+    final piece = _planState!.allCuts.where((c) => c.cutId == cutId).firstOrNull;
+    if (piece == null) return;
+    final lane = _planState!.lanes[piece.rollLaneIndex];
+    final maxAlong = (lane.rollLengthMm - piece.lengthMm).clamp(0.0, double.infinity);
+    final maxPerp = (lane.rollWidthMm - piece.breadthMm).clamp(0.0, double.infinity);
+    final newAlong = (p.dx + deltaAlongMm).clamp(0.0, maxAlong).toDouble();
+    final newPerp = (p.dy + deltaPerpMm).clamp(0.0, maxPerp).toDouble();
+    _updatePlacement(cutId, Offset(newAlong, newPerp));
   }
 
   void _removeFromRoll(String cutId) {
     if (_planState == null) return;
-    final next = Map<String, double>.from(_planState!.placements);
+    final next = Map<String, RollCutPlacement>.from(_planState!.placements);
     next.remove(cutId);
     setState(() => _planState = _planState!.copyWith(placements: next, clearSelection: true));
   }
@@ -359,14 +383,27 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     if (_planState == null) return;
     final piece = _planState!.allCuts.where((c) => c.cutId == cutId).firstOrNull;
     if (piece == null) return;
+    final lane = _planState!.lanes[piece.rollLaneIndex];
+    final rollLength = lane.rollLengthMm;
+    final rollWidth = lane.rollWidthMm;
     final placed = _planState!.placedCutsOnLane(piece.rollLaneIndex);
-    double startMm = 0;
+    double alongPos = 0;
+    double perpPos = 0;
+    double rowBottom = 0;
     for (final c in placed) {
-      final end = (_planState!.placements[c.cutId] ?? 0) + c.lengthMm;
-      if (end > startMm) startMm = end;
+      final p = _planState!.placements[c.cutId]!;
+      final endAlong = p.dx + c.lengthMm;
+      final endPerp = p.dy + c.breadthMm;
+      if (endAlong > alongPos) alongPos = endAlong;
+      if (endPerp > rowBottom) rowBottom = endPerp;
     }
-    final next = Map<String, double>.from(_planState!.placements);
-    next[cutId] = startMm;
+    if (alongPos + piece.lengthMm > rollLength && alongPos > 0) {
+      alongPos = 0;
+      perpPos = rowBottom;
+    }
+    if (perpPos + piece.breadthMm > rollWidth) perpPos = 0;
+    final next = Map<String, RollCutPlacement>.from(_planState!.placements);
+    next[cutId] = Offset(alongPos, perpPos);
     setState(() => _planState = _planState!.copyWith(placements: next));
   }
 
@@ -501,6 +538,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
             useImperial: widget.useImperial,
             overlappingCutIds: plan.overlappingCutIds(),
             onPlacementChanged: _updatePlacement,
+            onPlacementDelta: _applyPlacementDelta,
             onSelectCut: _selectCut,
             selectedCutId: plan.selectedCutId,
           ),
@@ -547,13 +585,13 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   }
 
   void _exportCutSheet(BuildContext context, RollPlanState plan) {
-    // Simple CSV: Cut ID, Room, Length, Start, Roll
+    // Simple CSV: Cut ID, Room, Length, Start (m), Roll
     final sb = StringBuffer();
-    sb.writeln('Cut ID,Room,Length (m),Start (m),Roll');
+    sb.writeln('Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll');
     for (final c in plan.allCuts) {
-      final start = plan.placements[c.cutId];
-      final roll = start != null ? (plan.lanes[c.rollLaneIndex].room?.name ?? plan.lanes[c.rollLaneIndex].product.name) : '';
-      sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${start != null ? start / 1000 : ""},$roll');
+      final pos = plan.placements[c.cutId];
+      final roll = pos != null ? (plan.lanes[c.rollLaneIndex].room?.name ?? plan.lanes[c.rollLaneIndex].product.name) : '';
+      sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll');
     }
     // TODO: share or copy to clipboard
     ScaffoldMessenger.of(context).showSnackBar(
@@ -632,7 +670,8 @@ class _RollBoard extends StatelessWidget {
   final RollPlanState plan;
   final bool useImperial;
   final Set<String> overlappingCutIds;
-  final void Function(String cutId, double startMm) onPlacementChanged;
+  final void Function(String cutId, RollCutPlacement pos) onPlacementChanged;
+  final void Function(String cutId, double deltaAlongMm, double deltaPerpMm)? onPlacementDelta;
   final void Function(String? cutId) onSelectCut;
   final String? selectedCutId;
 
@@ -641,12 +680,14 @@ class _RollBoard extends StatelessWidget {
     required this.useImperial,
     required this.overlappingCutIds,
     required this.onPlacementChanged,
+    this.onPlacementDelta,
     required this.onSelectCut,
     this.selectedCutId,
   });
 
-  static const double _rollHeightPx = 88;
   static const double _minBlockWidthPx = 36;
+  static const double _minBlockHeightPx = 24;
+  static const double _minRollHeightPx = 80;
 
   @override
   Widget build(BuildContext context) {
@@ -654,10 +695,14 @@ class _RollBoard extends StatelessWidget {
     final lane = plan.lanes[0];
     final placed = plan.placedCutsOnLane(0);
     final rollLengthMm = lane.rollLengthMm;
+    final rollWidthMm = lane.rollWidthMm;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        if (width <= 0) return const SizedBox.shrink();
+        final availWidth = constraints.maxWidth - 24;
+        if (availWidth <= 0) return const SizedBox.shrink();
+        final rollHeightPx = (rollWidthMm / rollLengthMm * availWidth).clamp(_minRollHeightPx, 200.0).toDouble();
+        final pxPerMmAlong = availWidth / rollLengthMm;
+        final pxPerMmPerp = rollHeightPx / rollWidthMm;
         final label = lane.room != null
             ? (lane.room!.name ?? 'Room')
             : '${lane.product.name} — all rooms';
@@ -675,7 +720,7 @@ class _RollBoard extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    'Roll length: ${UnitConverter.formatDistance(rollLengthMm, useImperial: useImperial)}',
+                    'Roll: ${UnitConverter.formatDistance(rollWidthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(rollLengthMm, useImperial: useImperial)}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).hintColor,
                         ),
@@ -686,8 +731,8 @@ class _RollBoard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Container(
-                width: width - 24,
-                height: _rollHeightPx,
+                width: availWidth,
+                height: rollHeightPx + 8,
                 decoration: BoxDecoration(
                   color: Colors.brown.shade200,
                   borderRadius: BorderRadius.circular(8),
@@ -699,20 +744,31 @@ class _RollBoard extends StatelessWidget {
                     for (final c in placed)
                       _HorizontalCutBlock(
                         piece: c,
-                        startMm: plan.placements[c.cutId]!,
+                        startOffset: plan.placements[c.cutId]!,
                         rollLengthMm: rollLengthMm,
-                        rollWidthPx: width - 24,
-                        rollHeightPx: _rollHeightPx,
+                        rollWidthMm: rollWidthMm,
+                        rollWidthPx: availWidth,
+                        rollHeightPx: rollHeightPx,
+                        pxPerMmAlong: pxPerMmAlong,
+                        pxPerMmPerp: pxPerMmPerp,
                         minBlockWidthPx: _minBlockWidthPx,
+                        minBlockHeightPx: _minBlockHeightPx,
                         useImperial: useImperial,
                         isSelected: selectedCutId == c.cutId,
                         isSliver: c.isSliver,
                         isOverlap: overlappingCutIds.contains(c.cutId),
                         onTap: () => onSelectCut(c.cutId),
-                        onDragEnd: (deltaMm) {
-                          final newStart = (plan.placements[c.cutId]! + deltaMm)
-                              .clamp(0.0, rollLengthMm - c.lengthMm);
-                          onPlacementChanged(c.cutId, newStart);
+                        onDragEnd: (double deltaAlongMm, double deltaPerpMm) {
+                          if (onPlacementDelta != null) {
+                            onPlacementDelta!(c.cutId, deltaAlongMm, deltaPerpMm);
+                          } else {
+                            final p = plan.placements[c.cutId]!;
+                            final maxAlong = (rollLengthMm - c.lengthMm).clamp(0.0, double.infinity);
+                            final maxPerp = (rollWidthMm - c.breadthMm).clamp(0.0, double.infinity);
+                            final newAlong = (p.dx + deltaAlongMm).clamp(0.0, maxAlong).toDouble();
+                            final newPerp = (p.dy + deltaPerpMm).clamp(0.0, maxPerp).toDouble();
+                            onPlacementChanged(c.cutId, Offset(newAlong, newPerp));
+                          }
                         },
                       ),
                   ],
@@ -726,28 +782,115 @@ class _RollBoard extends StatelessWidget {
   }
 }
 
-/// Cut block on the horizontal roll strip: position/size by mm along the roll.
+/// Paints room polygon scaled to fit the block bounds. Used for single-piece template cuts.
+class _RoomShapePainter extends CustomPainter {
+  final List<Offset> vertices;
+  final bool layAlongX;
+  final Color fillColor;
+  final Color borderColor;
+  final double borderWidth;
+
+  _RoomShapePainter({
+    required this.vertices,
+    required this.layAlongX,
+    required this.fillColor,
+    required this.borderColor,
+    required this.borderWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (vertices.length < 3 || size.width <= 0 || size.height <= 0) return;
+
+    double alongLo = vertices[0].dx, alongHi = vertices[0].dx;
+    double perpLo = vertices[0].dy, perpHi = vertices[0].dy;
+    if (!layAlongX) {
+      alongLo = vertices[0].dy;
+      alongHi = vertices[0].dy;
+      perpLo = vertices[0].dx;
+      perpHi = vertices[0].dx;
+    }
+    for (final v in vertices) {
+      final a = layAlongX ? v.dx : v.dy;
+      final p = layAlongX ? v.dy : v.dx;
+      if (a < alongLo) alongLo = a;
+      if (a > alongHi) alongHi = a;
+      if (p < perpLo) perpLo = p;
+      if (p > perpHi) perpHi = p;
+    }
+    final alongSpan = (alongHi - alongLo).clamp(1e-6, double.infinity);
+    final perpSpan = (perpHi - perpLo).clamp(1e-6, double.infinity);
+
+    Offset toLocal(Offset v) {
+      final a = layAlongX ? v.dx : v.dy;
+      final p = layAlongX ? v.dy : v.dx;
+      final x = (a - alongLo) / alongSpan * size.width;
+      final y = (p - perpLo) / perpSpan * size.height;
+      return Offset(x, y);
+    }
+
+    final path = Path();
+    path.moveTo(toLocal(vertices[0]).dx, toLocal(vertices[0]).dy);
+    for (int i = 1; i < vertices.length; i++) {
+      path.lineTo(toLocal(vertices[i]).dx, toLocal(vertices[i]).dy);
+    }
+    path.close();
+
+    canvas.drawPath(
+      path,
+      Paint()..color = fillColor..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = borderColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = borderWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.miter,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RoomShapePainter oldDelegate) {
+    return oldDelegate.vertices != vertices ||
+        oldDelegate.layAlongX != layAlongX ||
+        oldDelegate.fillColor != fillColor ||
+        oldDelegate.borderColor != borderColor ||
+        oldDelegate.borderWidth != borderWidth;
+  }
+}
+
+/// Cut block on the roll: positioned at 2D (alongMm, perpMm), draggable in both axes.
 class _HorizontalCutBlock extends StatefulWidget {
   final RollCutPiece piece;
-  final double startMm;
+  final RollCutPlacement startOffset;
   final double rollLengthMm;
+  final double rollWidthMm;
   final double rollWidthPx;
   final double rollHeightPx;
+  final double pxPerMmAlong;
+  final double pxPerMmPerp;
   final double minBlockWidthPx;
+  final double minBlockHeightPx;
   final bool useImperial;
   final bool isSelected;
   final bool isSliver;
   final bool isOverlap;
   final VoidCallback onTap;
-  final void Function(double deltaMm) onDragEnd;
+  final void Function(double deltaAlongMm, double deltaPerpMm) onDragEnd;
 
   const _HorizontalCutBlock({
     required this.piece,
-    required this.startMm,
+    required this.startOffset,
     required this.rollLengthMm,
+    required this.rollWidthMm,
     required this.rollWidthPx,
     required this.rollHeightPx,
+    required this.pxPerMmAlong,
+    required this.pxPerMmPerp,
     required this.minBlockWidthPx,
+    required this.minBlockHeightPx,
     required this.useImperial,
     required this.isSelected,
     required this.isSliver,
@@ -761,62 +904,109 @@ class _HorizontalCutBlock extends StatefulWidget {
 }
 
 class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
-  double _dragStartX = 0;
+  Widget _buildBlockContent(BuildContext context, double widthPx, double heightPx) {
+    final shape = widget.piece.roomShapeVerticesMm;
+    final layAlongX = widget.piece.layAlongX ?? true;
+
+    final fillColor = widget.isSliver
+        ? Colors.amber.shade200
+        : (widget.piece.stripIndex.isEven
+            ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
+            : Theme.of(context).colorScheme.primary.withOpacity(0.7));
+    final borderColor = widget.isOverlap
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.primary;
+    final borderWidth = widget.isSelected ? 2.5 : 1.0;
+
+    if (shape != null && shape.length >= 3) {
+      return ClipRect(
+        child: CustomPaint(
+          painter: _RoomShapePainter(
+            vertices: shape,
+            layAlongX: layAlongX,
+            fillColor: fillColor,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
+          ),
+          child: Container(
+            width: widthPx,
+            height: heightPx,
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  widget.piece.cutId,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                ),
+                Text(
+                  UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 10,
+                        color: Theme.of(context).colorScheme.onPrimary.withOpacity(0.9),
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: widthPx,
+      height: heightPx,
+      decoration: BoxDecoration(
+        color: fillColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: borderColor, width: borderWidth),
+        boxShadow: widget.isSliver ? [BoxShadow(color: Colors.amber.withOpacity(0.5), blurRadius: 4)] : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            widget.piece.cutId,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                ),
+          ),
+          Text(
+            UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 10,
+                  color: Theme.of(context).colorScheme.onPrimary.withOpacity(0.9),
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final leftPx = (widget.startMm / widget.rollLengthMm * widget.rollWidthPx).clamp(4.0, widget.rollWidthPx - 4);
-    final widthPx = (widget.piece.lengthMm / widget.rollLengthMm * widget.rollWidthPx).clamp(widget.minBlockWidthPx, double.infinity);
+    final leftPx = (widget.startOffset.dx * widget.pxPerMmAlong).clamp(4.0, widget.rollWidthPx - 4);
+    final topPx = (widget.startOffset.dy * widget.pxPerMmPerp).clamp(4.0, widget.rollHeightPx - 4);
+    final widthPx = (widget.piece.lengthMm * widget.pxPerMmAlong).clamp(widget.minBlockWidthPx, double.infinity);
+    final heightPx = (widget.piece.breadthMm * widget.pxPerMmPerp).clamp(widget.minBlockHeightPx, widget.rollHeightPx - 8);
     return Positioned(
       left: leftPx,
-      top: 4,
+      top: 4 + topPx,
       width: widthPx,
-      height: widget.rollHeightPx - 8,
+      height: heightPx,
       child: GestureDetector(
         onTap: widget.onTap,
-        onHorizontalDragStart: (d) {
-          _dragStartX = d.localPosition.dx;
+        onPanUpdate: (d) {
+          final deltaAlongMm = (d.delta.dx / widget.pxPerMmAlong).toDouble();
+          final deltaPerpMm = (d.delta.dy / widget.pxPerMmPerp).toDouble();
+          widget.onDragEnd(deltaAlongMm, deltaPerpMm);
         },
-        onHorizontalDragUpdate: (d) {
-          final deltaPx = d.localPosition.dx - _dragStartX;
-          _dragStartX = d.localPosition.dx;
-          final deltaMm = deltaPx / widget.rollWidthPx * widget.rollLengthMm;
-          widget.onDragEnd(deltaMm);
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            color: widget.isSliver
-                ? Colors.amber.shade200
-                : (widget.piece.stripIndex.isEven
-                    ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
-                    : Theme.of(context).colorScheme.primary.withOpacity(0.7)),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: widget.isOverlap ? Theme.of(context).colorScheme.error : Theme.of(context).colorScheme.primary,
-              width: widget.isSelected ? 2.5 : 1,
-            ),
-            boxShadow: widget.isSliver ? [BoxShadow(color: Colors.amber.withOpacity(0.5), blurRadius: 4)] : null,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                widget.piece.cutId,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimary,
-                    ),
-              ),
-              Text(
-                UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontSize: 10,
-                      color: Theme.of(context).colorScheme.onPrimary.withOpacity(0.9),
-                    ),
-              ),
-            ],
-          ),
-        ),
+        child: _buildBlockContent(context, widthPx, heightPx),
       ),
     );
   }
@@ -868,7 +1058,7 @@ class _UnplacedTray extends StatelessWidget {
                         dense: true,
                         title: Text(c.cutId),
                         subtitle: Text(
-                          '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}',
+                          '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         selected: selectedCutId == c.cutId,
@@ -917,7 +1107,7 @@ class _CutInspector extends StatelessWidget {
     }
     final c = plan.allCuts.where((x) => x.cutId == cutId).firstOrNull;
     if (c == null) return const SizedBox.shrink();
-    final placed = plan.placements[cutId];
+    final pos = plan.placements[cutId];
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
@@ -933,20 +1123,21 @@ class _CutInspector extends StatelessWidget {
             const SizedBox(height: 8),
             _row('Cut ID', c.cutId),
             _row('Room', c.roomName),
+            if (c.roomShapeVerticesMm != null) _row('Type', 'Template cut (room shape)'),
             _row('Length', UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)),
             _row('Trim', '+${UnitConverter.formatDistance(c.trimMm, useImperial: useImperial)} each end'),
             if (c.patternRepeatMm != null) _row('Pattern', '${c.patternRepeatMm! / 1000} m'),
-            _row('Status', placed != null ? 'Placed' : 'Unplaced'),
-            if (placed != null) _row('Start', UnitConverter.formatDistance(placed, useImperial: useImperial)),
+            _row('Status', pos != null ? 'Placed' : 'Unplaced'),
+            if (pos != null) _row('Position', '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)} × ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}'),
             if (c.isSliver) _row('Note', 'Sliver'),
             const SizedBox(height: 12),
-            if (placed != null)
+            if (pos != null)
               TextButton.icon(
                 onPressed: () => onRemoveFromRoll(c.cutId),
                 icon: const Icon(Icons.remove_circle_outline, size: 18),
                 label: const Text('Send to tray'),
               ),
-            if (placed == null)
+            if (pos == null)
               TextButton.icon(
                 onPressed: () => onPlaceOnRoll(c.cutId),
                 icon: const Icon(Icons.add_circle_outline, size: 18),
@@ -1035,7 +1226,7 @@ class _CutListSection extends StatelessWidget {
                     ],
                   ),
                   ...plan.allCuts.map((c) {
-                    final start = plan.placements[c.cutId];
+                    final pos = plan.placements[c.cutId];
                     return TableRow(
                       children: [
                         Padding(
@@ -1047,8 +1238,8 @@ class _CutListSection extends StatelessWidget {
                         ),
                         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(c.roomName)),
                         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial))),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(start != null ? UnitConverter.formatDistance(start, useImperial: useImperial) : '—')),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(start != null ? 'Placed' : 'Unplaced', style: TextStyle(fontSize: 11, color: start != null ? null : Theme.of(context).colorScheme.error))),
+                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(pos != null ? '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)}, ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}' : '—')),
+                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(pos != null ? 'Placed' : 'Unplaced', style: TextStyle(fontSize: 11, color: pos != null ? null : Theme.of(context).colorScheme.error))),
                       ],
                     );
                   }),
