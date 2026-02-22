@@ -158,6 +158,21 @@ class ProjectService {
       } catch (_) {}
     }
 
+    // Parse room carpet seam overrides if available
+    Map<int, List<double>> roomCarpetSeamOverrides = {};
+    if (project.roomCarpetSeamOverridesJson != null && project.roomCarpetSeamOverridesJson!.isNotEmpty) {
+      try {
+        final map = jsonDecode(project.roomCarpetSeamOverridesJson!) as Map<String, dynamic>;
+        for (final entry in map.entries) {
+          final roomIndex = int.tryParse(entry.key);
+          if (roomIndex == null) continue;
+          final list = entry.value as List<dynamic>?;
+          if (list == null) continue;
+          roomCarpetSeamOverrides[roomIndex] = list.map((e) => (e as num).toDouble()).toList();
+        }
+      } catch (_) {}
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -168,6 +183,7 @@ class ProjectService {
       openings: openings,
       carpetProducts: carpetProducts,
       roomCarpetAssignments: roomCarpetAssignments,
+      roomCarpetSeamOverrides: roomCarpetSeamOverrides,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -223,6 +239,7 @@ class ProjectService {
     List<Opening>? openings,
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
+    Map<int, List<double>>? roomCarpetSeamOverrides,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -250,6 +267,9 @@ class ProjectService {
           ? Value(jsonEncode(roomCarpetAssignments.entries
               .map((e) => {'roomIndex': e.key, 'productIndex': e.value})
               .toList()))
+          : const Value.absent(),
+      roomCarpetSeamOverridesJson: roomCarpetSeamOverrides != null
+          ? Value(jsonEncode(roomCarpetSeamOverrides.map((k, v) => MapEntry(k.toString(), v))))
           : const Value.absent(),
     );
 
@@ -291,6 +311,7 @@ class ProjectService {
     List<Opening>? openings,
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
+    Map<int, List<double>>? roomCarpetSeamOverrides,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -310,7 +331,8 @@ class ProjectService {
             backgroundImageState != null ||
             (openings != null && openings.isNotEmpty) ||
             (carpetProducts != null && carpetProducts.isNotEmpty) ||
-            (roomCarpetAssignments != null && roomCarpetAssignments.isNotEmpty)) {
+            (roomCarpetAssignments != null && roomCarpetAssignments.isNotEmpty) ||
+            (roomCarpetSeamOverrides != null && roomCarpetSeamOverrides.isNotEmpty)) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
@@ -318,6 +340,7 @@ class ProjectService {
             openings: openings,
             carpetProducts: carpetProducts,
             roomCarpetAssignments: roomCarpetAssignments,
+            roomCarpetSeamOverrides: roomCarpetSeamOverrides,
           );
         }
         return projectId;
@@ -329,6 +352,7 @@ class ProjectService {
           openings: openings,
           carpetProducts: carpetProducts,
           roomCarpetAssignments: roomCarpetAssignments,
+          roomCarpetSeamOverrides: roomCarpetSeamOverrides,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

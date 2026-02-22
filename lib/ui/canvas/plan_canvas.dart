@@ -80,6 +80,11 @@ class PlanCanvasState extends State<PlanCanvas> {
   final List<CarpetProduct> _carpetProducts = [];
   // Room index -> carpet product index (Phase 2)
   final Map<int, int> _roomCarpetAssignments = {};
+  /// Room index -> seam positions (mm from reference). When set, overrides auto layout.
+  final Map<int, List<double>> _roomCarpetSeamOverrides = {};
+  /// When non-null, user is dragging this seam (room index, seam index 0-based).
+  int? _draggingSeamRoomIndex;
+  int? _draggingSeamIndex;
 
   // Counter for default room names
   int _roomCounter = 1;
@@ -320,6 +325,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _carpetProducts.addAll(project.carpetProducts);
           _roomCarpetAssignments.clear();
           _roomCarpetAssignments.addAll(project.roomCarpetAssignments);
+          _roomCarpetSeamOverrides.clear();
+          _roomCarpetSeamOverrides.addAll(project.roomCarpetSeamOverrides);
           widget.onRoomCarpetAssignmentsChanged?.call(Map<int, int>.from(_roomCarpetAssignments));
 
           // Restore viewport if available
@@ -529,6 +536,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         openings: _openings,
         carpetProducts: _carpetProducts,
         roomCarpetAssignments: _roomCarpetAssignments,
+        roomCarpetSeamOverrides: _roomCarpetSeamOverrides,
         viewport: _vp,
         useImperial: _useImperial,
         backgroundImagePath: _backgroundImagePath,
@@ -1509,6 +1517,86 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Room carpet assignments (roomIndex -> productIndex). Read-only copy.
   Map<int, int> get roomCarpetAssignments => Map<int, int>.from(_roomCarpetAssignments);
 
+  /// Openings (doors, pass-throughs) for layout options. Read-only copy.
+  List<Opening> get openings => List<Opening>.from(_openings);
+
+  /// Room carpet seam overrides (room index -> seam positions mm). Read-only copy.
+  Map<int, List<double>> get roomCarpetSeamOverrides => Map<int, List<double>>.from(
+    _roomCarpetSeamOverrides.map((k, v) => MapEntry(k, List<double>.from(v))),
+  );
+
+  /// Clear seam overrides for one room (reset to auto layout).
+  void clearSeamOverridesForRoom(int roomIndex) {
+    if (!_roomCarpetSeamOverrides.containsKey(roomIndex)) return;
+    setState(() {
+      _roomCarpetSeamOverrides.remove(roomIndex);
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  /// Compute strip layout for a room (used for hit-test and drag). Same logic as painter.
+  StripLayout? _computeStripLayoutForRoom(int roomIndex, Room room) {
+    final productIndex = _roomCarpetAssignments[roomIndex];
+    if (productIndex == null ||
+        productIndex < 0 ||
+        productIndex >= _carpetProducts.length) return null;
+    final product = _carpetProducts[productIndex];
+    if (product.rollWidthMm <= 0) return null;
+    final seamOverride = _roomCarpetSeamOverrides[roomIndex];
+    final opts = CarpetLayoutOptions(
+      minStripWidthMm: product.minStripWidthMm ?? 100,
+      trimAllowanceMm: product.trimAllowanceMm ?? 75,
+      patternRepeatMm: product.patternRepeatMm ?? 0,
+      wasteAllowancePercent: 5,
+      openings: _openings,
+      roomIndex: roomIndex,
+      seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
+    );
+    return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+  }
+
+  /// Hit-test: find seam line near [screenPos]. Returns (roomIndex, seamIndex) or null.
+  ({int roomIndex, int seamIndex})? _findSeamAtScreenPosition(Offset screenPos) {
+    const hitSlopPx = 14.0;
+    ({int roomIndex, int seamIndex})? best;
+    double bestDist = hitSlopPx + 1;
+    for (int ri = 0; ri < _completedRooms.length; ri++) {
+      if (!_roomCarpetAssignments.containsKey(ri)) continue;
+      final layout = _computeStripLayoutForRoom(ri, _completedRooms[ri]);
+      if (layout == null || layout.numStrips < 2) continue;
+      final positions = layout.seamPositionsFromReferenceMm;
+      for (int si = 0; si < positions.length; si++) {
+        final perpOffset = positions[si];
+        Offset p1World;
+        Offset p2World;
+        if (layout.layAlongX) {
+          final y = layout.bboxMinY + perpOffset;
+          p1World = Offset(layout.bboxMinX, y);
+          p2World = Offset(layout.bboxMinX + layout.bboxWidth, y);
+        } else {
+          final x = layout.bboxMinX + perpOffset;
+          p1World = Offset(x, layout.bboxMinY);
+          p2World = Offset(x, layout.bboxMinY + layout.bboxHeight);
+        }
+        final p1 = _vp.worldToScreen(p1World);
+        final p2 = _vp.worldToScreen(p2World);
+        final seg = p2 - p1;
+        final len = seg.distance;
+        if (len <= 0) continue;
+        final toPoint = screenPos - p1;
+        final t = (toPoint.dx * seg.dx + toPoint.dy * seg.dy) / (len * len);
+        final closest = t.clamp(0.0, 1.0);
+        final proj = p1 + Offset(seg.dx * closest, seg.dy * closest);
+        final d = (screenPos - proj).distance;
+        if (d < bestDist) {
+          bestDist = d;
+          best = (roomIndex: ri, seamIndex: si);
+        }
+      }
+    }
+    return best;
+  }
+
   void setRoomCarpet(int roomIndex, int? productIndex) {
     setState(() {
       if (productIndex == null) {
@@ -1630,6 +1718,14 @@ class PlanCanvasState extends State<PlanCanvas> {
                     _roomCarpetAssignments
                       ..clear()
                       ..addAll(newAssignments);
+                    final newSeamOverrides = <int, List<double>>{};
+                    for (final e in _roomCarpetSeamOverrides.entries) {
+                      if (e.key == idx) continue;
+                      newSeamOverrides[e.key > idx ? e.key - 1 : e.key] = e.value;
+                    }
+                    _roomCarpetSeamOverrides
+                      ..clear()
+                      ..addAll(newSeamOverrides);
                     _selectedRoomIndex = null;
                     _hasUnsavedChanges = true;
                     _saveHistoryState();
@@ -1677,6 +1773,24 @@ class PlanCanvasState extends State<PlanCanvas> {
                     _measureCurrentWorld = world;
                   }
                 });
+                return;
+              }
+              // Seam drag: in pan mode, check for seam hit
+              if (kIsWeb && e.buttons == 1 && _isPanMode && _draftRoomVertices == null) {
+                final hit = _findSeamAtScreenPosition(e.localPosition);
+                if (hit != null) {
+                  setState(() {
+                    final layout = _computeStripLayoutForRoom(hit.roomIndex, _completedRooms[hit.roomIndex]);
+                    if (layout != null && layout.numStrips >= 2) {
+                      if (!_roomCarpetSeamOverrides.containsKey(hit.roomIndex)) {
+                        _roomCarpetSeamOverrides[hit.roomIndex] = List<double>.from(layout.seamPositionsFromReferenceMm);
+                      }
+                      _draggingSeamRoomIndex = hit.roomIndex;
+                      _draggingSeamIndex = hit.seamIndex;
+                      _hasUnsavedChanges = true;
+                    }
+                  });
+                }
               }
             },
             onPointerUp: (e) {
@@ -1688,11 +1802,46 @@ class PlanCanvasState extends State<PlanCanvas> {
                   }
                 });
               }
+              if (_draggingSeamRoomIndex != null) {
+                setState(() {
+                  _draggingSeamRoomIndex = null;
+                  _draggingSeamIndex = null;
+                });
+              }
             },
 
             // PAN (web): Shift + left-drag OR right-click drag
             // Also track hover position for preview line (when not actively dragging to draw)
       onPointerMove: (e) {
+          // Seam drag: update seam position
+          if (_draggingSeamRoomIndex != null && _draggingSeamIndex != null) {
+            final ri = _draggingSeamRoomIndex!;
+            final si = _draggingSeamIndex!;
+            if (ri >= _completedRooms.length) {
+              setState(() { _draggingSeamRoomIndex = null; _draggingSeamIndex = null; });
+              return;
+            }
+            final room = _completedRooms[ri];
+            final layout = _computeStripLayoutForRoom(ri, room);
+            if (layout == null) {
+              setState(() { _draggingSeamRoomIndex = null; _draggingSeamIndex = null; });
+              return;
+            }
+            final perpLen = layout.layAlongX ? layout.bboxHeight : layout.bboxWidth;
+            final world = _vp.screenToWorld(e.localPosition);
+            double newPerpMm = layout.layAlongX ? (world.dy - layout.bboxMinY) : (world.dx - layout.bboxMinX);
+            final positions = List<double>.from(_roomCarpetSeamOverrides[ri]!);
+            const minGap = 50.0;
+            final prev = si > 0 ? positions[si - 1] + minGap : 0.0;
+            final next = si < positions.length - 1 ? positions[si + 1] - minGap : perpLen - minGap;
+            newPerpMm = newPerpMm.clamp(prev, next);
+            setState(() {
+              positions[si] = newPerpMm;
+              _roomCarpetSeamOverrides[ri] = positions;
+              _hasUnsavedChanges = true;
+            });
+            return;
+          }
           if (kIsWeb && _isMeasureMode && _measurePointsWorld.isNotEmpty && e.buttons == 1) {
             setState(() {
               _measureCurrentWorld = _vp.screenToWorld(e.localPosition);
@@ -2004,6 +2153,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                   openings: List<Opening>.from(_openings),
                   roomCarpetAssignments: _roomCarpetAssignments,
                   carpetProducts: _carpetProducts,
+                  roomCarpetSeamOverrides: _roomCarpetSeamOverrides,
                   pendingDoorEdge: _pendingDoorEdge,
                   draftRoomVertices: _draftRoomVertices != null
                       ? List<Offset>.from(_draftRoomVertices!)
@@ -3405,6 +3555,15 @@ class PlanCanvasState extends State<PlanCanvas> {
         _roomCarpetAssignments
           ..clear()
           ..addAll(newAssignments);
+        // Reindex room carpet seam overrides
+        final newSeamOverrides = <int, List<double>>{};
+        for (final e in _roomCarpetSeamOverrides.entries) {
+          if (e.key == roomIndex) continue;
+          newSeamOverrides[e.key > roomIndex ? e.key - 1 : e.key] = e.value;
+        }
+        _roomCarpetSeamOverrides
+          ..clear()
+          ..addAll(newSeamOverrides);
         if (_selectedRoomIndex == roomIndex) {
           _selectedRoomIndex = null;
         } else if (_selectedRoomIndex != null && _selectedRoomIndex! > roomIndex) {
@@ -3767,6 +3926,8 @@ class _PlanPainter extends CustomPainter {
   /// Room index -> carpet product index; rooms with an entry get a carpet tint and strip lines.
   final Map<int, int> roomCarpetAssignments;
   final List<CarpetProduct> carpetProducts;
+  /// Room index -> seam positions (mm from reference). Overrides auto layout when set.
+  final Map<int, List<double>> roomCarpetSeamOverrides;
 
   _PlanPainter({
     required this.vp,
@@ -3795,12 +3956,14 @@ class _PlanPainter extends CustomPainter {
     List<Opening>? openings,
     Map<int, int>? roomCarpetAssignments,
     List<CarpetProduct>? carpetProducts,
+    Map<int, List<double>>? roomCarpetSeamOverrides,
   })  : completedRooms = completedRooms ?? [],
         measurePointsWorld = measurePointsWorld ?? [],
         placedDimensions = placedDimensions ?? [],
         openings = openings ?? [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
-        carpetProducts = carpetProducts ?? const [];
+        carpetProducts = carpetProducts ?? const [],
+        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {};
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4136,11 +4299,10 @@ class _PlanPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
-    // Boundaries are perpendicular to strip length: when strips run along X (horizontal),
-    // they're stacked vertically → boundaries are horizontal. When strips run along Y (vertical),
-    // they're stacked horizontally → boundaries are vertical.
-    for (int i = 1; i < layout.numStrips; i++) {
-      final perpOffset = i * layout.rollWidthMm;
+    // Boundaries: use seam positions (from reference); works for both auto and overridden layout.
+    final positions = layout.seamPositionsFromReferenceMm;
+    for (int i = 0; i < positions.length; i++) {
+      final perpOffset = positions[i];
       Offset p1World;
       Offset p2World;
       if (layout.layAlongX) {
@@ -4168,6 +4330,7 @@ class _PlanPainter extends CustomPainter {
         productIndex >= carpetProducts.length) return null;
     final product = carpetProducts[productIndex];
     if (product.rollWidthMm <= 0) return null;
+    final seamOverride = roomCarpetSeamOverrides[roomIndex];
     final opts = CarpetLayoutOptions(
       minStripWidthMm: product.minStripWidthMm ?? 100,
       trimAllowanceMm: product.trimAllowanceMm ?? 75,
@@ -4175,6 +4338,7 @@ class _PlanPainter extends CustomPainter {
       wasteAllowancePercent: 5,
       openings: openings,
       roomIndex: roomIndex,
+      seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
     );
     return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
   }

@@ -16,6 +16,8 @@ class ProjectModel {
   final List<CarpetProduct> carpetProducts;
   /// Room index -> carpet product index. Only entries for rooms that have a product assigned.
   final Map<int, int> roomCarpetAssignments;
+  /// Room index -> list of seam positions (mm from reference edge). Overrides auto layout when set.
+  final Map<int, List<double>> roomCarpetSeamOverrides;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -30,12 +32,14 @@ class ProjectModel {
     List<Opening>? openings,
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
+    Map<int, List<double>>? roomCarpetSeamOverrides,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
   })  : openings = openings ?? const [],
         carpetProducts = carpetProducts ?? const [],
-        roomCarpetAssignments = roomCarpetAssignments ?? const {};
+        roomCarpetAssignments = roomCarpetAssignments ?? const {},
+        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {};
 
   /// Create a copy with updated fields.
   ProjectModel copyWith({
@@ -48,6 +52,7 @@ class ProjectModel {
     List<Opening>? openings,
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
+    Map<int, List<double>>? roomCarpetSeamOverrides,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -62,6 +67,7 @@ class ProjectModel {
       openings: openings ?? this.openings,
       carpetProducts: carpetProducts ?? this.carpetProducts,
       roomCarpetAssignments: roomCarpetAssignments ?? this.roomCarpetAssignments,
+      roomCarpetSeamOverrides: roomCarpetSeamOverrides ?? this.roomCarpetSeamOverrides,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,

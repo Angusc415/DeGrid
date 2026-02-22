@@ -4,6 +4,8 @@ import '../canvas/plan_canvas.dart';
 import '../../core/geometry/room.dart';
 import 'room_area_summary_panel.dart';
 import 'carpet_products_screen.dart';
+import 'carpet_cut_list_panel.dart';
+import 'carpet_roll_cut_sheet.dart';
 
 class EditorScreen extends StatefulWidget {
   final int? projectId;
@@ -108,12 +110,14 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
         ],
       ),
-      body: Row(
+      body: Stack(
         children: [
-          // Main canvas area
-          Expanded(
-            child: SafeArea(
-              child: PlanCanvas(
+          Row(
+            children: [
+              // Main canvas area
+              Expanded(
+                child: SafeArea(
+                  child: PlanCanvas(
                 key: _planCanvasKey,
                 projectId: widget.projectId,
                 initialProjectName: widget.projectName,
@@ -121,21 +125,110 @@ class _EditorScreenState extends State<EditorScreen> {
                 onRoomCarpetAssignmentsChanged: _onRoomCarpetAssignmentsChanged,
               ),
             ),
-          ),
+            ),
           // Side panel (web/desktop only, when open)
           if (kIsWeb && _isPanelOpen)
-            RoomAreaSummaryPanel(
-              rooms: _rooms,
-              useImperial: _useImperial,
-              selectedRoomIndex: _selectedRoomIndex,
-              onRoomSelected: _onRoomSelected,
-              onRoomDeleted: _onRoomDeleted,
-              carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
-              roomCarpetAssignments: _roomCarpetAssignments,
-              onCarpetAssigned: (roomIndex, productIndex) {
-                _planCanvasKey.currentState?.setRoomCarpet(roomIndex, productIndex);
-              },
+            Container(
+              width: 320,
+              decoration: BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                border: Border(
+                  left: BorderSide(
+                    color: Theme.of(context).dividerColor,
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    TabBar(
+                      labelColor: Theme.of(context).colorScheme.primary,
+                      tabs: const [
+                        Tab(text: 'Rooms'),
+                        Tab(text: 'Cut list'),
+                      ],
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          RoomAreaSummaryPanel(
+                            rooms: _rooms,
+                            useImperial: _useImperial,
+                            selectedRoomIndex: _selectedRoomIndex,
+                            onRoomSelected: _onRoomSelected,
+                            onRoomDeleted: _onRoomDeleted,
+                            carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                            roomCarpetAssignments: _roomCarpetAssignments,
+                            onCarpetAssigned: (roomIndex, productIndex) {
+                              _planCanvasKey.currentState?.setRoomCarpet(roomIndex, productIndex);
+                            },
+                          ),
+                          CarpetCutListPanel(
+                            rooms: _rooms,
+                            carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                            roomCarpetAssignments: _roomCarpetAssignments,
+                            openings: _planCanvasKey.currentState?.openings ?? [],
+                            useImperial: _useImperial,
+                            roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
+                            onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
+          ],
+          ),
+          // Bottom-center Cuts tab: pull up to open cut list / roll cut sheet
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Center(
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(24),
+                    elevation: 2,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: () {
+                        CarpetRollCutSheet.show(
+                          context,
+                          rooms: _rooms,
+                          carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                          roomCarpetAssignments: _roomCarpetAssignments,
+                          openings: _planCanvasKey.currentState?.openings ?? [],
+                          roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
+                          useImperial: _useImperial,
+                          onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.vertical_align_top, size: 20, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 8),
+                            Text('Cuts', style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
       // Drawer for mobile
@@ -143,17 +236,47 @@ class _EditorScreenState extends State<EditorScreen> {
           ? null
           : Drawer(
               width: 320,
-              child: RoomAreaSummaryPanel(
-                rooms: _rooms,
-                useImperial: _useImperial,
-                selectedRoomIndex: _selectedRoomIndex,
-                onRoomSelected: _onRoomSelected,
-                onRoomDeleted: _onRoomDeleted,
-                carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
-                roomCarpetAssignments: _roomCarpetAssignments,
-                onCarpetAssigned: (roomIndex, productIndex) {
-                  _planCanvasKey.currentState?.setRoomCarpet(roomIndex, productIndex);
-                },
+              child: DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    TabBar(
+                      labelColor: Theme.of(context).colorScheme.primary,
+                      tabs: const [
+                        Tab(text: 'Rooms'),
+                        Tab(text: 'Cut list'),
+                      ],
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          RoomAreaSummaryPanel(
+                            rooms: _rooms,
+                            useImperial: _useImperial,
+                            selectedRoomIndex: _selectedRoomIndex,
+                            onRoomSelected: _onRoomSelected,
+                            onRoomDeleted: _onRoomDeleted,
+                            carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                            roomCarpetAssignments: _roomCarpetAssignments,
+                            onCarpetAssigned: (roomIndex, productIndex) {
+                              _planCanvasKey.currentState?.setRoomCarpet(roomIndex, productIndex);
+                            },
+                          ),
+                          CarpetCutListPanel(
+                            rooms: _rooms,
+                            carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                            roomCarpetAssignments: _roomCarpetAssignments,
+                            openings: _planCanvasKey.currentState?.openings ?? [],
+                            useImperial: _useImperial,
+                            roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
+                            onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
     );

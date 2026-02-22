@@ -30,6 +30,7 @@ class Projects extends Table {
   TextColumn get openingsJson => text().nullable()(); // JSON array of Opening: roomIndex, edgeIndex, offsetMm, widthMm
   TextColumn get carpetProductsJson => text().nullable()(); // JSON array of CarpetProduct: name, rollWidthMm, rollLengthM?, costPerSqm?
   TextColumn get roomCarpetAssignmentsJson => text().nullable()(); // JSON: list of {roomIndex, productIndex}
+  TextColumn get roomCarpetSeamOverridesJson => text().nullable()(); // JSON: { "roomIndex": [posMm, ...], ... }
 }
 
 /// Rooms table - stores room data for each project
@@ -59,7 +60,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration {
@@ -92,6 +93,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 9) {
           await _addColumnIfNotExists(m, projects, projects.roomCarpetAssignmentsJson);
+        }
+        if (from < 10) {
+          await _addColumnIfNotExists(m, projects, projects.roomCarpetSeamOverridesJson);
         }
       },
     );

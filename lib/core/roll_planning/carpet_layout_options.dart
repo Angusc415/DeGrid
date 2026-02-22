@@ -33,6 +33,10 @@ class CarpetLayoutOptions {
   /// Sliver penalty in mm-equivalent per strip that is narrower than minStripWidthMm.
   final double sliverPenaltyPerStripMm;
 
+  /// When non-null, use these seam positions (mm from reference edge) instead of roll-width grid.
+  /// Must be strictly increasing and within room extent; validated in RollPlanner.
+  final List<double>? seamPositionsOverrideMm;
+
   const CarpetLayoutOptions({
     this.layDirectionDeg,
     this.wasteAllowancePercent = 5.0,
@@ -44,5 +48,6 @@ class CarpetLayoutOptions {
     this.seamPenaltyMmNoDoors = 500000,
     this.seamPenaltyMmWithDoors = 1000000,
     this.sliverPenaltyPerStripMm = 500000,
+    this.seamPositionsOverrideMm,
   });
 }
