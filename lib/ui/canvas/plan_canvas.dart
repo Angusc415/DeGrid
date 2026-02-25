@@ -82,6 +82,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   final Map<int, int> _roomCarpetAssignments = {};
   /// Room index -> seam positions (mm from reference). When set, overrides auto layout.
   final Map<int, List<double>> _roomCarpetSeamOverrides = {};
+  /// Room index -> layout variant index (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
+  final Map<int, int> _roomCarpetLayoutVariantIndex = {};
   /// When non-null, user is dragging this seam (room index, seam index 0-based).
   int? _draggingSeamRoomIndex;
   int? _draggingSeamIndex;
@@ -644,9 +646,10 @@ class PlanCanvasState extends State<PlanCanvas> {
   
   /// Undo the last action
   void _undo() {
-    if (_historyIndex > 0) {
+    // We save state *before* each action; current state is never pushed.
+    // So we restore the last saved state (what we had before the last action).
+    if (_historyIndex >= 0) {
       setState(() {
-        _historyIndex--;
         final state = _history[_historyIndex];
         
         // Restore completed rooms
@@ -665,6 +668,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         // Clear selection and hover state
         _selectedRoomIndex = null;
         _hoverPositionWorldMm = null;
+
+        _historyIndex--;
       });
     }
   }
@@ -697,7 +702,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   }
   
   /// Check if undo is available
-  bool get _canUndo => _historyIndex > 0;
+  bool get _canUndo => _historyIndex >= 0;
   
   /// Check if redo is available
   bool get _canRedo => _historyIndex < _history.length - 1;
@@ -815,6 +820,18 @@ class PlanCanvasState extends State<PlanCanvas> {
           _lengthInputController.clear();
           _desiredLengthMm = null;
         });
+        return;
+      }
+    }
+
+    // Draw mode, draft has 3+ vertices: tap near the "other" endpoint (first point) → close room
+    if (_draftRoomVertices != null &&
+        _draftRoomVertices!.length >= 3 &&
+        !_isPanMode) {
+      final closeTargetScreen = _vp.worldToScreen(_draftCloseTarget);
+      final distance = (localPosition - closeTargetScreen).distance;
+      if (distance < _closeTolerancePx) {
+        _closeDraftRoom();
         return;
       }
     }
@@ -1534,6 +1551,22 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  /// Layout variant index per room (0 = Auto, 1 = 0°, 2 = 90°). Read-only copy.
+  Map<int, int> get roomCarpetLayoutVariantIndex => Map<int, int>.from(_roomCarpetLayoutVariantIndex);
+
+  /// Set layout variant for a room (0 = Auto, 1 = 0°, 2 = 90°).
+  void setRoomLayoutVariant(int roomIndex, int variantIndex) {
+    if (variantIndex < 0 || variantIndex > 2) return;
+    setState(() {
+      _roomCarpetLayoutVariantIndex[roomIndex] = variantIndex;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  static double? _layDirectionDegFromVariant(int variantIndex) {
+    return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
+  }
+
   /// Compute strip layout for a room (used for hit-test and drag). Same logic as painter.
   StripLayout? _computeStripLayoutForRoom(int roomIndex, Room room) {
     final productIndex = _roomCarpetAssignments[roomIndex];
@@ -1543,7 +1576,9 @@ class PlanCanvasState extends State<PlanCanvas> {
     final product = _carpetProducts[productIndex];
     if (product.rollWidthMm <= 0) return null;
     final seamOverride = _roomCarpetSeamOverrides[roomIndex];
+    final variantIndex = _roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
     final opts = CarpetLayoutOptions(
+      layDirectionDeg: _layDirectionDegFromVariant(variantIndex),
       minStripWidthMm: product.minStripWidthMm ?? 100,
       trimAllowanceMm: product.trimAllowanceMm ?? 75,
       patternRepeatMm: product.patternRepeatMm ?? 0,
@@ -2777,6 +2812,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         setState(() {
           _selectedVertex = null;
           _isEditingVertex = false;
+          _saveHistoryState();
           _draftRoomVertices = [firstPoint];
           _draftStartedFromVertexOrDoor = true;
           _dragMoved = false;
@@ -2785,7 +2821,6 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = firstPoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
-          _saveHistoryState();
         });
         return;
       }
@@ -2795,6 +2830,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         setState(() {
           _selectedVertex = null;
           _isEditingVertex = false;
+          _saveHistoryState();
           _draftRoomVertices = [doorEdgePoint];
           _draftStartedFromVertexOrDoor = true;
           _dragMoved = false;
@@ -2803,7 +2839,6 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = doorEdgePoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
-          _saveHistoryState();
         });
         return;
       }
@@ -2817,6 +2852,8 @@ class PlanCanvasState extends State<PlanCanvas> {
       _isEditingVertex = false;
       
       if (_draftRoomVertices == null) {
+        // Save state before adding first vertex so one undo removes v1
+        _saveHistoryState();
         // Start a new room with first vertex (snapped to grid, or to existing vertex/door if near)
         _draftRoomVertices = [snappedPosition];
         _draftStartedFromVertexOrDoor = false;
@@ -2827,8 +2864,6 @@ class PlanCanvasState extends State<PlanCanvas> {
         // Clear length input when starting new room
         _lengthInputController.clear();
         _desiredLengthMm = null;
-        // Save state to history when starting a new draft room
-        _saveHistoryState();
       } else {
         // Check if starting drag near the "other" endpoint (close room)
         if (_draftRoomVertices!.isNotEmpty) {
@@ -2979,14 +3014,15 @@ class PlanCanvasState extends State<PlanCanvas> {
       final minDistanceMm = _minVertexDistanceMm;
       if (_draftRoomVertices!.isEmpty ||
           (snappedPosition - _draftDrawingFrom).distance > minDistanceMm) {
+        // Save state *before* adding the vertex so undo reverts the whole segment
+        // (drawn line + any number-pad length adjustment) in one step.
+        _saveHistoryState();
         if (_drawFromStart) {
           _draftRoomVertices = [snappedPosition, ..._draftRoomVertices!];
         } else {
           _draftRoomVertices = [..._draftRoomVertices!, snappedPosition];
         }
         _hoverPositionWorldMm = snappedPosition;
-        // Save state to history after adding a vertex to draft room
-        _saveHistoryState();
         
         // Clear length input when placing new vertex (user can now adjust this segment)
         _lengthInputController.clear();
@@ -4448,21 +4484,38 @@ class _PlanPainter extends CustomPainter {
     _drawWallMeasurements(canvas, room, screenPoints);
   }
   
+  /// Polygon area centroid – lies inside the polygon (e.g. L-shapes), unlike vertex centroid.
+  Offset _getPolygonAreaCentroid(List<Offset> points) {
+    if (points.length < 3) return Offset.zero;
+    final pts = points.length > 1 && points.first == points.last
+        ? points.sublist(0, points.length - 1)
+        : points;
+    if (pts.length < 3) return pts.first;
+    double signedArea = 0;
+    double cx = 0;
+    double cy = 0;
+    for (int i = 0; i < pts.length; i++) {
+      final j = (i + 1) % pts.length;
+      final cross = pts[i].dx * pts[j].dy - pts[j].dx * pts[i].dy;
+      signedArea += cross;
+      cx += (pts[i].dx + pts[j].dx) * cross;
+      cy += (pts[i].dy + pts[j].dy) * cross;
+    }
+    signedArea *= 0.5;
+    if (signedArea.abs() < 1e-9) {
+      double sx = 0, sy = 0;
+      for (final p in pts) { sx += p.dx; sy += p.dy; }
+      return Offset(sx / pts.length, sy / pts.length);
+    }
+    cx /= (6 * signedArea);
+    cy /= (6 * signedArea);
+    return Offset(cx, cy);
+  }
+
   /// Draw room name when set, or the name button (tap to add name) when no name. Area only in sidemenu.
   void _drawRoomLabel(Canvas canvas, Room room, List<Offset> screenPoints) {
-    double centerX = 0;
-    double centerY = 0;
-    int count = 0;
-    final uniquePoints = screenPoints.length > 1 && screenPoints.first == screenPoints.last
-        ? screenPoints.sublist(0, screenPoints.length - 1)
-        : screenPoints;
-    for (final point in uniquePoints) {
-      centerX += point.dx;
-      centerY += point.dy;
-      count++;
-    }
-    if (count == 0) return;
-    final center = Offset(centerX / count, centerY / count);
+    if (screenPoints.length < 3) return;
+    final center = _getPolygonAreaCentroid(screenPoints);
 
     if (room.name != null && room.name!.isNotEmpty) {
       final namePainter = TextPainter(

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui';
+import '../geometry/opening.dart';
 import '../geometry/room.dart';
 import 'carpet_layout_options.dart';
 import 'polygon_clip.dart';
@@ -28,6 +29,11 @@ class StripLayout {
   final bool isSinglePiece;
   /// Room polygon in world mm for single-piece visualization. Null in strip mode.
   final List<Offset>? roomShapeVerticesMm;
+  /// Score breakdown (material + seam + sliver penalties). Used for UI and comparison.
+  final double scoreMaterialMm;
+  final double scoreSeamPenaltyMm;
+  final double scoreSliverPenaltyMm;
+  final double scoreCostMm;
 
   StripLayout({
     required this.numStrips,
@@ -45,6 +51,10 @@ class StripLayout {
     this.seamPositionsMmOverride,
     this.isSinglePiece = false,
     this.roomShapeVerticesMm,
+    this.scoreMaterialMm = 0,
+    this.scoreSeamPenaltyMm = 0,
+    this.scoreSliverPenaltyMm = 0,
+    this.scoreCostMm = 0,
   });
 
   /// True if strip at [index] is narrower than [minWidthMm].
@@ -79,6 +89,21 @@ class RollPlanner {
   static const double _defaultMinStripWidthMm = 100.0;
   static const double _defaultTrimAllowanceMm = 75.0;
   static const double _defaultWastePercent = 5.0;
+
+  /// Returns up to three layout candidates: [Auto (balanced), 0° (horizontal), 90° (vertical)].
+  /// Index 0 = auto (lowest cost), 1 = force 0°, 2 = force 90°. Use [roomLayoutVariantIndex] to pick one per room.
+  static List<StripLayout> computeLayoutCandidates(
+    Room room,
+    double rollWidthMm, [
+    CarpetLayoutOptions? options,
+  ]) {
+    final opts = options ?? const CarpetLayoutOptions();
+    return [
+      computeLayout(room, rollWidthMm, opts.copyWithLayDirection(null)),
+      computeLayout(room, rollWidthMm, opts.copyWithLayDirection(0)),
+      computeLayout(room, rollWidthMm, opts.copyWithLayDirection(90)),
+    ];
+  }
 
   static StripLayout computeLayout(
     Room room,
@@ -121,7 +146,7 @@ class RollPlanner {
     // Phase 1: single-piece mode when room fits within roll width (template cut, no seams)
     if (fits0 || fits90) {
       final layAlongX = (fits0 && fits90)
-          ? (bboxW <= bboxH) // prefer shorter cut length
+          ? (opts.layDirectionDeg != null ? opts.layDirectionDeg! == 0 : (bboxW <= bboxH))
           : fits0;
       final perpLen = layAlongX ? perpLen0 : perpLen90;
       final alongLen = layAlongX ? bboxW : bboxH;
@@ -146,6 +171,10 @@ class RollPlanner {
         seamPositionsMmOverride: null,
         isSinglePiece: true,
         roomShapeVerticesMm: List<Offset>.from(room.vertices),
+        scoreMaterialMm: cutLen,
+        scoreSeamPenaltyMm: 0,
+        scoreSliverPenaltyMm: 0,
+        scoreCostMm: cutLen,
       );
     }
 
@@ -161,6 +190,8 @@ class RollPlanner {
 
     final r = _computeBestLayoutForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts);
     final totalWithWaste = r.totalLinearMm * (1 + wastePercent / 100);
+    final seamPenaltyMm = _seamPenaltyTotal(r.seamPositionsUsed, room, opts, layAlongX, minX, minY, r.seamCount, rollWidthMm);
+    final sliverPenaltyMm = (r.cost - r.totalLinearMm - seamPenaltyMm).clamp(0.0, double.infinity);
 
     return StripLayout(
       numStrips: r.stripLengthsMm.length,
@@ -178,6 +209,10 @@ class RollPlanner {
       seamPositionsMmOverride: r.seamPositionsUsed,
       isSinglePiece: false,
       roomShapeVerticesMm: null,
+      scoreMaterialMm: r.totalLinearMm,
+      scoreSeamPenaltyMm: seamPenaltyMm,
+      scoreSliverPenaltyMm: sliverPenaltyMm,
+      scoreCostMm: r.cost,
     );
   }
 
@@ -242,7 +277,7 @@ class RollPlanner {
       double prev = 0;
       for (final p in raw) {
         final clamped = p.clamp(prev + _minStripWidthForOverrideMm, perpLen - _minStripWidthForOverrideMm);
-        if (clamped > prev && (boundaries!.isEmpty || clamped < perpLen)) {
+        if (clamped > prev && (boundaries.isEmpty || clamped < perpLen)) {
           boundaries.add(clamped);
           prev = clamped;
         }
@@ -332,7 +367,10 @@ class RollPlanner {
 
     final totalLinear = stripLengths.fold<double>(0, (s, l) => s + l);
     final seamCount = stripLengths.isNotEmpty ? stripLengths.length - 1 : 0;
-    final seamPenalty = _seamPenalty(seamCount, opts);
+    final seamPositionsForPenalty = boundaries ?? (seamCount > 0
+        ? List.generate(seamCount, (i) => (i + 1) * rollWidthMm)
+        : null);
+    final seamPenalty = _seamPenaltyTotal(seamPositionsForPenalty, room, opts, layAlongX, minX, minY, seamCount, rollWidthMm);
     final sliverPenalty = sliverCount * opts.sliverPenaltyPerStripMm;
     final cost = totalLinear + seamPenalty + sliverPenalty;
     // Expose override positions when we used them (seam lines on plan). Strip count may exceed
@@ -358,5 +396,78 @@ class RollPlanner {
     if (seamCount <= 0) return 0;
     final hasDoors = opts.openings.any((o) => o.roomIndex == opts.roomIndex && o.isDoor);
     return seamCount * (hasDoors ? opts.seamPenaltyMmWithDoors : opts.seamPenaltyMmNoDoors);
+  }
+
+  /// Total seam penalty from per-seam logic: doorway-crossing seams use [seamPenaltyMmInDoorway].
+  static double _seamPenaltyTotal(
+    List<double>? seamPositionsMm,
+    Room room,
+    CarpetLayoutOptions opts,
+    bool layAlongX,
+    double minX,
+    double minY,
+    int seamCount,
+    double rollWidthMm,
+  ) {
+    if (seamCount <= 0) return 0;
+    final positions = seamPositionsMm ?? List.generate(seamCount, (i) => (i + 1) * rollWidthMm);
+    final hasDoors = opts.openings.any((o) => o.roomIndex == opts.roomIndex && o.isDoor);
+    double total = 0;
+    for (final pos in positions) {
+      if (_seamCrossesDoorway(room, opts.openings, opts.roomIndex, layAlongX, minX, minY, pos)) {
+        total += opts.seamPenaltyMmInDoorway;
+      } else {
+        total += hasDoors ? opts.seamPenaltyMmWithDoors : opts.seamPenaltyMmNoDoors;
+      }
+    }
+    return total;
+  }
+
+  /// True if the seam line at [seamPositionMm] (from reference edge) crosses any doorway opening.
+  static bool _seamCrossesDoorway(
+    Room room,
+    List<Opening> openings,
+    int roomIndex,
+    bool layAlongX,
+    double minX,
+    double minY,
+    double seamPositionMm,
+  ) {
+    final seamCoord = layAlongX ? minY + seamPositionMm : minX + seamPositionMm;
+    for (final o in openings) {
+      if (o.roomIndex != roomIndex || !o.isDoor) continue;
+      final seg = _openingSegment(room, o);
+      if (seg == null) continue;
+      if (_seamLineCrossesSegment(layAlongX, seamCoord, seg.$1, seg.$2)) return true;
+    }
+    return false;
+  }
+
+  /// Opening segment in room coordinates (start, end). Null if edge index invalid.
+  static (Offset, Offset)? _openingSegment(Room room, Opening o) {
+    final v = room.vertices;
+    if (v.isEmpty) return null;
+    final i = o.edgeIndex;
+    if (i < 0 || i >= v.length) return null;
+    final v0 = v[i];
+    final v1 = v[(i + 1) % v.length];
+    final dx = v1.dx - v0.dx;
+    final dy = v1.dy - v0.dy;
+    final edgeLen = math.sqrt(dx * dx + dy * dy);
+    if (edgeLen <= 0) return null;
+    final t0 = o.offsetMm / edgeLen;
+    final t1 = (o.offsetMm + o.widthMm) / edgeLen;
+    final p0 = Offset(v0.dx + t0 * dx, v0.dy + t0 * dy);
+    final p1 = Offset(v0.dx + t1 * dx, v0.dy + t1 * dy);
+    return (p0, p1);
+  }
+
+  /// True if the seam line (horizontal at y=[seamCoord] when [layAlongX], else vertical at x=[seamCoord]) crosses the segment [p0]–[p1].
+  static bool _seamLineCrossesSegment(bool layAlongX, double seamCoord, Offset p0, Offset p1) {
+    if (layAlongX) {
+      return (p0.dy - seamCoord) * (p1.dy - seamCoord) <= 0;
+    } else {
+      return (p0.dx - seamCoord) * (p1.dx - seamCoord) <= 0;
+    }
   }
 }

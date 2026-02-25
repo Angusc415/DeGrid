@@ -18,6 +18,9 @@ class CarpetCutListPanel extends StatelessWidget {
   /// When set, rooms with overrides show a "Reset to auto" button.
   final Map<int, List<double>> roomCarpetSeamOverrides;
   final void Function(int roomIndex)? onResetSeamsForRoom;
+  /// Room index -> layout variant (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
+  final Map<int, int> roomCarpetLayoutVariantIndex;
+  final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
 
   const CarpetCutListPanel({
     super.key,
@@ -28,6 +31,8 @@ class CarpetCutListPanel extends StatelessWidget {
     this.useImperial = false,
     this.roomCarpetSeamOverrides = const {},
     this.onResetSeamsForRoom,
+    this.roomCarpetLayoutVariantIndex = const {},
+    this.onLayoutVariantChanged,
   });
 
   @override
@@ -134,16 +139,19 @@ class CarpetCutListPanel extends StatelessWidget {
       if (product.rollWidthMm <= 0) continue;
 
       final seamOverride = roomCarpetSeamOverrides[roomIndex];
-      final opts = CarpetLayoutOptions(
+      final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+      final opts = CarpetLayoutOptions.forRoom(
+        roomIndex: roomIndex,
         minStripWidthMm: product.minStripWidthMm ?? 100,
         trimAllowanceMm: product.trimAllowanceMm ?? 75,
         patternRepeatMm: product.patternRepeatMm ?? 0,
         wasteAllowancePercent: 5,
         openings: openings,
-        roomIndex: roomIndex,
-        seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
+        seamPositionsOverrideMm: seamOverride,
+        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
       );
-      final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+      final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
+      final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];
       if (layout.numStrips == 0) continue;
 
       final minStripMm = product.minStripWidthMm ?? 100;
@@ -155,6 +163,9 @@ class CarpetCutListPanel extends StatelessWidget {
           roomName: room.name ?? 'Room ${roomIndex + 1}',
           product: product,
           layout: layout,
+          candidates: candidates,
+          selectedVariantIndex: variantIndex,
+          onVariantChanged: onLayoutVariantChanged != null ? (v) => onLayoutVariantChanged!(roomIndex, v) : null,
           useImperial: useImperial,
           minStripWidthMm: minStripMm,
           hasSeamOverrides: hasSeamOverrides,
@@ -178,16 +189,19 @@ class CarpetCutListPanel extends StatelessWidget {
       if (product.rollWidthMm <= 0) continue;
 
       final seamOverride = roomCarpetSeamOverrides[roomIndex];
-      final opts = CarpetLayoutOptions(
+      final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+      final opts = CarpetLayoutOptions.forRoom(
+        roomIndex: roomIndex,
         minStripWidthMm: product.minStripWidthMm ?? 100,
         trimAllowanceMm: product.trimAllowanceMm ?? 75,
         patternRepeatMm: product.patternRepeatMm ?? 0,
         wasteAllowancePercent: 5,
         openings: openings,
-        roomIndex: roomIndex,
-        seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
+        seamPositionsOverrideMm: seamOverride,
+        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
       );
-      final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+      final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
+      final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];
       final roomName = room.name ?? 'Room ${roomIndex + 1}';
       final productName = product.name.replaceAll(',', ' ');
       for (var i = 0; i < layout.stripLengthsMm.length; i++) {
@@ -227,6 +241,9 @@ class _RoomCutListCard extends StatelessWidget {
   final String roomName;
   final CarpetProduct product;
   final StripLayout layout;
+  final List<StripLayout> candidates;
+  final int selectedVariantIndex;
+  final void Function(int variantIndex)? onVariantChanged;
   final bool useImperial;
   final double minStripWidthMm;
   final bool hasSeamOverrides;
@@ -237,11 +254,16 @@ class _RoomCutListCard extends StatelessWidget {
     required this.roomName,
     required this.product,
     required this.layout,
+    required this.candidates,
+    required this.selectedVariantIndex,
+    this.onVariantChanged,
     required this.useImperial,
     required this.minStripWidthMm,
     this.hasSeamOverrides = false,
     this.onResetSeams,
   });
+
+  static const List<String> _variantLabels = ['Auto', '0°', '90°'];
 
   String _formatSeamPositions(StripLayout layout) {
     final positions = layout.seamPositionsFromReferenceMm;
@@ -280,6 +302,33 @@ class _RoomCutListCard extends StatelessWidget {
               'Lay: ${layout.layAngleDeg == 0 ? "0° (horizontal)" : "90° (vertical)"} · ${layout.numStrips} strips',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                  ),
+            ),
+            if (onVariantChanged != null && candidates.length > 1) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: List.generate(candidates.length.clamp(0, 3), (i) {
+                  final selected = selectedVariantIndex == i;
+                  return ChoiceChip(
+                    label: Text(_variantLabels[i], style: TextStyle(fontSize: 11, fontWeight: selected ? FontWeight.w600 : null)),
+                    selected: selected,
+                    onSelected: (_) => onVariantChanged!(i),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  );
+                }),
+              ),
+            ],
+            const SizedBox(height: 2),
+            Text(
+              'Cost: ${UnitConverter.formatDistance(layout.scoreCostMm, useImperial: useImperial)}'
+              '${layout.totalLinearWithWasteMm != null && layout.totalLinearMm > 0 ? " · Waste: ${((layout.totalLinearWithWasteMm! - layout.totalLinearMm) / layout.totalLinearMm * 100).toStringAsFixed(1)}%" : ""}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary.withOpacity(0.9),
                   ),
             ),
             if (hasSeamOverrides && onResetSeams != null) ...[

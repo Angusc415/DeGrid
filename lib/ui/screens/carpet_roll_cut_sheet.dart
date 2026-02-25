@@ -76,6 +76,21 @@ class RollLaneData {
 /// 2D placement on the roll: (alongMm, perpMm). Along = roll length axis, perp = roll width axis.
 typedef RollCutPlacement = Offset;
 
+/// Remaining piece on a roll lane after placed cuts (tail from end of last cut to end of roll).
+class RollOffcut {
+  final int rollIndex;
+  final double startAlongMm;
+  final double lengthMm;
+  final double breadthMm;
+
+  const RollOffcut({
+    required this.rollIndex,
+    required this.startAlongMm,
+    required this.lengthMm,
+    required this.breadthMm,
+  });
+}
+
 /// State for the roll planning board: all cuts, lanes, placements, selection.
 class RollPlanState {
   final List<RollCutPiece> allCuts;
@@ -84,6 +99,8 @@ class RollPlanState {
   final Map<String, RollCutPlacement> placements;
   final String? selectedCutId;
   final bool cutListExpanded;
+  /// Sum of layout cost (material + seam + sliver) for all rooms, for summary display.
+  final double totalScoreCostMm;
 
   const RollPlanState({
     required this.allCuts,
@@ -91,6 +108,7 @@ class RollPlanState {
     required this.placements,
     this.selectedCutId,
     this.cutListExpanded = true,
+    this.totalScoreCostMm = 0,
   });
 
   List<RollCutPiece> get unplacedCuts =>
@@ -118,6 +136,31 @@ class RollPlanState {
     final rollArea = lane.rollLengthMm * lane.rollWidthMm;
     final usedArea = placed.fold<double>(0, (s, c) => s + c.lengthMm * c.breadthMm);
     return ((rollArea - usedArea) / lane.rollWidthMm).clamp(0, double.infinity);
+  }
+
+  /// Offcuts (remaining tail) per lane: from end of rightmost cut to end of roll, full width.
+  List<RollOffcut> offcuts() {
+    final out = <RollOffcut>[];
+    for (final lane in lanes) {
+      final placed = placedCutsOnLane(lane.rollIndex);
+      final rollWidth = lane.rollWidthMm;
+      final endAlong = placed.isEmpty
+          ? 0.0
+          : placed.fold<double>(0, (m, c) {
+              final e = placements[c.cutId]!.dx + c.lengthMm;
+              return e > m ? e : m;
+            });
+      final tailLength = (lane.rollLengthMm - endAlong).clamp(0.0, double.infinity);
+      if (tailLength > 0) {
+        out.add(RollOffcut(
+          rollIndex: lane.rollIndex,
+          startAlongMm: endAlong,
+          lengthMm: tailLength,
+          breadthMm: rollWidth,
+        ));
+      }
+    }
+    return out;
   }
 
   /// 2D axis-aligned overlap: cut A at (ax,ay) size (aLength, aBreadth) vs B.
@@ -169,6 +212,7 @@ class RollPlanState {
     String? selectedCutId,
     bool clearSelection = false,
     bool? cutListExpanded,
+    double? totalScoreCostMm,
   }) {
     return RollPlanState(
       allCuts: allCuts ?? this.allCuts,
@@ -176,6 +220,7 @@ class RollPlanState {
       placements: placements ?? Map.from(this.placements),
       selectedCutId: clearSelection ? null : (selectedCutId ?? this.selectedCutId),
       cutListExpanded: cutListExpanded ?? this.cutListExpanded,
+      totalScoreCostMm: totalScoreCostMm ?? this.totalScoreCostMm,
     );
   }
 }
@@ -188,6 +233,8 @@ class CarpetRollCutSheet extends StatefulWidget {
   final Map<int, int> roomCarpetAssignments;
   final List<Opening> openings;
   final Map<int, List<double>> roomCarpetSeamOverrides;
+  final Map<int, int> roomCarpetLayoutVariantIndex;
+  final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
   final bool useImperial;
   final ScrollController? scrollController;
   final void Function(int roomIndex)? onResetSeamsForRoom;
@@ -199,6 +246,8 @@ class CarpetRollCutSheet extends StatefulWidget {
     required this.roomCarpetAssignments,
     required this.openings,
     this.roomCarpetSeamOverrides = const {},
+    this.roomCarpetLayoutVariantIndex = const {},
+    this.onLayoutVariantChanged,
     this.useImperial = false,
     this.scrollController,
     this.onResetSeamsForRoom,
@@ -212,6 +261,8 @@ class CarpetRollCutSheet extends StatefulWidget {
     required Map<int, int> roomCarpetAssignments,
     required List<Opening> openings,
     Map<int, List<double>> roomCarpetSeamOverrides = const {},
+    Map<int, int> roomCarpetLayoutVariantIndex = const {},
+    void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged,
     bool useImperial = false,
     void Function(int roomIndex)? onResetSeamsForRoom,
   }) {
@@ -230,6 +281,8 @@ class CarpetRollCutSheet extends StatefulWidget {
           roomCarpetAssignments: roomCarpetAssignments,
           openings: openings,
           roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+          roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
+          onLayoutVariantChanged: onLayoutVariantChanged,
           useImperial: useImperial,
           scrollController: scrollController,
           onResetSeamsForRoom: onResetSeamsForRoom,
@@ -247,6 +300,36 @@ enum _SheetView { cutList, rollCut }
 class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   _SheetView _view = _SheetView.cutList;
   RollPlanState? _planState;
+  /// Local copy of layout variant so the sheet updates when user changes it without waiting for parent rebuild.
+  late Map<int, int> _layoutVariantIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _layoutVariantIndex = Map<int, int>.from(widget.roomCarpetLayoutVariantIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _rebuildPlanState());
+  }
+
+  @override
+  void didUpdateWidget(covariant CarpetRollCutSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.roomCarpetLayoutVariantIndex != widget.roomCarpetLayoutVariantIndex) {
+      _layoutVariantIndex = Map<int, int>.from(widget.roomCarpetLayoutVariantIndex);
+    }
+    if (oldWidget.rooms != widget.rooms ||
+        oldWidget.roomCarpetAssignments != widget.roomCarpetAssignments ||
+        oldWidget.carpetProducts != widget.carpetProducts) {
+      _rebuildPlanState();
+    }
+  }
+
+  void _onLayoutVariantChanged(int roomIndex, int variantIndex) {
+    setState(() {
+      _layoutVariantIndex[roomIndex] = variantIndex;
+    });
+    widget.onLayoutVariantChanged?.call(roomIndex, variantIndex);
+    _rebuildPlanState();
+  }
 
   List<_RoomWithCarpet> get _roomsWithCarpet {
     final list = <_RoomWithCarpet>[];
@@ -257,16 +340,16 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       final room = widget.rooms[ri];
       final product = widget.carpetProducts[pi];
       if (product.rollWidthMm <= 0) continue;
-      final opts = CarpetLayoutOptions(
+      final variantIndex = _layoutVariantIndex[ri] ?? 0;
+      final opts = CarpetLayoutOptions.forRoom(
+        roomIndex: ri,
         minStripWidthMm: product.minStripWidthMm ?? 100,
         trimAllowanceMm: product.trimAllowanceMm ?? 75,
         patternRepeatMm: product.patternRepeatMm ?? 0,
         wasteAllowancePercent: 5,
         openings: widget.openings,
-        roomIndex: ri,
-        seamPositionsOverrideMm: widget.roomCarpetSeamOverrides[ri]?.isNotEmpty == true
-            ? widget.roomCarpetSeamOverrides[ri]
-            : null,
+        seamPositionsOverrideMm: widget.roomCarpetSeamOverrides[ri],
+        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
       );
       final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
       if (layout.numStrips > 0) {
@@ -318,6 +401,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         alongPos += lengthMm;
       }
     }
+    final totalScoreCostMm = list.fold<double>(0, (s, r) => s + r.layout.scoreCostMm);
     final lanes = [
       RollLaneData(
         rollIndex: 0,
@@ -331,24 +415,9 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         lanes: lanes,
         placements: placements,
         cutListExpanded: true,
+        totalScoreCostMm: totalScoreCostMm,
       );
     });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _rebuildPlanState());
-  }
-
-  @override
-  void didUpdateWidget(covariant CarpetRollCutSheet oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.rooms != widget.rooms ||
-        oldWidget.roomCarpetAssignments != widget.roomCarpetAssignments ||
-        oldWidget.carpetProducts != widget.carpetProducts) {
-      _rebuildPlanState();
-    }
   }
 
   void _updatePlacement(String cutId, RollCutPlacement pos) {
@@ -476,6 +545,8 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
               openings: widget.openings,
               useImperial: widget.useImperial,
               roomCarpetSeamOverrides: widget.roomCarpetSeamOverrides,
+              roomCarpetLayoutVariantIndex: _layoutVariantIndex,
+              onLayoutVariantChanged: _onLayoutVariantChanged,
               onResetSeamsForRoom: widget.onResetSeamsForRoom,
             ),
           ),
@@ -529,6 +600,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           onAutoPlace: _autoPlaceAll,
           onExport: () => _exportCutSheet(context, plan),
         ),
+        _OffcutsSection(plan: plan, useImperial: widget.useImperial),
         const Divider(height: 1),
         // Roll board: main focus, full width left to right
         Expanded(
@@ -585,7 +657,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   }
 
   void _exportCutSheet(BuildContext context, RollPlanState plan) {
-    // Simple CSV: Cut ID, Room, Length, Start (m), Roll
+    // CSV: cuts then offcuts
     final sb = StringBuffer();
     sb.writeln('Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll');
     for (final c in plan.allCuts) {
@@ -593,9 +665,17 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       final roll = pos != null ? (plan.lanes[c.rollLaneIndex].room?.name ?? plan.lanes[c.rollLaneIndex].product.name) : '';
       sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll');
     }
+    final offcuts = plan.offcuts();
+    if (offcuts.isNotEmpty) {
+      sb.writeln();
+      sb.writeln('Offcut,Lane,Length (m),Breadth (m),Start along (m)');
+      for (final o in offcuts) {
+        sb.writeln('Remaining,${o.rollIndex},${o.lengthMm / 1000},${o.breadthMm / 1000},${o.startAlongMm / 1000}');
+      }
+    }
     // TODO: share or copy to clipboard
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Export: ${plan.allCuts.length} cuts. Copy from console or add share.')),
+      SnackBar(content: Text('Export: ${plan.allCuts.length} cuts${offcuts.isNotEmpty ? ', ${offcuts.length} offcut(s)' : ''}. Copy from console or add share.')),
     );
   }
 
@@ -649,6 +729,11 @@ class _SummaryBar extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 16),
+          Text(
+            'Cost: ${UnitConverter.formatDistance(plan.totalScoreCostMm, useImperial: useImperial)}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary),
+          ),
+          const SizedBox(width: 16),
           Text('Waste: ${wastePct.toStringAsFixed(1)}%', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(width: 16),
           Text('Placed: $placed/$totalCuts', style: Theme.of(context).textTheme.bodySmall),
@@ -660,6 +745,48 @@ class _SummaryBar extends StatelessWidget {
           TextButton.icon(onPressed: onAutoPlace, icon: const Icon(Icons.refresh, size: 18), label: const Text('Auto place')),
           const SizedBox(width: 8),
           TextButton.icon(onPressed: onExport, icon: const Icon(Icons.download, size: 18), label: const Text('Export')),
+        ],
+      ),
+    );
+  }
+}
+
+class _OffcutsSection extends StatelessWidget {
+  final RollPlanState plan;
+  final bool useImperial;
+
+  const _OffcutsSection({required this.plan, required this.useImperial});
+
+  @override
+  Widget build(BuildContext context) {
+    final offcuts = plan.offcuts();
+    if (offcuts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Remaining: ',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.9),
+                ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: offcuts.map((o) {
+                return Text(
+                  'Lane ${o.rollIndex}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.secondary,
+                      ),
+                );
+              }).toList(),
+            ),
+          ),
         ],
       ),
     );
