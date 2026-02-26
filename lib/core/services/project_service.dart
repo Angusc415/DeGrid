@@ -187,6 +187,7 @@ class ProjectService {
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
+      wallWidthMm: project.wallWidthMm ?? 70.0,
     );
   }
 
@@ -198,6 +199,7 @@ class ProjectService {
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
+    double wallWidthMm = 70.0,
   }) async {
     // Serialize viewport state
     final viewportState = PlanViewportState.fromViewport(viewport);
@@ -209,6 +211,7 @@ class ProjectService {
       folderId: Value(folderId),
       useImperial: Value(useImperial),
       viewportJson: Value(viewportJson),
+      wallWidthMm: Value(wallWidthMm),
     );
 
     final projectId = await _db.into(_db.projects).insert(projectCompanion);
@@ -244,6 +247,7 @@ class ProjectService {
     bool? useImperial,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
+    double? wallWidthMm,
   }) async {
     final projectUpdate = ProjectsCompanion(
       id: Value(id),
@@ -271,6 +275,7 @@ class ProjectService {
       roomCarpetSeamOverridesJson: roomCarpetSeamOverrides != null
           ? Value(jsonEncode(roomCarpetSeamOverrides.map((k, v) => MapEntry(k.toString(), v))))
           : const Value.absent(),
+      wallWidthMm: wallWidthMm != null ? Value(wallWidthMm) : const Value.absent(),
     );
 
     await (_db.update(_db.projects)..where((p) => p.id.equals(id))).write(projectUpdate);
@@ -317,6 +322,7 @@ class ProjectService {
     int? folderId,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
+    double wallWidthMm = 70.0,
   }) async {
     try {
       if (id == null) {
@@ -326,6 +332,7 @@ class ProjectService {
           viewport: viewport,
           useImperial: useImperial,
           folderId: folderId,
+          wallWidthMm: wallWidthMm,
         );
         if (backgroundImagePath != null ||
             backgroundImageState != null ||
@@ -341,6 +348,7 @@ class ProjectService {
             carpetProducts: carpetProducts,
             roomCarpetAssignments: roomCarpetAssignments,
             roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+            wallWidthMm: wallWidthMm,
           );
         }
         return projectId;
@@ -357,6 +365,7 @@ class ProjectService {
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,
           backgroundImageState: backgroundImageState,
+          wallWidthMm: wallWidthMm,
         );
         return id;
       }

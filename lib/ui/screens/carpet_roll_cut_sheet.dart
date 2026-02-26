@@ -22,6 +22,10 @@ class RollCutPiece {
   final double breadthMm; // strip width
   final bool isSliver;
   final double? patternRepeatMm;
+  /// True when this cut is planned to be taken from an offcut (remaining piece) rather than fresh roll.
+  final bool fromOffcut;
+  /// Roll index the offcut comes from, when [fromOffcut] is true.
+  final int? sourceOffcutRollIndex;
   /// Room polygon in mm for single-piece template cuts. Null for strip cuts.
   final List<Offset>? roomShapeVerticesMm;
   /// Lay direction for single-piece: true = strips run along x. Used to transform room shape.
@@ -38,10 +42,48 @@ class RollCutPiece {
     required this.trimMm,
     required this.breadthMm,
     required this.isSliver,
+    this.fromOffcut = false,
+    this.sourceOffcutRollIndex,
     this.patternRepeatMm,
     this.roomShapeVerticesMm,
     this.layAlongX,
   });
+
+  RollCutPiece copyWith({
+    String? cutId,
+    int? roomIndex,
+    String? roomName,
+    int? rollLaneIndex,
+    CarpetProduct? product,
+    int? stripIndex,
+    double? lengthMm,
+    double? trimMm,
+    double? breadthMm,
+    bool? isSliver,
+    double? patternRepeatMm,
+    bool? fromOffcut,
+    int? sourceOffcutRollIndex,
+    List<Offset>? roomShapeVerticesMm,
+    bool? layAlongX,
+  }) {
+    return RollCutPiece(
+      cutId: cutId ?? this.cutId,
+      roomIndex: roomIndex ?? this.roomIndex,
+      roomName: roomName ?? this.roomName,
+      rollLaneIndex: rollLaneIndex ?? this.rollLaneIndex,
+      product: product ?? this.product,
+      stripIndex: stripIndex ?? this.stripIndex,
+      lengthMm: lengthMm ?? this.lengthMm,
+      trimMm: trimMm ?? this.trimMm,
+      breadthMm: breadthMm ?? this.breadthMm,
+      isSliver: isSliver ?? this.isSliver,
+      patternRepeatMm: patternRepeatMm ?? this.patternRepeatMm,
+      fromOffcut: fromOffcut ?? this.fromOffcut,
+      sourceOffcutRollIndex: sourceOffcutRollIndex ?? this.sourceOffcutRollIndex,
+      roomShapeVerticesMm: roomShapeVerticesMm ?? this.roomShapeVerticesMm,
+      layAlongX: layAlongX ?? this.layAlongX,
+    );
+  }
 }
 
 /// One roll lane on the board. Single roll = one lane for all rooms' cuts.
@@ -402,16 +444,38 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       }
     }
     final totalScoreCostMm = list.fold<double>(0, (s, r) => s + r.layout.scoreCostMm);
-    final lanes = [
-      RollLaneData(
-        rollIndex: 0,
-        product: first.product,
-        totalLinearMm: totalLinear,
-      ),
-    ];
+    final lane = RollLaneData(
+      rollIndex: 0,
+      product: first.product,
+      totalLinearMm: totalLinear,
+    );
+
+    // Phase V2-3: simple offcut reuse assignment.
+    // Treat the tail length at the end of the roll as available offcut material,
+    // and greedily assign the longest cuts that fit within this length as
+    // "from offcut". This is a planning hint only; placements remain unchanged.
+    final availableOffcutLength =
+        (lane.rollLengthMm - totalLinear).clamp(0.0, double.infinity);
+    final cutsSorted = List<RollCutPiece>.from(allCuts)
+      ..sort((a, b) => b.lengthMm.compareTo(a.lengthMm));
+    final fromOffcutIds = <String>{};
+    double remaining = availableOffcutLength;
+    for (final c in cutsSorted) {
+      if (c.lengthMm <= remaining) {
+        fromOffcutIds.add(c.cutId);
+        remaining -= c.lengthMm;
+      }
+    }
+    final annotatedCuts = allCuts
+        .map((c) => fromOffcutIds.contains(c.cutId)
+            ? c.copyWith(fromOffcut: true, sourceOffcutRollIndex: lane.rollIndex)
+            : c)
+        .toList();
+
+    final lanes = [lane];
     setState(() {
       _planState = RollPlanState(
-        allCuts: allCuts,
+        allCuts: annotatedCuts,
         lanes: lanes,
         placements: placements,
         cutListExpanded: true,
@@ -659,11 +723,14 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   void _exportCutSheet(BuildContext context, RollPlanState plan) {
     // CSV: cuts then offcuts
     final sb = StringBuffer();
-    sb.writeln('Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll');
+    sb.writeln('Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll,Source');
     for (final c in plan.allCuts) {
       final pos = plan.placements[c.cutId];
       final roll = pos != null ? (plan.lanes[c.rollLaneIndex].room?.name ?? plan.lanes[c.rollLaneIndex].product.name) : '';
-      sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll');
+      final source = c.fromOffcut
+          ? 'Offcut${c.sourceOffcutRollIndex != null ? ' (lane ${c.sourceOffcutRollIndex})' : ''}'
+          : 'Roll';
+      sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll,$source');
     }
     final offcuts = plan.offcuts();
     if (offcuts.isNotEmpty) {
@@ -884,6 +951,7 @@ class _RollBoard extends StatelessWidget {
                         isSelected: selectedCutId == c.cutId,
                         isSliver: c.isSliver,
                         isOverlap: overlappingCutIds.contains(c.cutId),
+                        isFromOffcut: c.fromOffcut,
                         onTap: () => onSelectCut(c.cutId),
                         onDragEnd: (double deltaAlongMm, double deltaPerpMm) {
                           if (onPlacementDelta != null) {
@@ -1004,6 +1072,8 @@ class _HorizontalCutBlock extends StatefulWidget {
   final bool isSelected;
   final bool isSliver;
   final bool isOverlap;
+  /// True when this cut is marked as sourced from an offcut.
+  final bool isFromOffcut;
   final VoidCallback onTap;
   final void Function(double deltaAlongMm, double deltaPerpMm) onDragEnd;
 
@@ -1022,6 +1092,7 @@ class _HorizontalCutBlock extends StatefulWidget {
     required this.isSelected,
     required this.isSliver,
     required this.isOverlap,
+    required this.isFromOffcut,
     required this.onTap,
     required this.onDragEnd,
   });
@@ -1035,14 +1106,17 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
     final shape = widget.piece.roomShapeVerticesMm;
     final layAlongX = widget.piece.layAlongX ?? true;
 
+    final primary = Theme.of(context).colorScheme.primary;
+    final offcutColor = Colors.teal;
+    final baseColor = widget.isFromOffcut ? offcutColor : primary;
     final fillColor = widget.isSliver
         ? Colors.amber.shade200
         : (widget.piece.stripIndex.isEven
-            ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
-            : Theme.of(context).colorScheme.primary.withOpacity(0.7));
+            ? baseColor.withOpacity(0.5)
+            : baseColor.withOpacity(0.7));
     final borderColor = widget.isOverlap
         ? Theme.of(context).colorScheme.error
-        : Theme.of(context).colorScheme.primary;
+        : baseColor;
     final borderWidth = widget.isSelected ? 2.5 : 1.0;
 
     if (shape != null && shape.length >= 3) {
@@ -1181,11 +1255,14 @@ class _UnplacedTray extends StatelessWidget {
                     itemCount: unplaced.length,
                     itemBuilder: (context, i) {
                       final c = unplaced[i];
+                      final baseLabel = '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}'
+                          '${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}';
+                      final withSource = c.fromOffcut ? '$baseLabel · from offcut' : baseLabel;
                       return ListTile(
                         dense: true,
                         title: Text(c.cutId),
                         subtitle: Text(
-                          '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}',
+                          withSource,
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         selected: selectedCutId == c.cutId,
@@ -1254,7 +1331,14 @@ class _CutInspector extends StatelessWidget {
             _row('Length', UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)),
             _row('Trim', '+${UnitConverter.formatDistance(c.trimMm, useImperial: useImperial)} each end'),
             if (c.patternRepeatMm != null) _row('Pattern', '${c.patternRepeatMm! / 1000} m'),
-            _row('Status', pos != null ? 'Placed' : 'Unplaced'),
+            _row(
+              'Status',
+              c.fromOffcut
+                  ? (pos != null ? 'Placed (from offcut)' : 'Unplaced (from offcut)')
+                  : (pos != null ? 'Placed' : 'Unplaced'),
+            ),
+            if (c.fromOffcut && c.sourceOffcutRollIndex != null)
+              _row('Source roll', 'Lane ${c.sourceOffcutRollIndex}'),
             if (pos != null) _row('Position', '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)} × ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}'),
             if (c.isSliver) _row('Note', 'Sliver'),
             const SizedBox(height: 12),
@@ -1354,6 +1438,9 @@ class _CutListSection extends StatelessWidget {
                   ),
                   ...plan.allCuts.map((c) {
                     final pos = plan.placements[c.cutId];
+                    final status = c.fromOffcut
+                        ? (pos != null ? 'Placed (offcut)' : 'Unplaced (offcut)')
+                        : (pos != null ? 'Placed' : 'Unplaced');
                     return TableRow(
                       children: [
                         Padding(
@@ -1365,8 +1452,24 @@ class _CutListSection extends StatelessWidget {
                         ),
                         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(c.roomName)),
                         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial))),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(pos != null ? '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)}, ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}' : '—')),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(pos != null ? 'Placed' : 'Unplaced', style: TextStyle(fontSize: 11, color: pos != null ? null : Theme.of(context).colorScheme.error))),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            pos != null
+                                ? '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)}, ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}'
+                                : '—',
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: pos != null ? null : Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
                       ],
                     );
                   }),

@@ -442,6 +442,18 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _wallWidthMmMeta = const VerificationMeta(
+    'wallWidthMm',
+  );
+  @override
+  late final GeneratedColumn<double> wallWidthMm = GeneratedColumn<double>(
+    'wall_width_mm',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(70.0),
+  );
   static const VerificationMeta _viewportJsonMeta = const VerificationMeta(
     'viewportJson',
   );
@@ -527,6 +539,7 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     createdAt,
     updatedAt,
     useImperial,
+    wallWidthMm,
     viewportJson,
     backgroundImagePath,
     backgroundImageJson,
@@ -582,6 +595,15 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         useImperial.isAcceptableOrUnknown(
           data['use_imperial']!,
           _useImperialMeta,
+        ),
+      );
+    }
+    if (data.containsKey('wall_width_mm')) {
+      context.handle(
+        _wallWidthMmMeta,
+        wallWidthMm.isAcceptableOrUnknown(
+          data['wall_width_mm']!,
+          _wallWidthMmMeta,
         ),
       );
     }
@@ -681,6 +703,10 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.bool,
         data['${effectivePrefix}use_imperial'],
       )!,
+      wallWidthMm: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}wall_width_mm'],
+      )!,
       viewportJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}viewport_json'],
@@ -725,6 +751,9 @@ class Project extends DataClass implements Insertable<Project> {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool useImperial;
+
+  /// Wall width in millimeters for this project (used when drawing completed rooms).
+  final double wallWidthMm;
   final String? viewportJson;
   final String? backgroundImagePath;
   final String? backgroundImageJson;
@@ -739,6 +768,7 @@ class Project extends DataClass implements Insertable<Project> {
     required this.createdAt,
     required this.updatedAt,
     required this.useImperial,
+    required this.wallWidthMm,
     this.viewportJson,
     this.backgroundImagePath,
     this.backgroundImageJson,
@@ -758,6 +788,7 @@ class Project extends DataClass implements Insertable<Project> {
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['use_imperial'] = Variable<bool>(useImperial);
+    map['wall_width_mm'] = Variable<double>(wallWidthMm);
     if (!nullToAbsent || viewportJson != null) {
       map['viewport_json'] = Variable<String>(viewportJson);
     }
@@ -796,6 +827,7 @@ class Project extends DataClass implements Insertable<Project> {
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       useImperial: Value(useImperial),
+      wallWidthMm: Value(wallWidthMm),
       viewportJson: viewportJson == null && nullToAbsent
           ? const Value.absent()
           : Value(viewportJson),
@@ -834,6 +866,7 @@ class Project extends DataClass implements Insertable<Project> {
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       useImperial: serializer.fromJson<bool>(json['useImperial']),
+      wallWidthMm: serializer.fromJson<double>(json['wallWidthMm']),
       viewportJson: serializer.fromJson<String?>(json['viewportJson']),
       backgroundImagePath: serializer.fromJson<String?>(
         json['backgroundImagePath'],
@@ -863,6 +896,7 @@ class Project extends DataClass implements Insertable<Project> {
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'useImperial': serializer.toJson<bool>(useImperial),
+      'wallWidthMm': serializer.toJson<double>(wallWidthMm),
       'viewportJson': serializer.toJson<String?>(viewportJson),
       'backgroundImagePath': serializer.toJson<String?>(backgroundImagePath),
       'backgroundImageJson': serializer.toJson<String?>(backgroundImageJson),
@@ -884,6 +918,7 @@ class Project extends DataClass implements Insertable<Project> {
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? useImperial,
+    double? wallWidthMm,
     Value<String?> viewportJson = const Value.absent(),
     Value<String?> backgroundImagePath = const Value.absent(),
     Value<String?> backgroundImageJson = const Value.absent(),
@@ -898,6 +933,7 @@ class Project extends DataClass implements Insertable<Project> {
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     useImperial: useImperial ?? this.useImperial,
+    wallWidthMm: wallWidthMm ?? this.wallWidthMm,
     viewportJson: viewportJson.present ? viewportJson.value : this.viewportJson,
     backgroundImagePath: backgroundImagePath.present
         ? backgroundImagePath.value
@@ -926,6 +962,9 @@ class Project extends DataClass implements Insertable<Project> {
       useImperial: data.useImperial.present
           ? data.useImperial.value
           : this.useImperial,
+      wallWidthMm: data.wallWidthMm.present
+          ? data.wallWidthMm.value
+          : this.wallWidthMm,
       viewportJson: data.viewportJson.present
           ? data.viewportJson.value
           : this.viewportJson,
@@ -959,6 +998,7 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('useImperial: $useImperial, ')
+          ..write('wallWidthMm: $wallWidthMm, ')
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
           ..write('backgroundImageJson: $backgroundImageJson, ')
@@ -978,6 +1018,7 @@ class Project extends DataClass implements Insertable<Project> {
     createdAt,
     updatedAt,
     useImperial,
+    wallWidthMm,
     viewportJson,
     backgroundImagePath,
     backgroundImageJson,
@@ -996,6 +1037,7 @@ class Project extends DataClass implements Insertable<Project> {
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.useImperial == this.useImperial &&
+          other.wallWidthMm == this.wallWidthMm &&
           other.viewportJson == this.viewportJson &&
           other.backgroundImagePath == this.backgroundImagePath &&
           other.backgroundImageJson == this.backgroundImageJson &&
@@ -1013,6 +1055,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<bool> useImperial;
+  final Value<double> wallWidthMm;
   final Value<String?> viewportJson;
   final Value<String?> backgroundImagePath;
   final Value<String?> backgroundImageJson;
@@ -1027,6 +1070,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
+    this.wallWidthMm = const Value.absent(),
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
@@ -1042,6 +1086,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
+    this.wallWidthMm = const Value.absent(),
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
@@ -1057,6 +1102,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<bool>? useImperial,
+    Expression<double>? wallWidthMm,
     Expression<String>? viewportJson,
     Expression<String>? backgroundImagePath,
     Expression<String>? backgroundImageJson,
@@ -1072,6 +1118,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (useImperial != null) 'use_imperial': useImperial,
+      if (wallWidthMm != null) 'wall_width_mm': wallWidthMm,
       if (viewportJson != null) 'viewport_json': viewportJson,
       if (backgroundImagePath != null)
         'background_image_path': backgroundImagePath,
@@ -1094,6 +1141,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<bool>? useImperial,
+    Value<double>? wallWidthMm,
     Value<String?>? viewportJson,
     Value<String?>? backgroundImagePath,
     Value<String?>? backgroundImageJson,
@@ -1109,6 +1157,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       useImperial: useImperial ?? this.useImperial,
+      wallWidthMm: wallWidthMm ?? this.wallWidthMm,
       viewportJson: viewportJson ?? this.viewportJson,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageJson: backgroundImageJson ?? this.backgroundImageJson,
@@ -1141,6 +1190,9 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     }
     if (useImperial.present) {
       map['use_imperial'] = Variable<bool>(useImperial.value);
+    }
+    if (wallWidthMm.present) {
+      map['wall_width_mm'] = Variable<double>(wallWidthMm.value);
     }
     if (viewportJson.present) {
       map['viewport_json'] = Variable<String>(viewportJson.value);
@@ -1183,6 +1235,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('useImperial: $useImperial, ')
+          ..write('wallWidthMm: $wallWidthMm, ')
           ..write('viewportJson: $viewportJson, ')
           ..write('backgroundImagePath: $backgroundImagePath, ')
           ..write('backgroundImageJson: $backgroundImageJson, ')
@@ -1995,6 +2048,7 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
+      Value<double> wallWidthMm,
       Value<String?> viewportJson,
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
@@ -2011,6 +2065,7 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> useImperial,
+      Value<double> wallWidthMm,
       Value<String?> viewportJson,
       Value<String?> backgroundImagePath,
       Value<String?> backgroundImageJson,
@@ -2092,6 +2147,11 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<bool> get useImperial => $composableBuilder(
     column: $table.useImperial,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get wallWidthMm => $composableBuilder(
+    column: $table.wallWidthMm,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2213,6 +2273,11 @@ class $$ProjectsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get wallWidthMm => $composableBuilder(
+    column: $table.wallWidthMm,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get viewportJson => $composableBuilder(
     column: $table.viewportJson,
     builder: (column) => ColumnOrderings(column),
@@ -2295,6 +2360,11 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<bool> get useImperial => $composableBuilder(
     column: $table.useImperial,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get wallWidthMm => $composableBuilder(
+    column: $table.wallWidthMm,
     builder: (column) => column,
   );
 
@@ -2416,6 +2486,7 @@ class $$ProjectsTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
+                Value<double> wallWidthMm = const Value.absent(),
                 Value<String?> viewportJson = const Value.absent(),
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
@@ -2431,6 +2502,7 @@ class $$ProjectsTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 useImperial: useImperial,
+                wallWidthMm: wallWidthMm,
                 viewportJson: viewportJson,
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,
@@ -2447,6 +2519,7 @@ class $$ProjectsTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> useImperial = const Value.absent(),
+                Value<double> wallWidthMm = const Value.absent(),
                 Value<String?> viewportJson = const Value.absent(),
                 Value<String?> backgroundImagePath = const Value.absent(),
                 Value<String?> backgroundImageJson = const Value.absent(),
@@ -2462,6 +2535,7 @@ class $$ProjectsTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 useImperial: useImperial,
+                wallWidthMm: wallWidthMm,
                 viewportJson: viewportJson,
                 backgroundImagePath: backgroundImagePath,
                 backgroundImageJson: backgroundImageJson,

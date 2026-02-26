@@ -21,6 +21,8 @@ class ProjectModel {
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
+  /// Wall width in millimeters for this project.
+  final double wallWidthMm;
 
   ProjectModel({
     this.id,
@@ -36,10 +38,12 @@ class ProjectModel {
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
+    double? wallWidthMm,
   })  : openings = openings ?? const [],
         carpetProducts = carpetProducts ?? const [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
-        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {};
+        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {},
+        wallWidthMm = wallWidthMm ?? 70.0;
 
   /// Create a copy with updated fields.
   ProjectModel copyWith({
@@ -56,6 +60,7 @@ class ProjectModel {
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
+    double? wallWidthMm,
   }) {
     return ProjectModel(
       id: id ?? this.id,
@@ -71,6 +76,7 @@ class ProjectModel {
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,
+      wallWidthMm: wallWidthMm ?? this.wallWidthMm,
     );
   }
 }

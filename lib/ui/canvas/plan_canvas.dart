@@ -170,6 +170,9 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   // Current cursor/hover position for preview line (world-space mm)
   Offset? _hoverPositionWorldMm;
+  // Inline alignment guide between preview endpoint and another vertex (world-space mm).
+  Offset? _inlineGuideStartWorld;
+  Offset? _inlineGuideEndWorld;
 
   /// The vertex we're currently drawing from (start or end of draft chain).
   Offset get _draftDrawingFrom =>
@@ -221,6 +224,11 @@ class PlanCanvasState extends State<PlanCanvas> {
   // Snap spacing in mm: 1 = full mm precision; grid drawing uses adaptive spacing
   static const double _snapSpacingMm = 1.0; // 1mm snap so you can work in mm and cm
   static const double _minVertexDistanceMm = 1.0; // minimum 1mm between vertices
+  // Screen-space tolerance for inline snap/alignment guides (in pixels)
+  static const double _inlineSnapTolerancePx = 8.0;
+
+  // Project-level wall width in millimeters (used when drawing completed rooms).
+  double _wallWidthMm = 70.0;
 
   @override
   void initState() {
@@ -323,6 +331,7 @@ class PlanCanvasState extends State<PlanCanvas> {
           _currentProjectId = project.id;
           _currentProjectName = project.name;
           _useImperial = project.useImperial;
+          _wallWidthMm = project.wallWidthMm;
           _completedRooms.clear();
           _completedRooms.addAll(project.rooms);
           _openings.clear();
@@ -547,6 +556,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         useImperial: _useImperial,
         backgroundImagePath: _backgroundImagePath,
         backgroundImageState: _backgroundImageState,
+        wallWidthMm: _wallWidthMm,
       );
       debugPrint('Project saved successfully with ID: $projectId');
 
@@ -726,6 +736,34 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  double get wallWidthMm => _wallWidthMm;
+
+  /// Update the project wall width (in mm) and mark project as dirty.
+  void setWallWidthMm(double value) {
+    setState(() {
+      _wallWidthMm = value.clamp(10.0, 500.0);
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  bool get useImperial => _useImperial;
+  bool get showGrid => _showGrid;
+
+  /// Explicitly set unit system (metric/imperial) from settings.
+  void setUseImperial(bool value) {
+    setState(() {
+      _useImperial = value;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  /// Explicitly set grid visibility from settings.
+  void setShowGrid(bool value) {
+    setState(() {
+      _showGrid = value;
+    });
+  }
+
   void _togglePanMode() {
     setState(() {
       _isPanMode = !_isPanMode;
@@ -855,6 +893,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = firstPoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
+          _inlineGuideStartWorld = null;
+          _inlineGuideEndWorld = null;
           _saveHistoryState();
         });
         return;
@@ -871,6 +911,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = doorEdgePoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
+          _inlineGuideStartWorld = null;
+          _inlineGuideEndWorld = null;
           _saveHistoryState();
         });
         return;
@@ -1891,7 +1933,11 @@ class PlanCanvasState extends State<PlanCanvas> {
           if (e.buttons == 0 && _draftRoomVertices != null && !_isDragging && !_isEditingVertex) {
             setState(() {
               final worldPosition = _vp.screenToWorld(e.localPosition);
-              _hoverPositionWorldMm = _snapToGridAndAngle(worldPosition);
+          final snapped = _snapToGridAndAngle(worldPosition);
+          final result = _applyInlineSnap(snapped);
+          _hoverPositionWorldMm = result.snapped;
+          _inlineGuideStartWorld = result.guideStart;
+          _inlineGuideEndWorld = result.guideEnd;
             });
           }
           
@@ -2199,6 +2245,9 @@ class PlanCanvasState extends State<PlanCanvas> {
                       : null,
                   hoverPositionWorldMm: _hoverPositionWorldMm,
                   previewLineAngleDeg: _angleBetweenLinesDeg ?? _currentSegmentAngleDeg,
+                  inlineGuideStartWorld: _inlineGuideStartWorld,
+                  inlineGuideEndWorld: _inlineGuideEndWorld,
+                  wallWidthMm: _wallWidthMm,
                   useImperial: _useImperial,
                   isDragging: _isDragging,
                   selectedRoomIndex: _selectedRoomIndex,
@@ -2435,6 +2484,28 @@ class PlanCanvasState extends State<PlanCanvas> {
           ),
         ),
       ),
+      // Auto-complete room: blue round tick button, bottom-left, only when drawing with ≥3 vertices
+      if (_draftRoomVertices != null && _draftRoomVertices!.length >= 3)
+        Positioned(
+          left: 8,
+          bottom: 8,
+          child: SafeArea(
+            top: false,
+            child: Material(
+              color: Colors.blue,
+              shape: const CircleBorder(),
+              elevation: 4,
+              child: InkWell(
+                onTap: _closeDraftRoom,
+                customBorder: const CircleBorder(),
+                child: const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Icon(Icons.check, color: Colors.white, size: 28),
+                ),
+              ),
+            ),
+          ),
+        ),
       // Length input number pad (visible when drawing and not hidden by user); draggable by its top bar
       ...(_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty && _showNumberPad
           ? [
@@ -2580,6 +2651,113 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (_drawAngleLock == DrawAngleLock.none) return snapped;
     if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty) return snapped;
     return _snapAngleToConstraint(_draftDrawingFrom, snapped, _drawAngleLock);
+  }
+
+  /// Apply inline snapping so the preview endpoint lines up horizontally or vertically
+  /// with the closest existing vertex (within a small screen-space tolerance).
+  /// Returns the possibly adjusted snapped position along with an optional guide line.
+  ({Offset snapped, Offset? guideStart, Offset? guideEnd}) _applyInlineSnap(Offset snappedWorld) {
+    // Clear by default
+    Offset? guideStart;
+    Offset? guideEnd;
+
+    if (_draftRoomVertices == null || _draftRoomVertices!.isEmpty) {
+      return (snapped: snappedWorld, guideStart: null, guideEnd: null);
+    }
+
+    final from = _draftDrawingFrom;
+    final dir = snappedWorld - from;
+    if (dir.dx.abs() < 1e-6 && dir.dy.abs() < 1e-6) {
+      return (snapped: snappedWorld, guideStart: null, guideEnd: null);
+    }
+
+    final snappedScreen = _vp.worldToScreen(snappedWorld);
+
+    // Search for closest vertex in X and Y (screen space) among all rooms and draft vertices.
+    double bestYDistPx = _inlineSnapTolerancePx;
+    Offset? bestYVertexWorld;
+    double bestXDistPx = _inlineSnapTolerancePx;
+    Offset? bestXVertexWorld;
+
+    bool _isSamePoint(Offset a, Offset b) =>
+        (a - b).distanceSquared < 1e-6;
+
+    // Completed rooms
+    for (final room in _completedRooms) {
+      final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+          ? room.vertices.sublist(0, room.vertices.length - 1)
+          : room.vertices;
+      for (final v in verts) {
+        if (_isSamePoint(v, from)) continue; // skip current from-vertex
+        final screen = _vp.worldToScreen(v);
+        final dyPx = (screen.dy - snappedScreen.dy).abs();
+        if (dyPx < bestYDistPx) {
+          bestYDistPx = dyPx;
+          bestYVertexWorld = v;
+        }
+        final dxPx = (screen.dx - snappedScreen.dx).abs();
+        if (dxPx < bestXDistPx) {
+          bestXDistPx = dxPx;
+          bestXVertexWorld = v;
+        }
+      }
+    }
+
+    // Draft vertices
+    final draftVerts = _draftRoomVertices!;
+    for (final v in draftVerts) {
+      if (_isSamePoint(v, from)) continue;
+      final screen = _vp.worldToScreen(v);
+      final dyPx = (screen.dy - snappedScreen.dy).abs();
+      if (dyPx < bestYDistPx) {
+        bestYDistPx = dyPx;
+        bestYVertexWorld = v;
+      }
+      final dxPx = (screen.dx - snappedScreen.dx).abs();
+      if (dxPx < bestXDistPx) {
+        bestXDistPx = dxPx;
+        bestXVertexWorld = v;
+      }
+    }
+
+    // Decide whether horizontal (match Y) or vertical (match X) alignment is better.
+    // Prefer the smaller screen-space delta; fall back to segment orientation if similar.
+    Offset adjusted = snappedWorld;
+    if (bestYVertexWorld == null && bestXVertexWorld == null) {
+      return (snapped: snappedWorld, guideStart: null, guideEnd: null);
+    }
+
+    final preferHorizontal = dir.dx.abs() >= dir.dy.abs();
+    final hasY = bestYVertexWorld != null;
+    final hasX = bestXVertexWorld != null;
+
+    if (hasY && hasX) {
+      // Compare screen deltas to choose axis
+      final yScreen = _vp.worldToScreen(bestYVertexWorld!);
+      final xScreen = _vp.worldToScreen(bestXVertexWorld!);
+      final dyPx = (yScreen.dy - snappedScreen.dy).abs();
+      final dxPx = (xScreen.dx - snappedScreen.dx).abs();
+      if (dyPx <= dxPx) {
+        // horizontal is closer
+        adjusted = Offset(snappedWorld.dx, bestYVertexWorld!.dy);
+        guideStart = bestYVertexWorld;
+        guideEnd = Offset(adjusted.dx, bestYVertexWorld!.dy);
+      } else {
+        adjusted = Offset(bestXVertexWorld!.dx, snappedWorld.dy);
+        guideStart = bestXVertexWorld;
+        guideEnd = Offset(bestXVertexWorld!.dx, adjusted.dy);
+      }
+    } else if (hasY && (preferHorizontal || !hasX)) {
+      adjusted = Offset(snappedWorld.dx, bestYVertexWorld!.dy);
+      guideStart = bestYVertexWorld;
+      guideEnd = Offset(adjusted.dx, bestYVertexWorld!.dy);
+    } else if (hasX) {
+      adjusted = Offset(bestXVertexWorld!.dx, snappedWorld.dy);
+      guideStart = bestXVertexWorld;
+      guideEnd = Offset(bestXVertexWorld!.dx, adjusted.dy);
+    }
+
+    return (snapped: adjusted, guideStart: guideStart, guideEnd: guideEnd);
   }
 
   /// Current segment angle in degrees (drawing-from vertex to hover). Returns null if not drawing or no hover.
@@ -2825,6 +3003,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = firstPoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
+          _inlineGuideStartWorld = null;
+          _inlineGuideEndWorld = null;
         });
         return;
       }
@@ -2843,6 +3023,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _hoverPositionWorldMm = doorEdgePoint;
           _lengthInputController.clear();
           _desiredLengthMm = null;
+          _inlineGuideStartWorld = null;
+          _inlineGuideEndWorld = null;
         });
         return;
       }
@@ -2945,13 +3127,17 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
-    final snappedPosition = _snapToGridAndAngle(worldPosition);
+    final snappedBase = _snapToGridAndAngle(worldPosition);
+    final inlineResult = _applyInlineSnap(snappedBase);
+    final snappedPosition = inlineResult.snapped;
     
     setState(() {
       _dragMoved = true;
       // Update hover position to show preview line (snapped to grid and optionally angle)
       // Don't apply length constraint during drawing - user draws freely first
       _hoverPositionWorldMm = snappedPosition;
+      _inlineGuideStartWorld = inlineResult.guideStart;
+      _inlineGuideEndWorld = inlineResult.guideEnd;
       
       // Update hovered vertex for visual feedback (only in pan mode)
       if (_isPanMode) {
@@ -2994,12 +3180,17 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (!_isDragging) return;
     
     final worldPosition = _vp.screenToWorld(screenPosition);
-    final snappedPosition = _snapToGridAndAngle(worldPosition);
+    final snappedBase = _snapToGridAndAngle(worldPosition);
+    final inlineResult = _applyInlineSnap(snappedBase);
+    final snappedPosition = inlineResult.snapped;
     
     setState(() {
       _isDragging = false;
       
       if (_draftRoomVertices == null || _dragStartPositionWorldMm == null) {
+        // Clear any inline guide when drag ends without an active draft.
+        _inlineGuideStartWorld = null;
+        _inlineGuideEndWorld = null;
         return;
       }
       
@@ -3036,6 +3227,9 @@ class PlanCanvasState extends State<PlanCanvas> {
       }
       
       _dragStartPositionWorldMm = null;
+      // After placing the vertex, clear inline guide so the next segment recomputes it.
+      _inlineGuideStartWorld = null;
+      _inlineGuideEndWorld = null;
     });
   }
 

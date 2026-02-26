@@ -24,6 +24,8 @@ class Projects extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
   BoolColumn get useImperial => boolean().withDefault(const Constant(false))();
+  /// Wall width in millimeters for this project (used when drawing completed rooms).
+  RealColumn get wallWidthMm => real().withDefault(const Constant(70.0))();
   TextColumn get viewportJson => text().nullable()(); // JSON viewport state
   TextColumn get backgroundImagePath => text().nullable()(); // relative path in app storage
   TextColumn get backgroundImageJson => text().nullable()(); // JSON: offsetX, offsetY, scaleMmPerPixel, opacity
@@ -44,7 +46,8 @@ class Rooms extends Table {
 }
 
 /// Adds a column only if it does not already exist (avoids "duplicate column name" on re-runs).
-Future<void> _addColumnIfNotExists(Migrator m, dynamic table, GeneratedColumn column) async {
+/// The [column] parameter is kept loosely typed to work across Drift versions.
+Future<void> _addColumnIfNotExists(Migrator m, dynamic table, dynamic column) async {
   try {
     await m.addColumn(table, column);
   } catch (e) {
@@ -60,7 +63,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration {
@@ -96,6 +99,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 10) {
           await _addColumnIfNotExists(m, projects, projects.roomCarpetSeamOverridesJson);
+        }
+        if (from < 11) {
+          await _addColumnIfNotExists(m, projects, projects.wallWidthMm);
         }
       },
     );

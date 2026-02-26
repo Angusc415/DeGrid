@@ -6,6 +6,7 @@ import 'room_area_summary_panel.dart';
 import 'carpet_products_screen.dart';
 import 'carpet_cut_list_panel.dart';
 import 'carpet_roll_cut_sheet.dart';
+import 'project_settings_sheet.dart';
 
 class EditorScreen extends StatefulWidget {
   final int? projectId;
@@ -84,6 +85,35 @@ class _EditorScreenState extends State<EditorScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Project settings',
+            onPressed: () {
+              final canvasState = _planCanvasKey.currentState;
+              if (canvasState == null) return;
+              showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: false,
+                useSafeArea: true,
+                builder: (ctx) {
+                  return ProjectSettingsSheet(
+                    initialWallWidthMm: canvasState.wallWidthMm,
+                    onWallWidthChanged: (value) {
+                      canvasState.setWallWidthMm(value);
+                    },
+                    initialUseImperial: canvasState.useImperial,
+                    initialShowGrid: canvasState.showGrid,
+                    onUseImperialChanged: (value) {
+                      canvasState.setUseImperial(value);
+                    },
+                    onShowGridChanged: (value) {
+                      canvasState.setShowGrid(value);
+                    },
+                  );
+                },
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.layers),
             tooltip: 'Carpet products',

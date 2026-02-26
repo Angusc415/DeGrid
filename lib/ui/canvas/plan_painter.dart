@@ -18,6 +18,11 @@ class PlanPaintModel {
   final List<Offset>? draftRoomVertices;
   final Offset? hoverPositionWorldMm;
   final double? previewLineAngleDeg;
+  /// Optional inline alignment guide between the preview endpoint and another vertex.
+  final Offset? inlineGuideStartWorld;
+  final Offset? inlineGuideEndWorld;
+  /// Wall width in millimeters for this project.
+  final double wallWidthMm;
   final bool useImperial;
   final bool isDragging;
   final int? selectedRoomIndex;
@@ -47,6 +52,9 @@ class PlanPaintModel {
     this.draftRoomVertices,
     this.hoverPositionWorldMm,
     this.previewLineAngleDeg,
+    this.inlineGuideStartWorld,
+    this.inlineGuideEndWorld,
+    required this.wallWidthMm,
     required this.useImperial,
     required this.isDragging,
     this.selectedRoomIndex,
@@ -197,6 +205,13 @@ class PlanPainter extends CustomPainter {
         }
       } catch (e) {
         debugPrint('Error drawing draft room: $e');
+      }
+
+      // Draw inline alignment guide when snapping a new wall to an existing vertex.
+      if (m.draftRoomVertices != null &&
+          m.inlineGuideStartWorld != null &&
+          m.inlineGuideEndWorld != null) {
+        _drawInlineGuide(canvas);
       }
 
       // Draw grid on top so it is always visible when enabled
@@ -499,9 +514,10 @@ class PlanPainter extends CustomPainter {
       _drawCarpetRollArrow(canvas, room, stripLayout);
     }
 
-    // Outline - visible stroke (thicker so lines don’t disappear when zoomed)
+    // Outline - visible stroke. Use project wall width in mm, converted to pixels.
     final wallColor = isSelected ? Colors.orange.shade700 : const Color(0xFF2C2C2C);
-    final strokeWidth = isSelected ? 3.5 : 2.8;
+    final baseStrokePx = (m.wallWidthMm / m.vp.mmPerPx).clamp(1.0, 80.0).toDouble();
+    final strokeWidth = isSelected ? baseStrokePx * 1.25 : baseStrokePx;
     final outlinePaint = Paint()
       ..color = wallColor
       ..style = PaintingStyle.stroke
@@ -883,6 +899,24 @@ class PlanPainter extends CustomPainter {
         distance += dashLength + gapLength;
       }
     }
+  }
+
+  /// Draw a subtle guide line indicating that the preview endpoint is inline
+  /// (horizontally or vertically) with another vertex.
+  void _drawInlineGuide(Canvas canvas) {
+    final startWorld = m.inlineGuideStartWorld;
+    final endWorld = m.inlineGuideEndWorld;
+    if (startWorld == null || endWorld == null) return;
+
+    final start = m.vp.worldToScreen(startWorld);
+    final end = m.vp.worldToScreen(endWorld);
+
+    final paint = Paint()
+      ..color = Colors.purpleAccent.withOpacity(0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    _drawDashedLine(canvas, start, end, paint, dashLength: 6, gapLength: 4);
   }
 
   /// Draw a dimension line with measurement text for a wall segment.
