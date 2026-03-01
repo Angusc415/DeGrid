@@ -188,6 +188,7 @@ class ProjectService {
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
       wallWidthMm: project.wallWidthMm ?? 70.0,
+      doorThicknessMm: project.doorThicknessMm,
     );
   }
 
@@ -200,6 +201,7 @@ class ProjectService {
     bool useImperial = false,
     int? folderId,
     double wallWidthMm = 70.0,
+    double? doorThicknessMm,
   }) async {
     // Serialize viewport state
     final viewportState = PlanViewportState.fromViewport(viewport);
@@ -212,6 +214,7 @@ class ProjectService {
       useImperial: Value(useImperial),
       viewportJson: Value(viewportJson),
       wallWidthMm: Value(wallWidthMm),
+      doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
     );
 
     final projectId = await _db.into(_db.projects).insert(projectCompanion);
@@ -248,6 +251,7 @@ class ProjectService {
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
     double? wallWidthMm,
+    double? doorThicknessMm,
   }) async {
     final projectUpdate = ProjectsCompanion(
       id: Value(id),
@@ -276,6 +280,7 @@ class ProjectService {
           ? Value(jsonEncode(roomCarpetSeamOverrides.map((k, v) => MapEntry(k.toString(), v))))
           : const Value.absent(),
       wallWidthMm: wallWidthMm != null ? Value(wallWidthMm) : const Value.absent(),
+      doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
     );
 
     await (_db.update(_db.projects)..where((p) => p.id.equals(id))).write(projectUpdate);
@@ -323,6 +328,7 @@ class ProjectService {
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
     double wallWidthMm = 70.0,
+    double? doorThicknessMm,
   }) async {
     try {
       if (id == null) {
@@ -332,7 +338,8 @@ class ProjectService {
           viewport: viewport,
           useImperial: useImperial,
           folderId: folderId,
-          wallWidthMm: wallWidthMm,
+        wallWidthMm: wallWidthMm,
+        doorThicknessMm: doorThicknessMm,
         );
         if (backgroundImagePath != null ||
             backgroundImageState != null ||
@@ -348,7 +355,8 @@ class ProjectService {
             carpetProducts: carpetProducts,
             roomCarpetAssignments: roomCarpetAssignments,
             roomCarpetSeamOverrides: roomCarpetSeamOverrides,
-            wallWidthMm: wallWidthMm,
+          wallWidthMm: wallWidthMm,
+          doorThicknessMm: doorThicknessMm,
           );
         }
         return projectId;
@@ -366,6 +374,7 @@ class ProjectService {
           backgroundImagePath: backgroundImagePath,
           backgroundImageState: backgroundImageState,
           wallWidthMm: wallWidthMm,
+          doorThicknessMm: doorThicknessMm,
         );
         return id;
       }

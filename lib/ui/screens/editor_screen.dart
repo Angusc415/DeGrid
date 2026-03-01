@@ -101,6 +101,10 @@ class _EditorScreenState extends State<EditorScreen> {
                     onWallWidthChanged: (value) {
                       canvasState.setWallWidthMm(value);
                     },
+                    initialDoorThicknessMm: canvasState.doorThicknessMm,
+                    onDoorThicknessChanged: (value) {
+                      canvasState.setDoorThicknessMm(value);
+                    },
                     initialUseImperial: canvasState.useImperial,
                     initialShowGrid: canvasState.showGrid,
                     onUseImperialChanged: (value) {

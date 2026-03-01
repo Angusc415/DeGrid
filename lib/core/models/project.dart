@@ -23,6 +23,8 @@ class ProjectModel {
   final BackgroundImageState? backgroundImageState;
   /// Wall width in millimeters for this project.
   final double wallWidthMm;
+  /// Optional door thickness in millimeters for this project.
+  final double? doorThicknessMm;
 
   ProjectModel({
     this.id,
@@ -39,6 +41,7 @@ class ProjectModel {
     this.backgroundImagePath,
     this.backgroundImageState,
     double? wallWidthMm,
+    this.doorThicknessMm,
   })  : openings = openings ?? const [],
         carpetProducts = carpetProducts ?? const [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
@@ -61,6 +64,7 @@ class ProjectModel {
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
     double? wallWidthMm,
+    double? doorThicknessMm,
   }) {
     return ProjectModel(
       id: id ?? this.id,
@@ -77,6 +81,7 @@ class ProjectModel {
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,
       wallWidthMm: wallWidthMm ?? this.wallWidthMm,
+      doorThicknessMm: doorThicknessMm ?? this.doorThicknessMm,
     );
   }
 }

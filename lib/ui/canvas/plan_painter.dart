@@ -45,6 +45,8 @@ class PlanPaintModel {
   final Map<int, int> roomCarpetAssignments;
   final List<CarpetProduct> carpetProducts;
   final Map<int, List<double>> roomCarpetSeamOverrides;
+  /// Optional project-level door thickness in millimeters (used when drawing doors).
+  final double? doorThicknessMm;
 
   PlanPaintModel({
     required this.vp,
@@ -77,6 +79,7 @@ class PlanPaintModel {
     Map<int, int>? roomCarpetAssignments,
     List<CarpetProduct>? carpetProducts,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    this.doorThicknessMm,
   })  : completedRooms = completedRooms ?? [],
         measurePointsWorld = measurePointsWorld ?? [],
         placedDimensions = placedDimensions ?? [],
@@ -371,10 +374,13 @@ class PlanPainter extends CustomPainter {
   void _drawCarpetRollArrow(Canvas canvas, Room room, StripLayout layout) {
     if (layout.numStrips < 1 || layout.rollWidthMm <= 0) return;
 
-    // Simple line arrow: shaft + two lines for arrowhead
-    const shaftLenMm = 350.0;
+    // Single arrow per room: compute the segment where the roll direction line
+    // intersects the room polygon, then draw the arrow inside that segment.
     const headLenMm = 80.0;
     const headWidthMm = 60.0;
+    const marginMm = 80.0; // keep some space from the polygon edges
+    const labelGapMm = 400.0; // keep arrow away from room name area around centroid
+    const maxShaftLenMm = 320.0; // cap arrow length so it doesn't span the whole room
 
     final linePaint = Paint()
       ..color = Colors.brown.shade800.withOpacity(0.9)
@@ -383,49 +389,200 @@ class PlanPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     final angleRad = layout.layAngleDeg * math.pi / 180;
-    final cos = math.cos(angleRad);
-    final sin = math.sin(angleRad);
-    Offset rotate(Offset p) => Offset(p.dx * cos - p.dy * sin, p.dx * sin + p.dy * cos);
+    final dir = Offset(math.cos(angleRad), math.sin(angleRad));
+    if (dir.distance <= 1e-6) return;
 
-    // Perpendicular extent of room (direction strips are stacked)
-    final perpLen = layout.layAlongX ? layout.bboxHeight : layout.bboxWidth;
+    // Use polygon area centroid in world mm as the arrow center.
+    final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    if (verts.length < 3) return;
+    final centerWorld = _getPolygonAreaCentroid(verts);
 
-    for (int i = 0; i < layout.numStrips; i++) {
-      final stripStart = i * layout.rollWidthMm;
-      final stripEnd = ((i + 1) * layout.rollWidthMm).clamp(0.0, perpLen);
-      final stripCenterPerp = (stripStart + stripEnd) / 2;
-
-      final center = layout.layAlongX
-          ? Offset(
-              layout.bboxMinX + layout.bboxWidth / 2,
-              layout.bboxMinY + stripCenterPerp,
-            )
-          : Offset(
-              layout.bboxMinX + stripCenterPerp,
-              layout.bboxMinY + layout.bboxHeight / 2,
-            );
-
-      // Shaft: base to tip (local coords: base at -shaftLen, tip at +shaftLen)
-      final baseWorld = center + rotate(Offset(-shaftLenMm, 0));
-      final tipWorld = center + rotate(Offset(shaftLenMm, 0));
-      canvas.drawLine(
-        m.vp.worldToScreen(baseWorld),
-        m.vp.worldToScreen(tipWorld),
-        linePaint,
-      );
-
-      // Arrowhead: two lines from tip going back and out
-      final headL = center + rotate(Offset(shaftLenMm - headLenMm, headWidthMm));
-      final headR = center + rotate(Offset(shaftLenMm - headLenMm, -headWidthMm));
-      canvas.drawLine(m.vp.worldToScreen(tipWorld), m.vp.worldToScreen(headL), linePaint);
-      canvas.drawLine(m.vp.worldToScreen(tipWorld), m.vp.worldToScreen(headR), linePaint);
+    // Find intersections of line p(t) = centerWorld + dir * t with polygon edges.
+    double? minT;
+    double? maxT;
+    for (int i = 0; i < verts.length; i++) {
+      final a = verts[i];
+      final b = verts[(i + 1) % verts.length];
+      final e = b - a;
+      final denom = dir.dx * e.dy - dir.dy * e.dx;
+      if (denom.abs() < 1e-6) continue; // Parallel
+      final ac = a - centerWorld;
+      final t = (ac.dx * e.dy - ac.dy * e.dx) / denom;
+      final u = (ac.dx * dir.dy - ac.dy * dir.dx) / denom;
+      if (u < 0.0 || u > 1.0) continue; // Intersection not on segment
+      minT = (minT == null) ? t : math.min(minT, t);
+      maxT = (maxT == null) ? t : math.max(maxT, t);
     }
+
+    if (minT == null || maxT == null) return;
+    if (maxT - minT <= 2 * marginMm) return; // Too small to draw nicely
+
+    double t0 = minT + marginMm;
+    double t1 = maxT - marginMm;
+    if (t1 <= t0) return;
+
+    // If room has a name, avoid drawing the arrow through the label
+    // (label is drawn around the centroid, which is t ≈ 0 on this line).
+    if (room.name != null && room.name!.isNotEmpty) {
+      double? seg1Start;
+      double? seg1End;
+      double? seg2Start;
+      double? seg2End;
+
+      // Left of label gap (towards negative t)
+      if (t0 < -labelGapMm) {
+        seg1Start = t0;
+        seg1End = math.min(-labelGapMm, t1);
+        if (seg1End <= seg1Start) {
+          seg1Start = null;
+          seg1End = null;
+        }
+      }
+
+      // Right of label gap (towards positive t)
+      if (t1 > labelGapMm) {
+        seg2Start = math.max(labelGapMm, t0);
+        seg2End = t1;
+        if (seg2End <= seg2Start) {
+          seg2Start = null;
+          seg2End = null;
+        }
+      }
+
+      double seg1Len = (seg1Start != null && seg1End != null) ? (seg1End - seg1Start).abs() : 0.0;
+      double seg2Len = (seg2Start != null && seg2End != null) ? (seg2End - seg2Start).abs() : 0.0;
+
+      if (seg1Len <= 0 && seg2Len <= 0) {
+        // No good place to draw arrow without hitting label; skip arrow.
+        return;
+      }
+
+      if (seg1Len >= seg2Len && seg1Len > headLenMm * 1.5) {
+        t0 = seg1Start!;
+        t1 = seg1End!;
+      } else if (seg2Len > headLenMm * 1.5) {
+        t0 = seg2Start!;
+        t1 = seg2End!;
+      } else {
+        // Segments exist but too short for a readable arrow.
+        return;
+      }
+    }
+
+    // Shorten shaft if it would be too long (keep centered)
+    if ((t1 - t0).abs() > maxShaftLenMm) {
+      final midT = (t0 + t1) / 2;
+      final half = maxShaftLenMm / 2;
+      t0 = midT - half;
+      t1 = midT + half;
+    }
+
+    final baseWorld = Offset(
+      centerWorld.dx + dir.dx * t0,
+      centerWorld.dy + dir.dy * t0,
+    );
+    final tipWorld = Offset(
+      centerWorld.dx + dir.dx * t1,
+      centerWorld.dy + dir.dy * t1,
+    );
+
+    final baseScreen = m.vp.worldToScreen(baseWorld);
+    final tipScreen = m.vp.worldToScreen(tipWorld);
+    canvas.drawLine(baseScreen, tipScreen, linePaint);
+
+    // Arrowhead: two lines from tip going back and out.
+    final shaftLenMm = (t1 - t0).abs();
+    final headBaseAlong = math.max(shaftLenMm - headLenMm, shaftLenMm * 0.4);
+    final headBaseT = t0 + headBaseAlong;
+    final headBaseWorld = Offset(
+      centerWorld.dx + dir.dx * headBaseT,
+      centerWorld.dy + dir.dy * headBaseT,
+    );
+    final headBaseScreen = m.vp.worldToScreen(headBaseWorld);
+    final perp = Offset(-dir.dy, dir.dx); // rotate 90°
+    final perpUnitLen = perp.distance;
+    if (perpUnitLen <= 1e-6) return;
+    final perpUnit = Offset(perp.dx / perpUnitLen, perp.dy / perpUnitLen);
+    final headLWorld = Offset(
+      headBaseWorld.dx + perpUnit.dx * headWidthMm,
+      headBaseWorld.dy + perpUnit.dy * headWidthMm,
+    );
+    final headRWorld = Offset(
+      headBaseWorld.dx - perpUnit.dx * headWidthMm,
+      headBaseWorld.dy - perpUnit.dy * headWidthMm,
+    );
+    canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), linePaint);
+    canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), linePaint);
+  }
+
+  /// Clip segment [p1]-[p2] to polygon [verts]; returns 0–2 sub-segments (as t0,t1 in [0,1]) that lie inside the polygon.
+  List<({double t0, double t1})> _clipSegmentToPolygon(Offset p1, Offset p2, List<Offset> verts) {
+    if (verts.length < 3) return [];
+    final d = p2 - p1;
+    final List<double> tList = [];
+    for (int i = 0; i < verts.length; i++) {
+      final a = verts[i];
+      final b = verts[(i + 1) % verts.length];
+      final e = b - a;
+      final c = a - p1;
+      final denom = d.dx * e.dy - d.dy * e.dx;
+      if (denom.abs() < 1e-9) continue;
+      final t = (c.dx * e.dy - c.dy * e.dx) / denom;
+      final u = (c.dx * d.dy - c.dy * d.dx) / denom;
+      if (t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) {
+        tList.add(t.clamp(0.0, 1.0));
+      }
+    }
+    if (_pointInPolygon(p1, verts)) tList.add(0.0);
+    if (_pointInPolygon(p2, verts)) tList.add(1.0);
+    tList.sort();
+    // Deduplicate (tolerance)
+    double? prev;
+    final unique = <double>[];
+    for (final t in tList) {
+      if (prev == null || (t - prev!).abs() > 1e-6) {
+        unique.add(t);
+        prev = t;
+      }
+    }
+    final result = <({double t0, double t1})>[];
+    for (int i = 0; i < unique.length - 1; i++) {
+      final t0 = unique[i];
+      final t1 = unique[i + 1];
+      final mid = Offset(p1.dx + (t0 + t1) / 2 * d.dx, p1.dy + (t0 + t1) / 2 * d.dy);
+      if (_pointInPolygon(mid, verts)) result.add((t0: t0, t1: t1));
+    }
+    return result;
+  }
+
+  bool _pointInPolygon(Offset point, List<Offset> polygon) {
+    if (polygon.length < 3) return false;
+    bool inside = false;
+    for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      final xi = polygon[i].dx, yi = polygon[i].dy;
+      final xj = polygon[j].dx, yj = polygon[j].dy;
+      if (((yi > point.dy) != (yj > point.dy)) &&
+          (point.dx < (xj - xi) * (point.dy - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
   }
 
   void _drawCarpetStrips(Canvas canvas, Room room, StripLayout layout) {
     if (layout.rollWidthMm <= 0 || layout.numStrips < 2) return;
-    final verts = room.vertices;
+    final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
     if (verts.length < 3) return;
+
+    // Clip to room polygon so seam lines never exceed the room boundary
+    final roomPath = Path()
+      ..addPolygon(verts.map((v) => m.vp.worldToScreen(v)).toList(), true);
+    canvas.save();
+    canvas.clipPath(roomPath);
 
     // Blue dotted line = end of each carpet strip width
     final stripPaint = Paint()
@@ -433,19 +590,16 @@ class PlanPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
-    // Boundaries: use seam positions (from reference); works for both auto and overridden layout.
     final positions = layout.seamPositionsFromReferenceMm;
     for (int i = 0; i < positions.length; i++) {
       final perpOffset = positions[i];
       Offset p1World;
       Offset p2World;
       if (layout.layAlongX) {
-        // Strips run horizontal; boundaries are horizontal (constant Y)
         final y = layout.bboxMinY + perpOffset;
         p1World = Offset(layout.bboxMinX, y);
         p2World = Offset(layout.bboxMinX + layout.bboxWidth, y);
       } else {
-        // Strips run vertical; boundaries are vertical (constant X)
         final x = layout.bboxMinX + perpOffset;
         p1World = Offset(x, layout.bboxMinY);
         p2World = Offset(x, layout.bboxMinY + layout.bboxHeight);
@@ -455,6 +609,21 @@ class PlanPainter extends CustomPainter {
       _drawDashedLine(canvas, p1Screen, p2Screen, stripPaint,
           dashLength: 4, gapLength: 5);
     }
+
+    canvas.restore();
+  }
+
+  /// Distance from point [p] to the line segment [a]–[b] in world millimetres.
+  double _distancePointToSegment(Offset p, Offset a, Offset b) {
+    final ab = b - a;
+    final ap = p - a;
+    final abLen2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (abLen2 <= 0) {
+      return ap.distance;
+    }
+    final t = ((ap.dx * ab.dx + ap.dy * ab.dy) / abLen2).clamp(0.0, 1.0);
+    final proj = Offset(a.dx + ab.dx * t, a.dy + ab.dy * t);
+    return (p - proj).distance;
   }
 
   StripLayout? _getStripLayoutForRoom(int roomIndex, Room room) {
@@ -477,8 +646,20 @@ class PlanPainter extends CustomPainter {
     return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
   }
 
+  /// Same palette as roll cut sheet so product colors match on canvas and roll board.
+  static const List<Color> _carpetProductPalette = [
+    Color(0xFF1976D2), // blue
+    Color(0xFF388E3C), // green
+    Color(0xFFF57C00), // orange
+    Color(0xFF7B1FA2), // purple
+    Color(0xFF00796B), // teal
+    Color(0xFF5D4037), // brown
+    Color(0xFF303F9F), // indigo
+    Color(0xFFC2185B), // pink
+  ];
+
   /// Draw a completed room as wall lines only (no fill). Walls in neutral dark color.
-  /// When [hasCarpet] is true, draw a subtle fill to indicate carpet assignment.
+  /// When [hasCarpet] is true, draw a subtle fill to indicate carpet assignment (color by product).
   /// When [stripLayout] is provided, draw strip boundary lines.
   void _drawRoom(Canvas canvas, Room room, {
     required int roomIndex,
@@ -493,11 +674,17 @@ class PlanPainter extends CustomPainter {
         .map((v) => m.vp.worldToScreen(v))
         .toList();
 
-    // Optional carpet tint (light fill) when room has a product assigned
+    // Optional carpet tint (light fill) when room has a product assigned; color by product so different products differ
     if (hasCarpet && screenPoints.length >= 3) {
       final path = Path()..addPolygon(screenPoints, true);
+      final productIndex = m.roomCarpetAssignments[roomIndex];
+      final fillColor = (productIndex != null &&
+              productIndex >= 0 &&
+              productIndex < m.carpetProducts.length)
+          ? _carpetProductPalette[productIndex % _carpetProductPalette.length].withOpacity(0.35)
+          : Colors.brown.shade100.withOpacity(0.35);
       final carpetFill = Paint()
-        ..color = Colors.brown.shade100.withOpacity(0.35)
+        ..color = fillColor
         ..style = PaintingStyle.fill;
       canvas.drawPath(path, carpetFill);
     }
@@ -518,12 +705,51 @@ class PlanPainter extends CustomPainter {
     final wallColor = isSelected ? Colors.orange.shade700 : const Color(0xFF2C2C2C);
     final baseStrokePx = (m.wallWidthMm / m.vp.mmPerPx).clamp(1.0, 80.0).toDouble();
     final strokeWidth = isSelected ? baseStrokePx * 1.25 : baseStrokePx;
+    final doorBasePx = ((m.doorThicknessMm ?? m.wallWidthMm) / m.vp.mmPerPx).clamp(1.0, 80.0).toDouble();
     final outlinePaint = Paint()
       ..color = wallColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.miter;
+
+    // Precompute all door gaps (world-space) from all openings so that walls are
+    // broken at doors even when only one of the adjacent rooms owns the opening.
+    final List<({Offset start, Offset end, bool isDoor})> doorGaps = [];
+    for (final o in m.openings) {
+      if (o.roomIndex < 0 || o.roomIndex >= m.completedRooms.length) continue;
+      final otherRoom = m.completedRooms[o.roomIndex];
+      final verts = otherRoom.vertices;
+      if (verts.isEmpty || o.edgeIndex < 0 || o.edgeIndex >= verts.length) continue;
+      final i1 = (o.edgeIndex + 1) % verts.length;
+      final v0 = verts[o.edgeIndex];
+      final v1 = verts[i1];
+      final edgeLen = (v1 - v0).distance;
+      if (edgeLen <= 0) continue;
+      final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+      final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+      doorGaps.add((start: gapStart, end: gapEnd, isDoor: o.isDoor));
+    }
+
+    // Helper: project point [p] onto edge [a]–[b] and return param t in [0,1].
+    double _projectParam(Offset a, Offset b, Offset p) {
+      final ab = b - a;
+      final abLen2 = ab.dx * ab.dx + ab.dy * ab.dy;
+      if (abLen2 <= 0) return 0.0;
+      final ap = p - a;
+      final t = (ap.dx * ab.dx + ap.dy * ab.dy) / abLen2;
+      return t.clamp(0.0, 1.0);
+    }
+
+    // Helper: true when both endpoints of [gap] lie on edge [v0]–[v1].
+    bool _edgeHasGap(Offset v0, Offset v1, ({Offset start, Offset end, bool isDoor}) gap) {
+      const tolMm = 0.5;
+      final d0 = _distancePointToSegment(gap.start, v0, v1);
+      final d1 = _distancePointToSegment(gap.end, v0, v1);
+      return d0 <= tolMm && d1 <= tolMm;
+    }
 
     final n = room.vertices.length;
     for (int i = 0; i < n; i++) {
@@ -535,41 +761,49 @@ class PlanPainter extends CustomPainter {
       final edgeLenMm = (v1 - v0).distance;
       if (edgeLenMm <= 0) continue;
 
-      Opening? openingOnEdge;
-      for (final o in m.openings) {
-        if (o.roomIndex == roomIndex && o.edgeIndex == i) {
-          openingOnEdge = o;
+      // Find any door gap that lies along this edge (could belong to this room or a neighbour).
+      ({Offset start, Offset end, bool isDoor})? matchedGap;
+      for (final g in doorGaps) {
+        if (_edgeHasGap(v0, v1, g)) {
+          matchedGap = g;
           break;
         }
       }
-      if (openingOnEdge == null) {
+
+      if (matchedGap == null) {
         canvas.drawLine(p0, p1, outlinePaint);
         continue;
       }
 
-      final offsetMm = openingOnEdge.offsetMm.clamp(0.0, edgeLenMm);
-      final widthMm = openingOnEdge.widthMm.clamp(0.0, edgeLenMm - offsetMm);
-      final t0 = offsetMm / edgeLenMm;
-      final t1 = (offsetMm + widthMm) / edgeLenMm;
-      final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
-      final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
-      final gapStartScreen = m.vp.worldToScreen(gapStart);
-      final gapEndScreen = m.vp.worldToScreen(gapEnd);
+      // Project gap endpoints onto this edge so we can split the stroke at the doorway.
+      final tA = _projectParam(v0, v1, matchedGap.start);
+      final tB = _projectParam(v0, v1, matchedGap.end);
+      final t0 = math.min(tA, tB);
+      final t1 = math.max(tA, tB);
+
+      final gapStartScreen = Offset(
+        p0.dx + (p1.dx - p0.dx) * t0,
+        p0.dy + (p1.dy - p0.dy) * t0,
+      );
+      final gapEndScreen = Offset(
+        p0.dx + (p1.dx - p0.dx) * t1,
+        p0.dy + (p1.dy - p0.dy) * t1,
+      );
 
       canvas.drawLine(p0, gapStartScreen, outlinePaint);
       canvas.drawLine(gapEndScreen, p1, outlinePaint);
 
-      if (openingOnEdge.isDoor) {
+      if (matchedGap.isDoor) {
         final doorPaint = Paint()
           ..color = Colors.brown.shade700
           ..style = PaintingStyle.stroke
-          ..strokeWidth = strokeWidth
+          ..strokeWidth = doorBasePx
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.miter;
-        final gapMid = m.vp.worldToScreen(Offset(
-          (gapStart.dx + gapEnd.dx) / 2,
-          (gapStart.dy + gapEnd.dy) / 2,
-        ));
+        final gapMid = Offset(
+          (gapStartScreen.dx + gapEndScreen.dx) / 2,
+          (gapStartScreen.dy + gapEndScreen.dy) / 2,
+        );
         final gapVec = gapEndScreen - gapStartScreen;
         final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
         final rect = Rect.fromCircle(center: gapMid, radius: radius);

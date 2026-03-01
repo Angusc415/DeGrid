@@ -26,6 +26,8 @@ class Projects extends Table {
   BoolColumn get useImperial => boolean().withDefault(const Constant(false))();
   /// Wall width in millimeters for this project (used when drawing completed rooms).
   RealColumn get wallWidthMm => real().withDefault(const Constant(70.0))();
+  /// Optional door thickness in millimeters for this project (used when drawing doors).
+  RealColumn get doorThicknessMm => real().nullable()();
   TextColumn get viewportJson => text().nullable()(); // JSON viewport state
   TextColumn get backgroundImagePath => text().nullable()(); // relative path in app storage
   TextColumn get backgroundImageJson => text().nullable()(); // JSON: offsetX, offsetY, scaleMmPerPixel, opacity
@@ -63,7 +65,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration {
@@ -102,6 +104,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 11) {
           await _addColumnIfNotExists(m, projects, projects.wallWidthMm);
+        }
+        if (from < 12) {
+          await _addColumnIfNotExists(m, projects, projects.doorThicknessMm);
         }
       },
     );

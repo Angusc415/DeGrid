@@ -671,6 +671,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           flex: 4,
           child: _RollBoard(
             plan: plan,
+            carpetProducts: widget.carpetProducts,
             useImperial: widget.useImperial,
             overlappingCutIds: plan.overlappingCutIds(),
             onPlacementChanged: _updatePlacement,
@@ -689,6 +690,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
               Expanded(
                 child: _UnplacedTray(
                   unplaced: plan.unplacedCuts,
+                  carpetProducts: widget.carpetProducts,
                   useImperial: widget.useImperial,
                   onSelectCut: _selectCut,
                   selectedCutId: plan.selectedCutId,
@@ -789,30 +791,34 @@ class _SummaryBar extends StatelessWidget {
         : 0.0;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        children: [
-          Text(
-            'Total: ${UnitConverter.formatDistance(total, useImperial: useImperial)} linear',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 16),
-          Text(
-            'Cost: ${UnitConverter.formatDistance(plan.totalScoreCostMm, useImperial: useImperial)}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary),
-          ),
-          const SizedBox(width: 16),
-          Text('Waste: ${wastePct.toStringAsFixed(1)}%', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(width: 16),
-          Text('Placed: $placed/$totalCuts', style: Theme.of(context).textTheme.bodySmall),
-          if (overlaps > 0) ...[
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Total: ${UnitConverter.formatDistance(total, useImperial: useImperial)} linear',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 16),
+            Text(
+              'Cost: ${UnitConverter.formatDistance(plan.totalScoreCostMm, useImperial: useImperial)}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary),
+            ),
+            const SizedBox(width: 16),
+            Text('Waste: ${wastePct.toStringAsFixed(1)}%', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(width: 16),
+            Text('Placed: $placed/$totalCuts', style: Theme.of(context).textTheme.bodySmall),
+            if (overlaps > 0) ...[
+              const SizedBox(width: 8),
+              Text('Warnings: $overlaps overlap(s)', style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12)),
+            ],
+            const SizedBox(width: 16),
+            TextButton.icon(onPressed: onAutoPlace, icon: const Icon(Icons.refresh, size: 18), label: const Text('Auto place')),
             const SizedBox(width: 8),
-            Text('Warnings: $overlaps overlap(s)', style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12)),
+            TextButton.icon(onPressed: onExport, icon: const Icon(Icons.download, size: 18), label: const Text('Export')),
           ],
-          const Spacer(),
-          TextButton.icon(onPressed: onAutoPlace, icon: const Icon(Icons.refresh, size: 18), label: const Text('Auto place')),
-          const SizedBox(width: 8),
-          TextButton.icon(onPressed: onExport, icon: const Icon(Icons.download, size: 18), label: const Text('Export')),
-        ],
+        ),
       ),
     );
   }
@@ -860,8 +866,31 @@ class _OffcutsSection extends StatelessWidget {
   }
 }
 
+/// Distinct colors per carpet product (roll board and unplaced tray).
+/// Use index % length so multiple products cycle through the palette.
+const List<Color> _productColorPalette = [
+  Color(0xFF1976D2), // blue
+  Color(0xFF388E3C), // green
+  Color(0xFFF57C00), // orange
+  Color(0xFF7B1FA2), // purple
+  Color(0xFF00796B), // teal (darker than offcut)
+  Color(0xFF5D4037), // brown
+  Color(0xFF303F9F), // indigo
+  Color(0xFFC2185B), // pink
+];
+
+int _productColorIndex(CarpetProduct product, List<CarpetProduct> carpetProducts) {
+  final i = carpetProducts.indexWhere((p) => p.name == product.name);
+  return i >= 0 ? i : 0;
+}
+
+Color _productColor(CarpetProduct product, List<CarpetProduct> carpetProducts) {
+  return _productColorPalette[_productColorIndex(product, carpetProducts) % _productColorPalette.length];
+}
+
 class _RollBoard extends StatelessWidget {
   final RollPlanState plan;
+  final List<CarpetProduct> carpetProducts;
   final bool useImperial;
   final Set<String> overlappingCutIds;
   final void Function(String cutId, RollCutPlacement pos) onPlacementChanged;
@@ -871,6 +900,7 @@ class _RollBoard extends StatelessWidget {
 
   const _RollBoard({
     required this.plan,
+    required this.carpetProducts,
     required this.useImperial,
     required this.overlappingCutIds,
     required this.onPlacementChanged,
@@ -938,6 +968,7 @@ class _RollBoard extends StatelessWidget {
                     for (final c in placed)
                       _HorizontalCutBlock(
                         piece: c,
+                        productColor: _productColor(c.product, carpetProducts),
                         startOffset: plan.placements[c.cutId]!,
                         rollLengthMm: rollLengthMm,
                         rollWidthMm: rollWidthMm,
@@ -952,6 +983,9 @@ class _RollBoard extends StatelessWidget {
                         isSliver: c.isSliver,
                         isOverlap: overlappingCutIds.contains(c.cutId),
                         isFromOffcut: c.fromOffcut,
+                        tooltipMessage: c.fromOffcut
+                            ? 'From offcut${c.sourceOffcutRollIndex != null ? ' (lane ${c.sourceOffcutRollIndex})' : ''}'
+                            : '${c.cutId} · ${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)}',
                         onTap: () => onSelectCut(c.cutId),
                         onDragEnd: (double deltaAlongMm, double deltaPerpMm) {
                           if (onPlacementDelta != null) {
@@ -1059,6 +1093,8 @@ class _RoomShapePainter extends CustomPainter {
 /// Cut block on the roll: positioned at 2D (alongMm, perpMm), draggable in both axes.
 class _HorizontalCutBlock extends StatefulWidget {
   final RollCutPiece piece;
+  /// Color for this product (roll board); offcut/sliver override still apply.
+  final Color? productColor;
   final RollCutPlacement startOffset;
   final double rollLengthMm;
   final double rollWidthMm;
@@ -1074,11 +1110,14 @@ class _HorizontalCutBlock extends StatefulWidget {
   final bool isOverlap;
   /// True when this cut is marked as sourced from an offcut.
   final bool isFromOffcut;
+  /// Optional tooltip (e.g. "From offcut (lane 0)" or cut ID + length). Applied inside the block so [Positioned] stays direct child of [Stack].
+  final String? tooltipMessage;
   final VoidCallback onTap;
   final void Function(double deltaAlongMm, double deltaPerpMm) onDragEnd;
 
   const _HorizontalCutBlock({
     required this.piece,
+    this.productColor,
     required this.startOffset,
     required this.rollLengthMm,
     required this.rollWidthMm,
@@ -1093,6 +1132,7 @@ class _HorizontalCutBlock extends StatefulWidget {
     required this.isSliver,
     required this.isOverlap,
     required this.isFromOffcut,
+    this.tooltipMessage,
     required this.onTap,
     required this.onDragEnd,
   });
@@ -1108,7 +1148,7 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
 
     final primary = Theme.of(context).colorScheme.primary;
     final offcutColor = Colors.teal;
-    final baseColor = widget.isFromOffcut ? offcutColor : primary;
+    final baseColor = widget.isFromOffcut ? offcutColor : (widget.productColor ?? primary);
     final fillColor = widget.isSliver
         ? Colors.amber.shade200
         : (widget.piece.stripIndex.isEven
@@ -1195,32 +1235,37 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
     final topPx = (widget.startOffset.dy * widget.pxPerMmPerp).clamp(4.0, widget.rollHeightPx - 4);
     final widthPx = (widget.piece.lengthMm * widget.pxPerMmAlong).clamp(widget.minBlockWidthPx, double.infinity);
     final heightPx = (widget.piece.breadthMm * widget.pxPerMmPerp).clamp(widget.minBlockHeightPx, widget.rollHeightPx - 8);
+    final content = GestureDetector(
+      onTap: widget.onTap,
+      onPanUpdate: (d) {
+        final deltaAlongMm = (d.delta.dx / widget.pxPerMmAlong).toDouble();
+        final deltaPerpMm = (d.delta.dy / widget.pxPerMmPerp).toDouble();
+        widget.onDragEnd(deltaAlongMm, deltaPerpMm);
+      },
+      child: _buildBlockContent(context, widthPx, heightPx),
+    );
     return Positioned(
       left: leftPx,
       top: 4 + topPx,
       width: widthPx,
       height: heightPx,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onPanUpdate: (d) {
-          final deltaAlongMm = (d.delta.dx / widget.pxPerMmAlong).toDouble();
-          final deltaPerpMm = (d.delta.dy / widget.pxPerMmPerp).toDouble();
-          widget.onDragEnd(deltaAlongMm, deltaPerpMm);
-        },
-        child: _buildBlockContent(context, widthPx, heightPx),
-      ),
+      child: widget.tooltipMessage != null
+          ? Tooltip(message: widget.tooltipMessage!, child: content)
+          : content,
     );
   }
 }
 
 class _UnplacedTray extends StatelessWidget {
   final List<RollCutPiece> unplaced;
+  final List<CarpetProduct> carpetProducts;
   final bool useImperial;
   final void Function(String? cutId) onSelectCut;
   final String? selectedCutId;
 
   const _UnplacedTray({
     required this.unplaced,
+    required this.carpetProducts,
     required this.useImperial,
     required this.onSelectCut,
     this.selectedCutId,
@@ -1258,8 +1303,18 @@ class _UnplacedTray extends StatelessWidget {
                       final baseLabel = '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}'
                           '${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}';
                       final withSource = c.fromOffcut ? '$baseLabel · from offcut' : baseLabel;
+                      final productColor = c.fromOffcut ? Colors.teal : _productColor(c.product, carpetProducts);
                       return ListTile(
                         dense: true,
+                        leading: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: productColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Theme.of(context).colorScheme.outline.withOpacity(0.5)),
+                          ),
+                        ),
                         title: Text(c.cutId),
                         subtitle: Text(
                           withSource,

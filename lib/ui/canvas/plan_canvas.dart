@@ -105,7 +105,8 @@ class PlanCanvasState extends State<PlanCanvas> {
   bool _isPanMode = false;
   
   /// Draw mode angle lock: lines snap to 90°, 45°, or free angle.
-  DrawAngleLock _drawAngleLock = DrawAngleLock.none;
+  /// Default to 45° snapping so new drawings start locked.
+  DrawAngleLock _drawAngleLock = DrawAngleLock.snap45;
 
   // Calibration mode (true scale): user taps 2 points then enters real distance.
   bool _isCalibrating = false;
@@ -229,6 +230,8 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   // Project-level wall width in millimeters (used when drawing completed rooms).
   double _wallWidthMm = 70.0;
+  // Optional project-level door thickness in millimeters (used when drawing doors).
+  double? _doorThicknessMm;
 
   @override
   void initState() {
@@ -332,6 +335,7 @@ class PlanCanvasState extends State<PlanCanvas> {
           _currentProjectName = project.name;
           _useImperial = project.useImperial;
           _wallWidthMm = project.wallWidthMm;
+          _doorThicknessMm = project.doorThicknessMm;
           _completedRooms.clear();
           _completedRooms.addAll(project.rooms);
           _openings.clear();
@@ -557,6 +561,7 @@ class PlanCanvasState extends State<PlanCanvas> {
         backgroundImagePath: _backgroundImagePath,
         backgroundImageState: _backgroundImageState,
         wallWidthMm: _wallWidthMm,
+        doorThicknessMm: _doorThicknessMm,
       );
       debugPrint('Project saved successfully with ID: $projectId');
 
@@ -742,6 +747,16 @@ class PlanCanvasState extends State<PlanCanvas> {
   void setWallWidthMm(double value) {
     setState(() {
       _wallWidthMm = value.clamp(10.0, 500.0);
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  double? get doorThicknessMm => _doorThicknessMm;
+
+  /// Update the project door thickness (in mm) and mark project as dirty.
+  void setDoorThicknessMm(double? value) {
+    setState(() {
+      _doorThicknessMm = value != null ? value.clamp(10.0, 500.0) : null;
       _hasUnsavedChanges = true;
     });
   }
@@ -2265,6 +2280,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                   drawFromStart: _drawFromStart,
                   backgroundImage: _backgroundImage,
                   backgroundImageState: _backgroundImageState,
+                  doorThicknessMm: _doorThicknessMm,
                 )),
               ),
             );
@@ -3194,10 +3210,13 @@ class PlanCanvasState extends State<PlanCanvas> {
         return;
       }
       
-      // Check if ending near the "other" endpoint (close room)
+      // Check if ending near the "other" endpoint (close room).
+      // Use the snapped segment endpoint rather than the raw finger position so
+      // closing works even when angle-lock or inline snapping offset the cursor.
       if (_draftRoomVertices!.isNotEmpty && _draftRoomVertices!.length >= 3) {
         final closeTargetScreen = _vp.worldToScreen(_draftCloseTarget);
-        final distance = (screenPosition - closeTargetScreen).distance;
+        final snappedScreen = _vp.worldToScreen(snappedPosition);
+        final distance = (snappedScreen - closeTargetScreen).distance;
         if (distance < _closeTolerancePx) {
           _closeDraftRoom();
           _dragStartPositionWorldMm = null;

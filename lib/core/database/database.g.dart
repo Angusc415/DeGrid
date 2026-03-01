@@ -454,6 +454,17 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     requiredDuringInsert: false,
     defaultValue: const Constant(70.0),
   );
+  static const VerificationMeta _doorThicknessMmMeta = const VerificationMeta(
+    'doorThicknessMm',
+  );
+  @override
+  late final GeneratedColumn<double> doorThicknessMm = GeneratedColumn<double>(
+    'door_thickness_mm',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _viewportJsonMeta = const VerificationMeta(
     'viewportJson',
   );
@@ -540,6 +551,7 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     updatedAt,
     useImperial,
     wallWidthMm,
+    doorThicknessMm,
     viewportJson,
     backgroundImagePath,
     backgroundImageJson,
@@ -604,6 +616,15 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         wallWidthMm.isAcceptableOrUnknown(
           data['wall_width_mm']!,
           _wallWidthMmMeta,
+        ),
+      );
+    }
+    if (data.containsKey('door_thickness_mm')) {
+      context.handle(
+        _doorThicknessMmMeta,
+        doorThicknessMm.isAcceptableOrUnknown(
+          data['door_thickness_mm']!,
+          _doorThicknessMmMeta,
         ),
       );
     }
@@ -707,6 +728,10 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.double,
         data['${effectivePrefix}wall_width_mm'],
       )!,
+      doorThicknessMm: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}door_thickness_mm'],
+      ),
       viewportJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}viewport_json'],
@@ -754,6 +779,8 @@ class Project extends DataClass implements Insertable<Project> {
 
   /// Wall width in millimeters for this project (used when drawing completed rooms).
   final double wallWidthMm;
+  /// Optional door thickness in millimeters for this project.
+  final double? doorThicknessMm;
   final String? viewportJson;
   final String? backgroundImagePath;
   final String? backgroundImageJson;
@@ -769,6 +796,7 @@ class Project extends DataClass implements Insertable<Project> {
     required this.updatedAt,
     required this.useImperial,
     required this.wallWidthMm,
+    this.doorThicknessMm,
     this.viewportJson,
     this.backgroundImagePath,
     this.backgroundImageJson,
@@ -789,6 +817,9 @@ class Project extends DataClass implements Insertable<Project> {
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['use_imperial'] = Variable<bool>(useImperial);
     map['wall_width_mm'] = Variable<double>(wallWidthMm);
+    if (!nullToAbsent || doorThicknessMm != null) {
+      map['door_thickness_mm'] = Variable<double>(doorThicknessMm);
+    }
     if (!nullToAbsent || viewportJson != null) {
       map['viewport_json'] = Variable<String>(viewportJson);
     }
@@ -828,6 +859,9 @@ class Project extends DataClass implements Insertable<Project> {
       updatedAt: Value(updatedAt),
       useImperial: Value(useImperial),
       wallWidthMm: Value(wallWidthMm),
+      doorThicknessMm: doorThicknessMm == null && nullToAbsent
+          ? const Value.absent()
+          : Value(doorThicknessMm),
       viewportJson: viewportJson == null && nullToAbsent
           ? const Value.absent()
           : Value(viewportJson),
@@ -965,6 +999,9 @@ class Project extends DataClass implements Insertable<Project> {
       wallWidthMm: data.wallWidthMm.present
           ? data.wallWidthMm.value
           : this.wallWidthMm,
+      doorThicknessMm: data.doorThicknessMm.present
+          ? data.doorThicknessMm.value
+          : this.doorThicknessMm,
       viewportJson: data.viewportJson.present
           ? data.viewportJson.value
           : this.viewportJson,
@@ -1056,6 +1093,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<DateTime> updatedAt;
   final Value<bool> useImperial;
   final Value<double> wallWidthMm;
+  final Value<double?> doorThicknessMm;
   final Value<String?> viewportJson;
   final Value<String?> backgroundImagePath;
   final Value<String?> backgroundImageJson;
@@ -1071,6 +1109,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
     this.wallWidthMm = const Value.absent(),
+    this.doorThicknessMm = const Value.absent(),
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
@@ -1087,6 +1126,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.updatedAt = const Value.absent(),
     this.useImperial = const Value.absent(),
     this.wallWidthMm = const Value.absent(),
+    this.doorThicknessMm = const Value.absent(),
     this.viewportJson = const Value.absent(),
     this.backgroundImagePath = const Value.absent(),
     this.backgroundImageJson = const Value.absent(),
@@ -1103,6 +1143,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<DateTime>? updatedAt,
     Expression<bool>? useImperial,
     Expression<double>? wallWidthMm,
+    Expression<double>? doorThicknessMm,
     Expression<String>? viewportJson,
     Expression<String>? backgroundImagePath,
     Expression<String>? backgroundImageJson,
@@ -1119,6 +1160,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       if (updatedAt != null) 'updated_at': updatedAt,
       if (useImperial != null) 'use_imperial': useImperial,
       if (wallWidthMm != null) 'wall_width_mm': wallWidthMm,
+      if (doorThicknessMm != null) 'door_thickness_mm': doorThicknessMm,
       if (viewportJson != null) 'viewport_json': viewportJson,
       if (backgroundImagePath != null)
         'background_image_path': backgroundImagePath,
@@ -1142,6 +1184,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<DateTime>? updatedAt,
     Value<bool>? useImperial,
     Value<double>? wallWidthMm,
+    Value<double?>? doorThicknessMm,
     Value<String?>? viewportJson,
     Value<String?>? backgroundImagePath,
     Value<String?>? backgroundImageJson,
@@ -1158,6 +1201,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
       updatedAt: updatedAt ?? this.updatedAt,
       useImperial: useImperial ?? this.useImperial,
       wallWidthMm: wallWidthMm ?? this.wallWidthMm,
+      doorThicknessMm: doorThicknessMm ?? this.doorThicknessMm,
       viewportJson: viewportJson ?? this.viewportJson,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageJson: backgroundImageJson ?? this.backgroundImageJson,
@@ -1190,6 +1234,12 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     }
     if (useImperial.present) {
       map['use_imperial'] = Variable<bool>(useImperial.value);
+    }
+    if (wallWidthMm.present) {
+      map['wall_width_mm'] = Variable<double>(wallWidthMm.value);
+    }
+    if (doorThicknessMm.present) {
+      map['door_thickness_mm'] = Variable<double>(doorThicknessMm.value);
     }
     if (wallWidthMm.present) {
       map['wall_width_mm'] = Variable<double>(wallWidthMm.value);
