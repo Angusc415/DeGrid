@@ -278,8 +278,14 @@ class CarpetRollCutSheet extends StatefulWidget {
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
   final bool useImperial;
-  final ScrollController? scrollController;
   final void Function(int roomIndex)? onResetSeamsForRoom;
+  /// When set, roll cut + cut list views are filtered to rooms
+  /// that share the same carpet product as this room.
+  final int? selectedRoomIndex;
+  /// Called when the user drags the top handle; [deltaDy] is the pointer delta in pixels.
+  final void Function(double deltaDy)? onResizeDrag;
+  /// Called when the user taps the top handle (toggle height).
+  final VoidCallback? onToggleHeight;
 
   const CarpetRollCutSheet({
     super.key,
@@ -291,8 +297,10 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
     this.useImperial = false,
-    this.scrollController,
     this.onResetSeamsForRoom,
+    this.selectedRoomIndex,
+    this.onResizeDrag,
+    this.onToggleHeight,
   });
 
   /// Call from editor: showModalBottomSheet with this as child.
@@ -307,28 +315,23 @@ class CarpetRollCutSheet extends StatefulWidget {
     void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged,
     bool useImperial = false,
     void Function(int roomIndex)? onResetSeamsForRoom,
+    int? selectedRoomIndex,
   }) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.25,
-        maxChildSize: 0.92,
-        expand: false,
-        builder: (ctx, scrollController) => CarpetRollCutSheet(
-          rooms: rooms,
-          carpetProducts: carpetProducts,
-          roomCarpetAssignments: roomCarpetAssignments,
-          openings: openings,
-          roomCarpetSeamOverrides: roomCarpetSeamOverrides,
-          roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
-          onLayoutVariantChanged: onLayoutVariantChanged,
-          useImperial: useImperial,
-          scrollController: scrollController,
-          onResetSeamsForRoom: onResetSeamsForRoom,
-        ),
+      builder: (ctx) => CarpetRollCutSheet(
+        rooms: rooms,
+        carpetProducts: carpetProducts,
+        roomCarpetAssignments: roomCarpetAssignments,
+        openings: openings,
+        roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+        roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
+        onLayoutVariantChanged: onLayoutVariantChanged,
+        useImperial: useImperial,
+        onResetSeamsForRoom: onResetSeamsForRoom,
+        selectedRoomIndex: selectedRoomIndex,
       ),
     );
   }
@@ -337,10 +340,7 @@ class CarpetRollCutSheet extends StatefulWidget {
   State<CarpetRollCutSheet> createState() => _CarpetRollCutSheetState();
 }
 
-enum _SheetView { cutList, rollCut }
-
 class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
-  _SheetView _view = _SheetView.cutList;
   RollPlanState? _planState;
   /// Local copy of layout variant so the sheet updates when user changes it without waiting for parent rebuild.
   late Map<int, int> _layoutVariantIndex;
@@ -375,9 +375,18 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 
   List<_RoomWithCarpet> get _roomsWithCarpet {
     final list = <_RoomWithCarpet>[];
+    // If a room is selected, find its product so we only include rooms
+    // that share the same carpet on this roll.
+    int? selectedProductIndex;
+    final selRoom = widget.selectedRoomIndex;
+    if (selRoom != null) {
+      selectedProductIndex = widget.roomCarpetAssignments[selRoom];
+    }
+
     for (final e in widget.roomCarpetAssignments.entries) {
       final ri = e.key;
       final pi = e.value;
+      if (selectedProductIndex != null && pi != selectedProductIndex) continue;
       if (ri < 0 || ri >= widget.rooms.length || pi < 0 || pi >= widget.carpetProducts.length) continue;
       final room = widget.rooms[ri];
       final product = widget.carpetProducts[pi];
@@ -559,6 +568,15 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final content = _buildContent(context);
+    return Material(
+      color: theme.scaffoldBackgroundColor,
+      child: content,
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final list = _roomsWithCarpet;
     if (list.isEmpty) {
       return Column(
@@ -572,92 +590,79 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         ],
       );
     }
-    // Cut list view (default when sheet is pulled up)
-    if (_view == _SheetView.cutList) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
+    return DefaultTabController(
+      length: 2,
+      initialIndex: 0,
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
         children: [
-          _buildHandle(context),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                Text(
-                  'Cut list',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                FilledButton.icon(
-                  onPressed: () {
-                    if (_planState == null || _planState!.allCuts.isEmpty) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) => _rebuildPlanState());
-                    }
-                    setState(() => _view = _SheetView.rollCut);
-                  },
-                  icon: const Icon(Icons.straighten, size: 20),
-                  label: const Text('Roll cut'),
-                ),
-              ],
-            ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHandle(context),
+              TabBar(
+                labelColor: Theme.of(context).colorScheme.primary,
+                tabs: const [
+                  Tab(text: 'Cut list'),
+                  Tab(text: 'Roll cut'),
+                ],
+              ),
+            ],
           ),
           const Divider(height: 1),
           Expanded(
-            child: CarpetCutListPanel(
-              rooms: widget.rooms,
-              carpetProducts: widget.carpetProducts,
-              roomCarpetAssignments: widget.roomCarpetAssignments,
-              openings: widget.openings,
-              useImperial: widget.useImperial,
-              roomCarpetSeamOverrides: widget.roomCarpetSeamOverrides,
-              roomCarpetLayoutVariantIndex: _layoutVariantIndex,
-              onLayoutVariantChanged: _onLayoutVariantChanged,
-              onResetSeamsForRoom: widget.onResetSeamsForRoom,
-            ),
-          ),
-        ],
-      );
-    }
-    // Roll cut view
-    if (_planState == null || _planState!.allCuts.isEmpty) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildHandle(context),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
+            child: TabBarView(
               children: [
-                TextButton.icon(
-                  onPressed: () => setState(() => _view = _SheetView.cutList),
-                  icon: const Icon(Icons.arrow_back, size: 20),
-                  label: const Text('Cut list'),
-                ),
-                const Spacer(),
+                _buildCutListTab(context),
+                _buildRollCutTab(context),
               ],
             ),
           ),
-          const Padding(padding: EdgeInsets.all(24), child: Text('Loading roll plan…')),
         ],
+      ),
+    );
+  }
+
+  /// Tab 0: Cut list — strip lengths per room (filtered by selected room's product).
+  Widget _buildCutListTab(BuildContext context) {
+    Map<int, int> assignments = widget.roomCarpetAssignments;
+    final selRoom = widget.selectedRoomIndex;
+    if (selRoom != null) {
+      final selProduct = widget.roomCarpetAssignments[selRoom];
+      if (selProduct != null) {
+        assignments = {
+          for (final e in widget.roomCarpetAssignments.entries)
+            if (e.value == selProduct) e.key: e.value,
+        };
+      }
+    }
+    return CarpetCutListPanel(
+      rooms: widget.rooms,
+      carpetProducts: widget.carpetProducts,
+      roomCarpetAssignments: assignments,
+      openings: widget.openings,
+      useImperial: widget.useImperial,
+      roomCarpetSeamOverrides: widget.roomCarpetSeamOverrides,
+      roomCarpetLayoutVariantIndex: _layoutVariantIndex,
+      onLayoutVariantChanged: _onLayoutVariantChanged,
+      onResetSeamsForRoom: widget.onResetSeamsForRoom,
+    );
+  }
+
+  /// Tab 1: Roll cut — roll board, tray, inspector.
+  Widget _buildRollCutTab(BuildContext context) {
+    if (_planState == null || _planState!.allCuts.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Loading roll plan…'),
+        ),
       );
     }
     final plan = _planState!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildHandle(context),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            children: [
-              TextButton.icon(
-                onPressed: () => setState(() => _view = _SheetView.cutList),
-                icon: const Icon(Icons.list, size: 20),
-                label: const Text('Cut list'),
-              ),
-              const Spacer(),
-            ],
-          ),
-        ),
         _SummaryBar(
           plan: plan,
           useImperial: widget.useImperial,
@@ -666,7 +671,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         ),
         _OffcutsSection(plan: plan, useImperial: widget.useImperial),
         const Divider(height: 1),
-        // Roll board: main focus, full width left to right
         Expanded(
           flex: 4,
           child: _RollBoard(
@@ -681,7 +685,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           ),
         ),
         const Divider(height: 1),
-        // Tray and Inspector: compact row below the roll
         Flexible(
           flex: 1,
           child: Row(
@@ -708,15 +711,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
               ),
             ],
           ),
-        ),
-        const Divider(height: 1),
-        _CutListSection(
-          plan: plan,
-          useImperial: widget.useImperial,
-          expanded: plan.cutListExpanded,
-          onToggleExpanded: _toggleCutListExpanded,
-          onSelectCut: _selectCut,
-          selectedCutId: plan.selectedCutId,
         ),
       ],
     );
@@ -749,19 +743,45 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   }
 
   Widget _buildHandle(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    final theme = Theme.of(context);
+    Widget content = Container(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      color: theme.colorScheme.surfaceContainerHigh,
       child: Center(
-        child: Container(
-          width: 40,
-          height: 4,
-          decoration: BoxDecoration(
-            color: Theme.of(context).dividerColor,
-            borderRadius: BorderRadius.circular(2),
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.drag_handle,
+              size: 28,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Cuts — drag to resize',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
         ),
       ),
     );
+    // If editor provided resize callbacks, wrap handle so it can drive panel height.
+    if (widget.onResizeDrag != null || widget.onToggleHeight != null) {
+      content = Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerMove: widget.onResizeDrag != null
+            ? (e) => widget.onResizeDrag!(e.delta.dy)
+            : null,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onToggleHeight,
+          child: content,
+        ),
+      );
+    }
+    return content;
   }
 }
 

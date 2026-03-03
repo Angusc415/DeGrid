@@ -29,6 +29,8 @@ class _EditorScreenState extends State<EditorScreen> {
   int? _selectedRoomIndex;
   bool _isPanelOpen = false;
   Map<int, int> _roomCarpetAssignments = {};
+  /// Cuts panel height as fraction of screen (0.06–0.92). We drive this ourselves so resize is reliable.
+  double _cutsPanelFraction = 0.08;
 
   void _onRoomsChanged(List<Room> rooms, bool useImperial, int? selectedIndex) {
     setState(() {
@@ -74,6 +76,7 @@ class _EditorScreenState extends State<EditorScreen> {
       });
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -200,16 +203,32 @@ class _EditorScreenState extends State<EditorScreen> {
                               _planCanvasKey.currentState?.setRoomCarpet(roomIndex, productIndex);
                             },
                           ),
-                          CarpetCutListPanel(
-                            rooms: _rooms,
-                            carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
-                            roomCarpetAssignments: _roomCarpetAssignments,
-                            openings: _planCanvasKey.currentState?.openings ?? [],
-                            useImperial: _useImperial,
-                            roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
-                            roomCarpetLayoutVariantIndex: _planCanvasKey.currentState?.roomCarpetLayoutVariantIndex ?? {},
-                            onLayoutVariantChanged: (roomIndex, v) => _planCanvasKey.currentState?.setRoomLayoutVariant(roomIndex, v),
-                            onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+                          Builder(
+                            builder: (context) {
+                              // Filter cut list to rooms that share the same carpet
+                              // as the currently selected room, when one is selected.
+                              Map<int, int> assignments = _roomCarpetAssignments;
+                              if (_selectedRoomIndex != null) {
+                                final selProduct = _roomCarpetAssignments[_selectedRoomIndex!];
+                                if (selProduct != null) {
+                                  assignments = {
+                                    for (final e in _roomCarpetAssignments.entries)
+                                      if (e.value == selProduct) e.key: e.value,
+                                  };
+                                }
+                              }
+                              return CarpetCutListPanel(
+                                rooms: _rooms,
+                                carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+                                roomCarpetAssignments: assignments,
+                                openings: _planCanvasKey.currentState?.openings ?? [],
+                                useImperial: _useImperial,
+                                roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
+                                roomCarpetLayoutVariantIndex: _planCanvasKey.currentState?.roomCarpetLayoutVariantIndex ?? {},
+                                onLayoutVariantChanged: (roomIndex, v) => _planCanvasKey.currentState?.setRoomLayoutVariant(roomIndex, v),
+                                onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -220,51 +239,35 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ],
           ),
-          // Bottom-center Cuts tab: pull up to open cut list / roll cut sheet
+          // Cuts panel: height driven by state so drag/tap on the TOP handle resizes it.
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
-            child: Center(
-              child: SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(24),
-                    elevation: 2,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(24),
-                      onTap: () {
-                        CarpetRollCutSheet.show(
-                          context,
-                          rooms: _rooms,
-                          carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
-                          roomCarpetAssignments: _roomCarpetAssignments,
-                          openings: _planCanvasKey.currentState?.openings ?? [],
-                          roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
-                          roomCarpetLayoutVariantIndex: _planCanvasKey.currentState?.roomCarpetLayoutVariantIndex ?? {},
-                          onLayoutVariantChanged: (roomIndex, v) => _planCanvasKey.currentState?.setRoomLayoutVariant(roomIndex, v),
-                          useImperial: _useImperial,
-                          onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.vertical_align_top, size: 20, color: Theme.of(context).colorScheme.primary),
-                            const SizedBox(width: 8),
-                            Text('Cuts', style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+            height: MediaQuery.of(context).size.height * _cutsPanelFraction,
+            child: CarpetRollCutSheet(
+              rooms: _rooms,
+              carpetProducts: _planCanvasKey.currentState?.carpetProducts ?? [],
+              roomCarpetAssignments: _roomCarpetAssignments,
+              openings: _planCanvasKey.currentState?.openings ?? [],
+              roomCarpetSeamOverrides: _planCanvasKey.currentState?.roomCarpetSeamOverrides ?? {},
+              roomCarpetLayoutVariantIndex: _planCanvasKey.currentState?.roomCarpetLayoutVariantIndex ?? {},
+              onLayoutVariantChanged: (roomIndex, v) => _planCanvasKey.currentState?.setRoomLayoutVariant(roomIndex, v),
+              useImperial: _useImperial,
+              onResetSeamsForRoom: (roomIndex) => _planCanvasKey.currentState?.clearSeamOverridesForRoom(roomIndex),
+              selectedRoomIndex: _selectedRoomIndex,
+              onResizeDrag: (deltaDy) {
+                final h = MediaQuery.of(context).size.height;
+                final delta = -deltaDy / h;
+                setState(() {
+                  _cutsPanelFraction = (_cutsPanelFraction + delta).clamp(0.06, 0.92);
+                });
+              },
+              onToggleHeight: () {
+                setState(() {
+                  _cutsPanelFraction = _cutsPanelFraction < 0.5 ? 0.7 : 0.08;
+                });
+              },
             ),
           ),
         ],

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -142,6 +143,14 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// Set to true to log vertex-edit vs pan decisions (debug only).
   static const bool _debugVertexEdit = false;
+
+  /// Long-press (2s) on a room in pan mode: move whole room. Timer started on pointer down, cancelled on move/up.
+  Timer? _longPressRoomMoveTimer;
+  static const Duration _longPressRoomMoveDuration = Duration(milliseconds: 1500);
+  bool _isMovingRoom = false;
+  int? _roomMoveRoomIndex;
+  Offset? _roomMoveAnchorWorld;
+  List<Offset>? _roomMoveVerticesAtStart;
   
   // Undo/Redo history
   // Each history entry contains both completed rooms and draft room vertices
@@ -629,6 +638,7 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   @override
   void dispose() {
+    _longPressRoomMoveTimer?.cancel();
     _focusNode.dispose();
     _lengthInputController.dispose();
     _db?.close();
@@ -1189,6 +1199,41 @@ class PlanCanvasState extends State<PlanCanvas> {
   void _removeLastDimension() {
     if (_placedDimensions.isEmpty) return;
     setState(() => _placedDimensions.removeLast());
+  }
+
+  /// Shows a short-lived prompt at the top center (below toolbar): "Move room — drag to reposition".
+  void _showMoveRoomPrompt() {
+    if (!mounted) return;
+    final overlay = Overlay.of(context);
+    final theme = Theme.of(context);
+    final entry = OverlayEntry(
+      builder: (context) => Positioned(
+        top: 72,
+        left: 24,
+        right: 24,
+        child: Center(
+          child: Material(
+            elevation: 6,
+            borderRadius: BorderRadius.circular(8),
+            color: theme.colorScheme.inverseSurface,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Text(
+                'Move room — drag to reposition',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onInverseSurface,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      entry.remove();
+    });
   }
 
   /// Convert a screen point to image pixel coordinates using current background image state.
@@ -1871,6 +1916,37 @@ class PlanCanvasState extends State<PlanCanvas> {
                 });
                 return;
               }
+              // Start long-press timer for "move room" (all platforms: web mouse/touch, desktop, mobile)
+              // Accept buttons == 1 (mouse) or 0 (touch on web often sends 0)
+              if ((e.buttons == 1 || e.buttons == 0) && _isPanMode && _draftRoomVertices == null) {
+                final touchOnImage = _backgroundImage != null &&
+                    _backgroundImageState != null &&
+                    _isPointOnBackgroundImage(e.localPosition);
+                final worldPos = _vp.screenToWorld(e.localPosition);
+                final roomIdx = _findRoomAtPosition(worldPos);
+                if (roomIdx != null && !touchOnImage && _findVertexAtPosition(e.localPosition) == null) {
+                  _panStartScreen = e.localPosition;
+                  _longPressRoomMoveTimer?.cancel();
+                  _longPressRoomMoveTimer = Timer(_longPressRoomMoveDuration, () {
+                    _longPressRoomMoveTimer?.cancel();
+                    _longPressRoomMoveTimer = null;
+                    if (!mounted) return;
+                    if (_panStartScreen == null) return;
+                    final room = _completedRooms[roomIdx];
+                    setState(() {
+                      _isMovingRoom = true;
+                      _roomMoveRoomIndex = roomIdx;
+                      _roomMoveAnchorWorld = _vp.screenToWorld(_panStartScreen!);
+                      _roomMoveVerticesAtStart = List<Offset>.from(room.vertices);
+                      _selectedVertex = null;
+                      _pendingSelectedVertex = null;
+                      _isEditingVertex = false;
+                    });
+                    HapticFeedback.mediumImpact();
+                    _showMoveRoomPrompt();
+                  });
+                }
+              }
               // Seam drag: in pan mode, check for seam hit
               if (kIsWeb && e.buttons == 1 && _isPanMode && _draftRoomVertices == null) {
                 final hit = _findSeamAtScreenPosition(e.localPosition);
@@ -1890,6 +1966,19 @@ class PlanCanvasState extends State<PlanCanvas> {
               }
             },
             onPointerUp: (e) {
+              _longPressRoomMoveTimer?.cancel();
+              _longPressRoomMoveTimer = null;
+              if (_isMovingRoom) {
+                setState(() {
+                  _isMovingRoom = false;
+                  _roomMoveRoomIndex = null;
+                  _roomMoveAnchorWorld = null;
+                  _roomMoveVerticesAtStart = null;
+                });
+                _saveHistoryState();
+                widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+              }
+              _panStartScreen = null;
               if (kIsWeb && _isMeasureMode) {
                 setState(() {
                   if (_measureCurrentWorld != null) {
@@ -1909,6 +1998,29 @@ class PlanCanvasState extends State<PlanCanvas> {
             // PAN (web): Shift + left-drag OR right-click drag
             // Also track hover position for preview line (when not actively dragging to draw)
       onPointerMove: (e) {
+          // Move whole room (works on web and supports mobile if scale doesn't deliver updates)
+          if (_isMovingRoom && _roomMoveRoomIndex != null && _roomMoveAnchorWorld != null && _roomMoveVerticesAtStart != null) {
+            final currentWorld = _vp.screenToWorld(e.localPosition);
+            final delta = currentWorld - _roomMoveAnchorWorld!;
+            final newVertices = _roomMoveVerticesAtStart!.map((v) => v + delta).toList();
+            final idx = _roomMoveRoomIndex!;
+            final room = _completedRooms[idx];
+            setState(() {
+              _completedRooms[idx] = Room(vertices: newVertices, name: room.name);
+              _hasUnsavedChanges = true;
+            });
+            widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+            return;
+          }
+          // Cancel long-press timer if user moved before 2s (all platforms).
+          // Do not clear _panStartScreen so the scale gesture can still start panning.
+          if (!_isMovingRoom && _panStartScreen != null && (e.buttons == 1 || e.buttons == 0)) {
+            final distance = (e.localPosition - _panStartScreen!).distance;
+            if (distance > _panSlopPx) {
+              _longPressRoomMoveTimer?.cancel();
+              _longPressRoomMoveTimer = null;
+            }
+          }
           // Seam drag: update seam position
           if (_draggingSeamRoomIndex != null && _draggingSeamIndex != null) {
             final ri = _draggingSeamRoomIndex!;
@@ -2062,6 +2174,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                       setState(() {
                         _panStartScreen = details.localFocalPoint;
                       });
+                      // Long-press timer for "move room" is started in Listener.onPointerDown (all platforms)
                     }
                   } else {
                     // Draw mode: start drawing
@@ -2077,10 +2190,14 @@ class PlanCanvasState extends State<PlanCanvas> {
             : (details) {
                 // Check pointer count: 1 = drawing/panning/measure, 2+ = pan/zoom
                 if (details.pointerCount == 1) {
+                  // Don't pan the viewport while moving a room
+                  if (_isMovingRoom) return;
                   if (_isMoveFloorplanMode && _backgroundImageState != null) {
                     if (_panStartScreen != null) {
                       final distance = (details.localFocalPoint - _panStartScreen!).distance;
                       if (distance > _panSlopPx) {
+                        _longPressRoomMoveTimer?.cancel();
+                        _longPressRoomMoveTimer = null;
                         setState(() {
                           _isMovingFloorplan = true;
                           _panStartScreen = null;
@@ -2118,9 +2235,11 @@ class PlanCanvasState extends State<PlanCanvas> {
                       _lastScalePosition = details.localFocalPoint;
                     });
                   } else if (_isPanMode && _panStartScreen != null && !_isPanning) {
-                    // Pan mode: only start panning after finger moves past slop (so tap can select vertex)
+                    // Pan mode: only start panning after finger moves past slop (so tap can select vertex / long-press move room)
                     final distance = (details.localFocalPoint - _panStartScreen!).distance;
                     if (distance > _panSlopPx) {
+                      _longPressRoomMoveTimer?.cancel();
+                      _longPressRoomMoveTimer = null;
                       setState(() {
                         _isPanning = true;
                         _vp.panByScreenDelta(details.focalPointDelta);
@@ -2155,6 +2274,19 @@ class PlanCanvasState extends State<PlanCanvas> {
         onScaleEnd: kIsWeb
             ? null
             : (_) {
+                _longPressRoomMoveTimer?.cancel();
+                _longPressRoomMoveTimer = null;
+                final wasMovingRoom = _isMovingRoom;
+                if (_isMovingRoom) {
+                  setState(() {
+                    _isMovingRoom = false;
+                    _roomMoveRoomIndex = null;
+                    _roomMoveAnchorWorld = null;
+                    _roomMoveVerticesAtStart = null;
+                  });
+                  _saveHistoryState();
+                  widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+                }
                 if (_isMoveFloorplanMode) {
                   setState(() {
                     _isMovingFloorplan = false;
@@ -2183,7 +2315,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                   _pendingSelectedVertex = null;
                   _handlePanEnd(_lastScalePosition!);
                   _lastScalePosition = null;
-                } else if (_panStartScreen != null) {
+                } else if (_panStartScreen != null && !wasMovingRoom) {
                   // Single-finger touch in pan mode that didn't move past slop = treat as tap (e.g. vertex select)
                   _scaleGestureIsVertexEdit = false;
                   final tapPosition = _panStartScreen!;
@@ -2453,9 +2585,9 @@ class PlanCanvasState extends State<PlanCanvas> {
             );
           },
         ),
-      // Bottom-right: collapsible Dimensions menu (calibrate, measure, add dimension, remove last)
+      // Top-right: collapsible Dimensions menu (calibrate, measure, add dimension, remove last)
       Positioned(
-        bottom: 8,
+        top: 8,
         right: 8,
         child: CollapsibleToolbar(
           tooltip: 'Dimensions',
