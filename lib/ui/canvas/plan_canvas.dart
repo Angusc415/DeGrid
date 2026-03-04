@@ -146,7 +146,7 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// Long-press (2s) on a room in pan mode: move whole room. Timer started on pointer down, cancelled on move/up.
   Timer? _longPressRoomMoveTimer;
-  static const Duration _longPressRoomMoveDuration = Duration(milliseconds: 1500);
+  static const Duration _longPressRoomMoveDuration = Duration(seconds: 1);
   bool _isMovingRoom = false;
   int? _roomMoveRoomIndex;
   Offset? _roomMoveAnchorWorld;
@@ -1009,6 +1009,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             _selectedRoomIndex = null;
             _isEditingVertex = false;
           });
+          // Notify parent so cut list / roll sheet clear their selection-based filters.
+          widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
           return;
         }
         final room = _completedRooms[clickedRoomIndex];
@@ -1021,6 +1023,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           _selectedRoomIndex = clickedRoomIndex;
           _isEditingVertex = false;
         });
+        // Notify parent so cut list / roll sheet switch to this room's carpet product.
+        widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
         if (distance < 40) {
           _editRoomName(clickedRoomIndex);
         }
@@ -1033,6 +1037,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         _selectedVertex = null;
         _isEditingVertex = false;
       });
+      // Notify parent so selection-based filters reset when tapping empty space.
+      widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
     }
   }
 

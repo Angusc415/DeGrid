@@ -375,12 +375,27 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 
   List<_RoomWithCarpet> get _roomsWithCarpet {
     final list = <_RoomWithCarpet>[];
-    // If a room is selected, find its product so we only include rooms
-    // that share the same carpet on this roll.
+    // Decide which carpet product to show on this roll:
+    // - If a room is selected, use its assigned product.
+    // - Otherwise, pick the product that covers the largest total room area.
     int? selectedProductIndex;
     final selRoom = widget.selectedRoomIndex;
     if (selRoom != null) {
       selectedProductIndex = widget.roomCarpetAssignments[selRoom];
+    } else {
+      final areaByProduct = <int, double>{};
+      for (final e in widget.roomCarpetAssignments.entries) {
+        final ri = e.key;
+        final pi = e.value;
+        if (ri < 0 || ri >= widget.rooms.length || pi < 0 || pi >= widget.carpetProducts.length) continue;
+        final room = widget.rooms[ri];
+        areaByProduct[pi] = (areaByProduct[pi] ?? 0) + room.areaMm2;
+      }
+      if (areaByProduct.isNotEmpty) {
+        selectedProductIndex = areaByProduct.entries
+            .reduce((a, b) => a.value >= b.value ? a : b)
+            .key;
+      }
     }
 
     for (final e in widget.roomCarpetAssignments.entries) {
@@ -590,36 +605,57 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         ],
       );
     }
-    return DefaultTabController(
-      length: 2,
-      initialIndex: 0,
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
+    // When the sheet is very short, only show the header (handle + tabs)
+    // to avoid overflow; content becomes visible once the user drags it up.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final header = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHandle(context),
+            TabBar(
+              labelColor: Theme.of(context).colorScheme.primary,
+              tabs: const [
+                Tab(text: 'Cut list'),
+                Tab(text: 'Roll cut'),
+              ],
+            ),
+          ],
+        );
+
+        // If there's not enough height for the tab content, just show the header.
+        if (constraints.maxHeight < 140) {
+          return DefaultTabController(
+            length: 2,
+            initialIndex: 0,
+            child: SingleChildScrollView(
+              child: header,
+            ),
+          );
+        }
+
+        // Normal case: header + TabBarView filling remaining space.
+        return DefaultTabController(
+          length: 2,
+          initialIndex: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.max,
             children: [
-              _buildHandle(context),
-              TabBar(
-                labelColor: Theme.of(context).colorScheme.primary,
-                tabs: const [
-                  Tab(text: 'Cut list'),
-                  Tab(text: 'Roll cut'),
-                ],
+              header,
+              const Divider(height: 1),
+              Expanded(
+                child: TabBarView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    _buildCutListTab(context),
+                    _buildRollCutTab(context),
+                  ],
+                ),
               ),
             ],
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildCutListTab(context),
-                _buildRollCutTab(context),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -650,6 +686,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   }
 
   /// Tab 1: Roll cut — roll board, tray, inspector.
+  /// Uses flex layout inside the TabBarView; the outer sheet decides overall height.
   Widget _buildRollCutTab(BuildContext context) {
     if (_planState == null || _planState!.allCuts.isEmpty) {
       return const Center(
@@ -661,7 +698,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     }
     final plan = _planState!;
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.max,
       children: [
         _SummaryBar(
           plan: plan,
@@ -672,7 +709,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         _OffcutsSection(plan: plan, useImperial: widget.useImperial),
         const Divider(height: 1),
         Expanded(
-          flex: 4,
+          flex: 5,
           child: _RollBoard(
             plan: plan,
             carpetProducts: widget.carpetProducts,
@@ -685,31 +722,14 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           ),
         ),
         const Divider(height: 1),
-        Flexible(
-          flex: 1,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _UnplacedTray(
-                  unplaced: plan.unplacedCuts,
-                  carpetProducts: widget.carpetProducts,
-                  useImperial: widget.useImperial,
-                  onSelectCut: _selectCut,
-                  selectedCutId: plan.selectedCutId,
-                ),
-              ),
-              Container(width: 1, color: Theme.of(context).dividerColor),
-              Expanded(
-                child: _CutInspector(
-                  plan: plan,
-                  useImperial: widget.useImperial,
-                  onRemoveFromRoll: _removeFromRoll,
-                  onPlaceOnRoll: _placeOnRoll,
-                  onClearSelection: () => _selectCut(null),
-                ),
-              ),
-            ],
+        Expanded(
+          flex: 3,
+          child: _CutInspector(
+            plan: plan,
+            useImperial: widget.useImperial,
+            onRemoveFromRoll: _removeFromRoll,
+            onPlaceOnRoll: _placeOnRoll,
+            onClearSelection: () => _selectCut(null),
           ),
         ),
       ],
@@ -1308,44 +1328,43 @@ class _UnplacedTray extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
-          Expanded(
-            child: unplaced.isEmpty
-                ? Center(
-                    child: Text(
-                      'All cuts placed',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+          if (unplaced.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Text(
+                  'All cuts placed',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+                ),
+              ),
+            )
+          else
+            Column(
+              children: [
+                for (final c in unplaced)
+                  ListTile(
+                    dense: true,
+                    leading: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: c.fromOffcut ? Colors.teal : _productColor(c.product, carpetProducts),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Theme.of(context).colorScheme.outline.withOpacity(0.5)),
+                      ),
                     ),
-                  )
-                : ListView.builder(
-                    itemCount: unplaced.length,
-                    itemBuilder: (context, i) {
-                      final c = unplaced[i];
-                      final baseLabel = '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}'
-                          '${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}';
-                      final withSource = c.fromOffcut ? '$baseLabel · from offcut' : baseLabel;
-                      final productColor = c.fromOffcut ? Colors.teal : _productColor(c.product, carpetProducts);
-                      return ListTile(
-                        dense: true,
-                        leading: Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: productColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Theme.of(context).colorScheme.outline.withOpacity(0.5)),
-                          ),
-                        ),
-                        title: Text(c.cutId),
-                        subtitle: Text(
-                          withSource,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        selected: selectedCutId == c.cutId,
-                        onTap: () => onSelectCut(c.cutId),
-                      );
-                    },
+                    title: Text(c.cutId),
+                    subtitle: Text(
+                      '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}'
+                      '${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}'
+                      '${c.fromOffcut ? ' · from offcut' : ''}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    selected: selectedCutId == c.cutId,
+                    onTap: () => onSelectCut(c.cutId),
                   ),
-          ),
+              ],
+            ),
         ],
       ),
     );

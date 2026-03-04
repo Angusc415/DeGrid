@@ -206,7 +206,8 @@ class _EditorScreenState extends State<EditorScreen> {
                           Builder(
                             builder: (context) {
                               // Filter cut list to rooms that share the same carpet
-                              // as the currently selected room, when one is selected.
+                              // as the currently selected room. When none is selected,
+                              // default to the product that covers the largest total room area.
                               Map<int, int> assignments = _roomCarpetAssignments;
                               if (_selectedRoomIndex != null) {
                                 final selProduct = _roomCarpetAssignments[_selectedRoomIndex!];
@@ -214,6 +215,26 @@ class _EditorScreenState extends State<EditorScreen> {
                                   assignments = {
                                     for (final e in _roomCarpetAssignments.entries)
                                       if (e.value == selProduct) e.key: e.value,
+                                  };
+                                }
+                              } else {
+                                final areaByProduct = <int, double>{};
+                                for (final e in _roomCarpetAssignments.entries) {
+                                  final ri = e.key;
+                                  final pi = e.value;
+                                  if (ri < 0 || ri >= _rooms.length || pi < 0 || pi >= (_planCanvasKey.currentState?.carpetProducts.length ?? 0)) {
+                                    continue;
+                                  }
+                                  final room = _rooms[ri];
+                                  areaByProduct[pi] = (areaByProduct[pi] ?? 0) + room.areaMm2;
+                                }
+                                if (areaByProduct.isNotEmpty) {
+                                  final bestProductIndex = areaByProduct.entries
+                                      .reduce((a, b) => a.value >= b.value ? a : b)
+                                      .key;
+                                  assignments = {
+                                    for (final e in _roomCarpetAssignments.entries)
+                                      if (e.value == bestProductIndex) e.key: e.value,
                                   };
                                 }
                               }

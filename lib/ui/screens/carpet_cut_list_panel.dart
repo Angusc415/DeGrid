@@ -49,20 +49,23 @@ class CarpetCutListPanel extends StatelessWidget {
           ),
         ),
       ),
-      child: Column(
-        children: [
-          _buildHeader(context),
-          const Divider(height: 1),
-          Expanded(
-            child: entries.isEmpty
-                ? _buildEmpty(context)
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: entries.length,
-                    itemBuilder: (context, index) => entries[index],
-                  ),
-          ),
-        ],
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHeader(context),
+            const Divider(height: 1),
+            if (entries.isEmpty)
+              _buildEmpty(context)
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  children: entries,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
