@@ -138,6 +138,8 @@ class PlanToolbar extends StatelessWidget {
   final VoidCallback? onResetFloorplan;
   final bool isMoveFloorplanMode;
   final VoidCallback? onToggleMoveFloorplanMode;
+  final bool canAutoCompleteRoom;
+  final VoidCallback? onAutoCompleteRoom;
 
   const PlanToolbar({
     super.key,
@@ -179,6 +181,8 @@ class PlanToolbar extends StatelessWidget {
     this.onResetFloorplan,
     this.isMoveFloorplanMode = false,
     this.onToggleMoveFloorplanMode,
+    this.canAutoCompleteRoom = false,
+    this.onAutoCompleteRoom,
     required this.onToggleUnit,
     required this.onToggleGrid,
     required this.onTogglePanMode,
@@ -210,24 +214,8 @@ class PlanToolbar extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Tooltip(
-            message: useImperial ? 'Switch to Metric (mm/cm)' : 'Switch to Imperial (ft/in)',
-            child: IconButton(
-              icon: Icon(useImperial ? Icons.straighten : Icons.square_foot),
-              tooltip: useImperial ? 'Metric' : 'Imperial',
-              onPressed: onToggleUnit,
-            ),
-          ),
-          const VerticalDivider(width: 8),
-          Tooltip(
-            message: showGrid ? 'Hide Grid' : 'Show Grid',
-            child: IconButton(
-              icon: Icon(showGrid ? Icons.grid_on : Icons.grid_off),
-              tooltip: showGrid ? 'Hide Grid' : 'Show Grid',
-              onPressed: onToggleGrid,
-            ),
-          ),
-          const VerticalDivider(width: 8),
+          // Unit (metric/imperial) and grid toggles are now controlled via Settings,
+          // so they are intentionally omitted from this main toolbar row.
           Tooltip(
             message: isPanMode ? 'Pan Mode: Drag to pan (tap to exit)' : 'Draw Mode: Drag to draw (tap to enter pan mode)',
             child: IconButton(
@@ -235,6 +223,18 @@ class PlanToolbar extends StatelessWidget {
               tooltip: isPanMode ? 'Pan Mode' : 'Draw Mode',
               color: isPanMode ? Colors.blue : null,
               onPressed: onTogglePanMode,
+            ),
+          ),
+          const VerticalDivider(width: 8),
+          Tooltip(
+            message: canAutoCompleteRoom
+                ? 'Auto-complete room (close polygon)'
+                : 'Auto-complete room (add at least 3 points)',
+            child: IconButton(
+              icon: const Icon(Icons.check_circle_outline),
+              tooltip: 'Auto-complete room',
+              color: canAutoCompleteRoom ? Colors.blue : null,
+              onPressed: canAutoCompleteRoom ? onAutoCompleteRoom : null,
             ),
           ),
           if (onToggleAngleLock != null) ...[

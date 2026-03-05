@@ -764,38 +764,60 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 
   Widget _buildHandle(BuildContext context) {
     final theme = Theme.of(context);
-    Widget content = Container(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      color: theme.colorScheme.surfaceContainerHigh,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.drag_handle,
-              size: 28,
-              color: theme.colorScheme.onSurfaceVariant,
+    // Small centered tab that protrudes from the top of the sheet, so canvas
+    // corners remain visible. Dragging or tapping this tab resizes the sheet.
+    Widget content = Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          width: 180,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHigh,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(16),
+              bottomRight: Radius.circular(16),
             ),
-            const SizedBox(height: 4),
-            Text(
-              'Cuts — drag to resize',
-              style: theme.textTheme.labelSmall?.copyWith(
+            boxShadow: [
+              BoxShadow(
+                color: theme.shadowColor.withOpacity(0.2),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.drag_handle,
+                size: 24,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Text(
+                'Cuts — drag to resize',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
     // If editor provided resize callbacks, wrap handle so it can drive panel height.
     if (widget.onResizeDrag != null || widget.onToggleHeight != null) {
       content = Listener(
-        behavior: HitTestBehavior.opaque,
+        behavior: HitTestBehavior.translucent,
         onPointerMove: widget.onResizeDrag != null
             ? (e) => widget.onResizeDrag!(e.delta.dy)
             : null,
         child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          behavior: HitTestBehavior.translucent,
           onTap: widget.onToggleHeight,
           child: content,
         ),

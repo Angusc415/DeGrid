@@ -1219,8 +1219,14 @@ class PlanPainter extends CustomPainter {
     
     textPainter.layout();
     
-    // Position text at dimension line, rotated to match wall angle
-    final wallAngle = math.atan2(wallVector.dy, wallVector.dx);
+    // Position text at dimension line, rotated to match wall angle, but never upside down.
+    // Normalize so rotation stays within [-90°, 90°] (numbers can be side-on but not inverted).
+    double wallAngle = math.atan2(wallVector.dy, wallVector.dx);
+    if (wallAngle > math.pi / 2) {
+      wallAngle -= math.pi;
+    } else if (wallAngle < -math.pi / 2) {
+      wallAngle += math.pi;
+    }
     final textOffset = dimensionLineStart - Offset(textPainter.width / 2, textPainter.height / 2);
     
     canvas.save();

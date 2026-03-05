@@ -133,6 +133,9 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// When set, user has tapped a wall; show highlight and dialog to confirm width/position before placing.
   ({int roomIndex, int edgeIndex, double edgeLenMm})? _pendingDoorEdge;
   
+  // Room actions menu (three-dots) anchor state
+  bool _showRoomActionsMenu = false;
+  
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
   Offset? _panStartScreen;
@@ -1675,6 +1678,16 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
+  /// Screen-space center of the currently selected room, or null if none.
+  Offset? get _selectedRoomCenterScreen {
+    final idx = _selectedRoomIndex;
+    if (idx == null || idx < 0 || idx >= _completedRooms.length) return null;
+    final room = _completedRooms[idx];
+    if (room.vertices.isEmpty) return null;
+    final centerWorld = _getRoomCenter(room.vertices);
+    return _vp.worldToScreen(centerWorld);
+  }
+
   static double? _layDirectionDegFromVariant(int variantIndex) {
     return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
   }
@@ -2007,9 +2020,64 @@ class PlanCanvasState extends State<PlanCanvas> {
           // Move whole room (works on web and supports mobile if scale doesn't deliver updates)
           if (_isMovingRoom && _roomMoveRoomIndex != null && _roomMoveAnchorWorld != null && _roomMoveVerticesAtStart != null) {
             final currentWorld = _vp.screenToWorld(e.localPosition);
-            final delta = currentWorld - _roomMoveAnchorWorld!;
-            final newVertices = _roomMoveVerticesAtStart!.map((v) => v + delta).toList();
+            final baseDelta = currentWorld - _roomMoveAnchorWorld!;
+
+            // Snap moving room so its vertices "magnetize" to nearby vertices or door endpoints
+            // of other rooms when within ~20mm. This helps rooms snap together cleanly.
+            const double snapToleranceMm = 20.0;
+            double bestDist = snapToleranceMm;
+            Offset snappedDelta = baseDelta;
+
             final idx = _roomMoveRoomIndex!;
+
+            // Candidate points: vertices of other rooms (excluding the moving room)
+            for (int ri = 0; ri < _completedRooms.length; ri++) {
+              if (ri == idx) continue;
+              final room = _completedRooms[ri];
+              final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+                  ? room.vertices.sublist(0, room.vertices.length - 1)
+                  : room.vertices;
+              for (final vStatic in verts) {
+                for (final vMovingStart in _roomMoveVerticesAtStart!) {
+                  final moved = vMovingStart + baseDelta;
+                  final d = (moved - vStatic).distance;
+                  if (d < bestDist) {
+                    bestDist = d;
+                    snappedDelta = baseDelta + (vStatic - moved);
+                  }
+                }
+              }
+            }
+
+            // Also allow snapping to door/opening endpoints on other rooms
+            for (final o in _openings) {
+              if (o.roomIndex == idx) continue;
+              if (o.roomIndex < 0 || o.roomIndex >= _completedRooms.length) continue;
+              final room = _completedRooms[o.roomIndex];
+              final verts = room.vertices;
+              if (o.edgeIndex >= verts.length) continue;
+              final i1 = (o.edgeIndex + 1) % verts.length;
+              final v0 = verts[o.edgeIndex];
+              final v1 = verts[i1];
+              final edgeLen = (v1 - v0).distance;
+              if (edgeLen <= 0) continue;
+              final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+              final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+              final gapStart = Offset(v0.dx + t0 * (v1.dx - v0.dx), v0.dy + t0 * (v1.dy - v0.dy));
+              final gapEnd = Offset(v0.dx + t1 * (v1.dx - v0.dx), v0.dy + t1 * (v1.dy - v0.dy));
+              for (final vStatic in [gapStart, gapEnd]) {
+                for (final vMovingStart in _roomMoveVerticesAtStart!) {
+                  final moved = vMovingStart + baseDelta;
+                  final d = (moved - vStatic).distance;
+                  if (d < bestDist) {
+                    bestDist = d;
+                    snappedDelta = baseDelta + (vStatic - moved);
+                  }
+                }
+              }
+            }
+
+            final newVertices = _roomMoveVerticesAtStart!.map((v) => v + snappedDelta).toList();
             final room = _completedRooms[idx];
             setState(() {
               _completedRooms[idx] = Room(vertices: newVertices, name: room.name);
@@ -2427,6 +2495,87 @@ class PlanCanvasState extends State<PlanCanvas> {
       ),
       ),
       ),
+      // Room actions (three-dots) button + menu near selected room
+      if (_selectedRoomCenterScreen != null) ...[
+        Positioned(
+          left: _selectedRoomCenterScreen!.dx - 16,
+          top: _selectedRoomCenterScreen!.dy - 44,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              setState(() {
+                _showRoomActionsMenu = !_showRoomActionsMenu;
+              });
+            },
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.more_horiz,
+                size: 20,
+              ),
+            ),
+          ),
+        ),
+        if (_showRoomActionsMenu)
+          Positioned(
+            left: _selectedRoomCenterScreen!.dx + 20,
+            top: _selectedRoomCenterScreen!.dy - 80,
+            child: Material(
+              elevation: 6,
+              borderRadius: BorderRadius.circular(8),
+              color: Theme.of(context).colorScheme.surface,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 180),
+                child: IntrinsicWidth(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      InkWell(
+                        onTap: () {
+                          // Placeholder for future carpet direction picker.
+                          // For now just close the menu.
+                          setState(() {
+                            _showRoomActionsMenu = false;
+                          });
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.unfold_more, size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Carpet direction…',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
       // Top-left: collapsible View & Edit menu (unit, grid, draw, lock angle, zoom, undo, redo, delete, save)
       Positioned(
         top: 8,
@@ -2442,6 +2591,10 @@ class PlanCanvasState extends State<PlanCanvas> {
             isPanMode: _isPanMode,
             canUndo: _canUndo,
             canRedo: _canRedo,
+            canAutoCompleteRoom: _draftRoomVertices != null && _draftRoomVertices!.length >= 3,
+            onAutoCompleteRoom: _draftRoomVertices != null && _draftRoomVertices!.length >= 3
+                ? _closeDraftRoom
+                : null,
             hasSelectedRoom: _selectedRoomIndex != null,
             onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
                 ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
@@ -2606,6 +2759,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             isPanMode: _isPanMode,
             canUndo: _canUndo,
             canRedo: _canRedo,
+            canAutoCompleteRoom: false,
+            onAutoCompleteRoom: null,
             hasSelectedRoom: _selectedRoomIndex != null,
             onDeleteRoom: _selectedRoomIndex != null && _draftRoomVertices == null
                 ? () => _showDeleteRoomDialog(_selectedRoomIndex!)
@@ -2638,28 +2793,6 @@ class PlanCanvasState extends State<PlanCanvas> {
           ),
         ),
       ),
-      // Auto-complete room: blue round tick button, bottom-left, only when drawing with ≥3 vertices
-      if (_draftRoomVertices != null && _draftRoomVertices!.length >= 3)
-        Positioned(
-          left: 8,
-          bottom: 8,
-          child: SafeArea(
-            top: false,
-            child: Material(
-              color: Colors.blue,
-              shape: const CircleBorder(),
-              elevation: 4,
-              child: InkWell(
-                onTap: _closeDraftRoom,
-                customBorder: const CircleBorder(),
-                child: const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Icon(Icons.check, color: Colors.white, size: 28),
-                ),
-              ),
-            ),
-          ),
-        ),
       // Length input number pad (visible when drawing and not hidden by user); draggable by its top bar
       ...(_draftRoomVertices != null && _draftRoomVertices!.isNotEmpty && _showNumberPad
           ? [
@@ -2767,6 +2900,55 @@ class PlanCanvasState extends State<PlanCanvas> {
     final snappedX = (worldPositionMm.dx / _snapSpacingMm).round() * _snapSpacingMm;
     final snappedY = (worldPositionMm.dy / _snapSpacingMm).round() * _snapSpacingMm;
     return Offset(snappedX, snappedY);
+  }
+
+  /// When a new [primary] opening is added to a room edge, check if that edge is
+  /// shared with another room (same segment but reversed). If so, add a mirrored
+  /// opening on the adjacent room's corresponding edge so the door/opening
+  /// visually connects both rooms.
+  void _addOpeningOnAdjacentRoom(Opening primary) {
+    if (primary.roomIndex < 0 || primary.roomIndex >= _completedRooms.length) return;
+    final room1 = _completedRooms[primary.roomIndex];
+    final verts1 = room1.vertices;
+    if (verts1.isEmpty) return;
+    final i1 = primary.edgeIndex % verts1.length;
+    final j1 = (i1 + 1) % verts1.length;
+    final v0 = verts1[i1];
+    final v1 = verts1[j1];
+    final edgeLen = (v1 - v0).distance;
+    if (edgeLen <= 0) return;
+
+    const double tol = 1e-3; // 1 micron in mm-space (verts are exact from drawing)
+
+    for (int ri = 0; ri < _completedRooms.length; ri++) {
+      if (ri == primary.roomIndex) continue;
+      final room2 = _completedRooms[ri];
+      final verts2 = room2.vertices;
+      if (verts2.isEmpty) continue;
+      for (int ei = 0; ei < verts2.length; ei++) {
+        final k0 = ei;
+        final k1 = (ei + 1) % verts2.length;
+        final w0 = verts2[k0];
+        final w1 = verts2[k1];
+        // Match reversed: v0≈w1 and v1≈w0
+        if ((v0 - w1).distance > tol || (v1 - w0).distance > tol) continue;
+
+        // Map offset from primary edge (v0→v1) to reversed edge (w0=v1→w1=v0):
+        // primary start at distance [off] from v0; reversed start should be
+        // measured from w0=v1 back toward v0: off' = edgeLen - (off + width).
+        final width = primary.widthMm.clamp(0.0, edgeLen);
+        final off2 = (edgeLen - (primary.offsetMm + width)).clamp(0.0, edgeLen - width);
+
+        _openings.add(Opening(
+          roomIndex: ri,
+          edgeIndex: ei,
+          offsetMm: off2,
+          widthMm: width,
+          isDoor: primary.isDoor,
+        ));
+        return; // Only one adjacent room expected for a shared wall
+      }
+    }
   }
 
   /// Snap a point from [fromMm] toward [toMm] so the angle snaps to 90° or 45° (or return grid-snapped [toMm] if lock is none).
@@ -3790,13 +3972,19 @@ class PlanCanvasState extends State<PlanCanvas> {
                         : (double.tryParse(offsetController.text) ?? offsetMm).clamp(0.0, edgeLenRound - width);
                     if (!mounted) return;
                     setState(() {
-                      _openings.add(Opening(
+                      final primary = Opening(
                         roomIndex: roomIndex,
                         edgeIndex: edgeIndex,
                         offsetMm: off,
                         widthMm: width,
                         isDoor: isDoor,
-                      ));
+                      );
+                      _openings.add(primary);
+
+                      // If this wall is shared with another room (matching reversed edge),
+                      // also add a mirrored opening on that adjacent room so the door
+                      // visually connects both rooms.
+                      _addOpeningOnAdjacentRoom(primary);
                       _pendingDoorEdge = null;
                       _hasUnsavedChanges = true;
                     });
