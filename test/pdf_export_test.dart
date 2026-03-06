@@ -1,8 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:degrid/core/export/pdf_export.dart';
 import 'package:degrid/core/geometry/room.dart';
-import 'dart:ui';
-import 'dart:typed_data';
 
 /// Simple test to verify PDF export works.
 /// 
@@ -69,9 +67,5 @@ void main() {
     expect(pdfBytesEmpty.length, greaterThan(0));
     expect(pdfBytesEmpty[0], 0x25); // PDF files start with '%PDF'
 
-    print('✅ PDF export test passed!');
-    print('   - Metric PDF: ${pdfBytesMetric.length} bytes');
-    print('   - Imperial PDF: ${pdfBytesImperial.length} bytes');
-    print('   - Empty PDF: ${pdfBytesEmpty.length} bytes');
   });
 }

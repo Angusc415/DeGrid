@@ -73,7 +73,7 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              color: Theme.of(context).primaryColor.withAlpha(26),
               border: Border(
                 bottom: BorderSide(
                   color: Theme.of(context).dividerColor,
@@ -101,10 +101,10 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                    color: Theme.of(context).primaryColor.withAlpha(26),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: Theme.of(context).primaryColor.withOpacity(0.3),
+                      color: Theme.of(context).primaryColor.withAlpha(77),
                       width: 1,
                     ),
                   ),
@@ -211,7 +211,7 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
             child: Text(
               '${filteredRooms.length} ${filteredRooms.length == 1 ? 'room' : 'rooms'}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.6),
+                    color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(153),
                   ),
             ),
           ),
@@ -230,7 +230,7 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
                           Icon(
                             Icons.inbox_outlined,
                             size: 64,
-                            color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.3),
+                            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(77),
                           ),
                           const SizedBox(height: 16),
                           Text(
@@ -238,7 +238,7 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
                                 ? 'No rooms yet'
                                 : 'No rooms match your search',
                             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.6),
+                                  color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(153),
                                 ),
                           ),
                         ],
@@ -415,7 +415,7 @@ class _RoomListItem extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isSelected
-              ? Theme.of(context).primaryColor.withOpacity(0.15)
+              ? Theme.of(context).primaryColor.withAlpha(38)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
@@ -448,7 +448,7 @@ class _RoomListItem extends StatelessWidget {
                       Text(
                         areaText,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                              color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
                             ),
                       ),
                     ],
@@ -457,7 +457,7 @@ class _RoomListItem extends StatelessWidget {
                 if (onDelete != null)
                   IconButton(
                     icon: const Icon(Icons.delete_outline, size: 20),
-                    color: Colors.red.withOpacity(0.7),
+                    color: Colors.red.withAlpha(179),
                     onPressed: onDelete,
                     tooltip: 'Delete room',
                   ),
@@ -493,7 +493,7 @@ class _RoomListItem extends StatelessWidget {
                           Text(
                             '${stripLayout.numStrips} strips · ${UnitConverter.formatDistance(stripLayout.totalLinearWithWasteMm ?? stripLayout.totalLinearMm, useImperial: useImperial)} linear',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7),
+                                  color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
                                   fontSize: 11,
                                 ),
                           ),

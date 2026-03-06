@@ -25,9 +25,9 @@ class ProjectService {
     
     if (folderId != null) {
       if (folderId == 0) {
-        query..where((p) => p.folderId.isNull());
+        query.where((p) => p.folderId.isNull());
       } else {
-        query..where((p) => p.folderId.equals(folderId));
+        query.where((p) => p.folderId.equals(folderId));
       }
     }
     
@@ -41,9 +41,9 @@ class ProjectService {
       ..orderBy([(f) => OrderingTerm.asc(f.orderIndex), (f) => OrderingTerm.asc(f.name)]);
     
     if (parentId == null) {
-      query..where((f) => f.parentId.isNull());
+      query.where((f) => f.parentId.isNull());
     } else {
-      query..where((f) => f.parentId.equals(parentId));
+      query.where((f) => f.parentId.equals(parentId));
     }
     
     return await query.get();
@@ -187,7 +187,7 @@ class ProjectService {
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
-      wallWidthMm: project.wallWidthMm ?? 70.0,
+      wallWidthMm: project.wallWidthMm,
       doorThicknessMm: project.doorThicknessMm,
     );
   }

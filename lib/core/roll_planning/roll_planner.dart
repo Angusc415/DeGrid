@@ -287,7 +287,9 @@ class RollPlanner {
       // Build boundaries from shifted grid: first boundary in (0, perpLen) at offset + k*rollWidth
       boundaries = <double>[];
       double b = gridOffsetMm;
-      while (b <= 0) b += rollWidthMm;
+      while (b <= 0) {
+         b += rollWidthMm;
+      }
       while (b < perpLen) {
         if (b > 0) boundaries.add(b);
         b += rollWidthMm;
@@ -390,12 +392,6 @@ class RollPlanner {
       if (v > hi) hi = v;
     }
     return hi - lo;
-  }
-
-  static double _seamPenalty(int seamCount, CarpetLayoutOptions opts) {
-    if (seamCount <= 0) return 0;
-    final hasDoors = opts.openings.any((o) => o.roomIndex == opts.roomIndex && o.isDoor);
-    return seamCount * (hasDoors ? opts.seamPenaltyMmWithDoors : opts.seamPenaltyMmNoDoors);
   }
 
   /// Total seam penalty from per-seam logic: doorway-crossing seams use [seamPenaltyMmInDoorway].

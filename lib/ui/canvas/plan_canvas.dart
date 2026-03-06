@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'viewport.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:file_picker/file_picker.dart';
@@ -15,12 +15,10 @@ import '../../core/geometry/opening.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
-import '../../core/units/unit_converter.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/models/project.dart';
 import 'plan_toolbar.dart';
-import 'plan_history_manager.dart';
 import 'plan_floorplan_menu.dart';
 import 'plan_length_input_pad.dart';
 import 'plan_painter.dart';
@@ -93,9 +91,6 @@ class PlanCanvasState extends State<PlanCanvas> {
   int? _draggingSeamRoomIndex;
   int? _draggingSeamIndex;
 
-  // Counter for default room names
-  int _roomCounter = 1;
-  
   // Unit system: false = metric (mm/cm), true = imperial (ft/in)
   bool _useImperial = false;
   
@@ -133,8 +128,9 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// When set, user has tapped a wall; show highlight and dialog to confirm width/position before placing.
   ({int roomIndex, int edgeIndex, double edgeLenMm})? _pendingDoorEdge;
   
-  // Room actions menu (three-dots) anchor state
+  // Room actions menu (three-dots) + carpet direction picker state
   bool _showRoomActionsMenu = false;
+  bool _showCarpetDirectionPicker = false;
   
   // Pan mode state: track if we're currently panning
   bool _isPanning = false;
@@ -769,7 +765,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Update the project door thickness (in mm) and mark project as dirty.
   void setDoorThicknessMm(double? value) {
     setState(() {
-      _doorThicknessMm = value != null ? value.clamp(10.0, 500.0) : null;
+      _doorThicknessMm = value?.clamp(10.0, 500.0);
       _hasUnsavedChanges = true;
     });
   }
@@ -1011,6 +1007,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             _selectedVertex = null;
             _selectedRoomIndex = null;
             _isEditingVertex = false;
+            _showRoomActionsMenu = false;
+            _showCarpetDirectionPicker = false;
           });
           // Notify parent so cut list / roll sheet clear their selection-based filters.
           widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
@@ -1039,6 +1037,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         _selectedRoomIndex = null;
         _selectedVertex = null;
         _isEditingVertex = false;
+        _showRoomActionsMenu = false;
+        _showCarpetDirectionPicker = false;
       });
       // Notify parent so selection-based filters reset when tapping empty space.
       widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
@@ -1688,6 +1688,17 @@ class PlanCanvasState extends State<PlanCanvas> {
     return _vp.worldToScreen(centerWorld);
   }
 
+  void _applyCarpetDirectionForSelectedRoom(int variantIndex) {
+    final idx = _selectedRoomIndex;
+    if (idx == null) return;
+    // Reuse existing variant semantics: 0 = Auto, 1 = horizontal, 2 = vertical.
+    if (variantIndex < 0 || variantIndex > 2) return;
+    setRoomLayoutVariant(idx, variantIndex);
+    setState(() {
+      _showCarpetDirectionPicker = false;
+    });
+  }
+
   static double? _layDirectionDegFromVariant(int variantIndex) {
     return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
   }
@@ -1697,7 +1708,9 @@ class PlanCanvasState extends State<PlanCanvas> {
     final productIndex = _roomCarpetAssignments[roomIndex];
     if (productIndex == null ||
         productIndex < 0 ||
-        productIndex >= _carpetProducts.length) return null;
+        productIndex >= _carpetProducts.length) {
+      return null;
+    }
     final product = _carpetProducts[productIndex];
     if (product.rollWidthMm <= 0) return null;
     final seamOverride = _roomCarpetSeamOverrides[roomIndex];
@@ -2495,6 +2508,13 @@ class PlanCanvasState extends State<PlanCanvas> {
       ),
       ),
       ),
+      if (_isLoading)
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: LinearProgressIndicator(minHeight: 2),
+        ),
       // Room actions (three-dots) button + menu near selected room
       if (_selectedRoomCenterScreen != null) ...[
         Positioned(
@@ -2511,11 +2531,11 @@ class PlanCanvasState extends State<PlanCanvas> {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
+                color: Theme.of(context).colorScheme.surface.withAlpha(230),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withAlpha(38),
                     blurRadius: 6,
                     offset: const Offset(0, 2),
                   ),
@@ -2545,10 +2565,9 @@ class PlanCanvasState extends State<PlanCanvas> {
                     children: [
                       InkWell(
                         onTap: () {
-                          // Placeholder for future carpet direction picker.
-                          // For now just close the menu.
                           setState(() {
                             _showRoomActionsMenu = false;
+                            _showCarpetDirectionPicker = true;
                           });
                         },
                         child: Padding(
@@ -2576,6 +2595,81 @@ class PlanCanvasState extends State<PlanCanvas> {
             ),
           ),
       ],
+      if (_selectedRoomCenterScreen != null && _showCarpetDirectionPicker)
+        Positioned(
+          left: _selectedRoomCenterScreen!.dx - 80,
+          top: _selectedRoomCenterScreen!.dy - 140,
+          child: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(10),
+            color: Theme.of(context).colorScheme.surface,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Carpet direction',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                        onPressed: () {
+                          setState(() {
+                            _showCarpetDirectionPicker = false;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Up arrow row
+                  Center(
+                    child: IconButton(
+                      icon: const Icon(Icons.north),
+                      tooltip: 'Up',
+                      onPressed: () => _applyCarpetDirectionForSelectedRoom(2),
+                    ),
+                  ),
+                  // Left / Auto / Right row
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.west),
+                        tooltip: 'Left',
+                        onPressed: () => _applyCarpetDirectionForSelectedRoom(1),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.radio_button_unchecked),
+                        tooltip: 'Auto',
+                        onPressed: () => _applyCarpetDirectionForSelectedRoom(0),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.east),
+                        tooltip: 'Right',
+                        onPressed: () => _applyCarpetDirectionForSelectedRoom(1),
+                      ),
+                    ],
+                  ),
+                  // Down arrow row
+                  Center(
+                    child: IconButton(
+                      icon: const Icon(Icons.south),
+                      tooltip: 'Down',
+                      onPressed: () => _applyCarpetDirectionForSelectedRoom(2),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       // Top-left: collapsible View & Edit menu (unit, grid, draw, lock angle, zoom, undo, redo, delete, save)
       Positioned(
         top: 8,
@@ -3015,7 +3109,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     double bestXDistPx = _inlineSnapTolerancePx;
     Offset? bestXVertexWorld;
 
-    bool _isSamePoint(Offset a, Offset b) =>
+    bool isSamePoint(Offset a, Offset b) =>
         (a - b).distanceSquared < 1e-6;
 
     // Completed rooms
@@ -3024,7 +3118,7 @@ class PlanCanvasState extends State<PlanCanvas> {
           ? room.vertices.sublist(0, room.vertices.length - 1)
           : room.vertices;
       for (final v in verts) {
-        if (_isSamePoint(v, from)) continue; // skip current from-vertex
+        if (isSamePoint(v, from)) continue; // skip current from-vertex
         final screen = _vp.worldToScreen(v);
         final dyPx = (screen.dy - snappedScreen.dy).abs();
         if (dyPx < bestYDistPx) {
@@ -3042,7 +3136,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     // Draft vertices
     final draftVerts = _draftRoomVertices!;
     for (final v in draftVerts) {
-      if (_isSamePoint(v, from)) continue;
+      if (isSamePoint(v, from)) continue;
       final screen = _vp.worldToScreen(v);
       final dyPx = (screen.dy - snappedScreen.dy).abs();
       if (dyPx < bestYDistPx) {
@@ -3069,28 +3163,28 @@ class PlanCanvasState extends State<PlanCanvas> {
 
     if (hasY && hasX) {
       // Compare screen deltas to choose axis
-      final yScreen = _vp.worldToScreen(bestYVertexWorld!);
-      final xScreen = _vp.worldToScreen(bestXVertexWorld!);
+      final yScreen = _vp.worldToScreen(bestYVertexWorld);
+      final xScreen = _vp.worldToScreen(bestXVertexWorld);
       final dyPx = (yScreen.dy - snappedScreen.dy).abs();
       final dxPx = (xScreen.dx - snappedScreen.dx).abs();
       if (dyPx <= dxPx) {
         // horizontal is closer
-        adjusted = Offset(snappedWorld.dx, bestYVertexWorld!.dy);
+        adjusted = Offset(snappedWorld.dx, bestYVertexWorld.dy);
         guideStart = bestYVertexWorld;
-        guideEnd = Offset(adjusted.dx, bestYVertexWorld!.dy);
+        guideEnd = Offset(adjusted.dx, bestYVertexWorld.dy);
       } else {
-        adjusted = Offset(bestXVertexWorld!.dx, snappedWorld.dy);
+        adjusted = Offset(bestXVertexWorld.dx, snappedWorld.dy);
         guideStart = bestXVertexWorld;
-        guideEnd = Offset(bestXVertexWorld!.dx, adjusted.dy);
+        guideEnd = Offset(bestXVertexWorld.dx, adjusted.dy);
       }
     } else if (hasY && (preferHorizontal || !hasX)) {
-      adjusted = Offset(snappedWorld.dx, bestYVertexWorld!.dy);
+      adjusted = Offset(snappedWorld.dx, bestYVertexWorld.dy);
       guideStart = bestYVertexWorld;
-      guideEnd = Offset(adjusted.dx, bestYVertexWorld!.dy);
+      guideEnd = Offset(adjusted.dx, bestYVertexWorld.dy);
     } else if (hasX) {
-      adjusted = Offset(bestXVertexWorld!.dx, snappedWorld.dy);
+      adjusted = Offset(bestXVertexWorld.dx, snappedWorld.dy);
       guideStart = bestXVertexWorld;
-      guideEnd = Offset(bestXVertexWorld!.dx, adjusted.dy);
+      guideEnd = Offset(bestXVertexWorld.dx, adjusted.dy);
     }
 
     return (snapped: adjusted, guideStart: guideStart, guideEnd: guideEnd);
@@ -3124,8 +3218,12 @@ class PlanCanvasState extends State<PlanCanvas> {
     final angle1 = math.atan2(dir1.dy, dir1.dx);
     final angle2 = math.atan2(dir2.dy, dir2.dx);
     double diffRad = angle2 - angle1;
-    while (diffRad < 0) diffRad += 2 * math.pi;
-    while (diffRad >= 2 * math.pi) diffRad -= 2 * math.pi;
+    while (diffRad < 0) {
+      diffRad += 2 * math.pi;
+    }
+    while (diffRad >= 2 * math.pi) {
+      diffRad -= 2 * math.pi;
+    }
     double deg = diffRad * (180.0 / math.pi);
     // Show 0–180° either way (turn left or right gives same magnitude)
     if (deg > 180.0) deg = 360.0 - deg;
@@ -3232,10 +3330,7 @@ class PlanCanvasState extends State<PlanCanvas> {
     }
     
     try {
-      // Try to check if it's iterable by checking length
-      // This will throw if rooms is undefined or not a list
-      final length = rooms.length;
-      
+      // Try to create a new list - this will fail if rooms is not iterable
       // Try to create a new list - this will fail if rooms is not iterable
       return List<Room>.from(rooms);
     } catch (e) {
@@ -3898,7 +3993,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                     ),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<double>(
-                      value: widthMm,
+                      initialValue: widthMm,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),

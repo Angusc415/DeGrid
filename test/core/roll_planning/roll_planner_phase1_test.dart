@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:degrid/core/geometry/opening.dart';
 import 'package:degrid/core/geometry/room.dart';
 import 'package:degrid/core/roll_planning/carpet_layout_options.dart';

@@ -37,7 +37,7 @@ class _CollapsibleToolbarState extends State<CollapsibleToolbar> {
     borderRadius: BorderRadius.circular(8),
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withOpacity(0.1),
+        color: Colors.black.withAlpha(26),
         blurRadius: 4,
         offset: const Offset(0, 2),
       ),
@@ -199,7 +199,7 @@ class PlanToolbar extends StatelessWidget {
     color: Colors.white,
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withOpacity(0.1),
+        color: Colors.black.withAlpha(26),
         blurRadius: 4,
         offset: const Offset(0, 2),
       ),
@@ -575,7 +575,7 @@ class _ZoomMenuButtonState extends State<_ZoomMenuButton> {
                     borderRadius: BorderRadius.circular(4),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
+                        color: Colors.black.withAlpha(51),
                         blurRadius: 8,
                         offset: const Offset(0, 2),
                       ),

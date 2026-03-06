@@ -535,209 +535,7 @@ class PdfExportService {
     canvas.restore();
   }
 
-  /// Build room line widgets using positioned containers (widget-based approach).
-  static List<pw.Widget> _buildRoomLineWidgets(
-    Room room,
-    _BoundingBox bbox,
-    double scale,
-    double offsetX,
-    double offsetY,
-  ) {
-    if (room.vertices.isEmpty) return [];
-    
-    final widgets = <pw.Widget>[];
-    
-    // Convert vertices to PDF page coordinates
-    final points = room.vertices.map((vertex) {
-      final x = offsetX + (vertex.dx - bbox.minX) * pointPerMm * scale;
-      final y = offsetY + (vertex.dy - bbox.minY) * pointPerMm * scale;
-      return PdfPoint(x, y);
-    }).toList();
-    
-    // Draw each edge as a positioned container with border
-    for (int i = 0; i < points.length; i++) {
-      final next = (i + 1) % points.length;
-      final p1 = points[i];
-      final p2 = points[next];
-      
-      // Calculate line length and angle
-      final dx = p2.x - p1.x;
-      final dy = p2.y - p1.y;
-      final length = math.sqrt(dx * dx + dy * dy);
-      final angle = math.atan2(dy, dx);
-      
-      if (length > 0 && p1.x.isFinite && p1.y.isFinite && p2.x.isFinite && p2.y.isFinite) {
-        // Create a thin container rotated to form the line
-        widgets.add(
-          pw.Positioned(
-            left: p1.x,
-            top: p1.y,
-            child: pw.Transform.rotate(
-              angle: angle,
-              child: pw.Container(
-                width: length,
-                height: 2, // Line thickness
-                decoration: pw.BoxDecoration(
-                  color: PdfColor.fromInt(0xFF1976D2), // Blue
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-    }
-    
-    return widgets;
-  }
-
-  /// Draw a room on the PDF canvas with fill, outline, measurements, and label.
-  static void _drawRoom(
-    PdfGraphics canvas,
-    Room room,
-    _BoundingBox bbox,
-    PdfPoint paintSize,
-    bool useImperial,
-    double scale,
-    double offsetX,
-    double offsetY,
-  ) {
-    if (room.vertices.isEmpty) return;
-    
-    // Convert vertices to PDF coordinates
-    // CustomPaint coordinates are relative to the paint area (0,0 to paintSize)
-    final points = room.vertices.map((vertex) {
-      // Convert from world coordinates (mm) to PDF points relative to bbox
-      // Then scale to fit the paint area
-      final x = (vertex.dx - bbox.minX) * pointPerMm * scale;
-      final y = (vertex.dy - bbox.minY) * pointPerMm * scale;
-      return PdfPoint(x, y);
-    }).toList();
-    
-    // Draw room outline
-    if (points.length >= 2) {
-      // Set stroke color for outline - use a darker blue for visibility
-      canvas.setStrokeColor(PdfColor.fromInt(0xFF1976D2)); // Darker blue
-      
-      // Draw closed polygon outline
-      for (int i = 0; i < points.length; i++) {
-        final next = (i + 1) % points.length;
-        final p1 = points[i];
-        final p2 = points[next];
-        
-        // Draw the line - ensure coordinates are valid
-        if (p1.x.isFinite && p1.y.isFinite && p2.x.isFinite && p2.y.isFinite) {
-          canvas.drawLine(p1.x, p1.y, p2.x, p2.y);
-        }
-      }
-    }
-    
-    // Draw wall measurements
-    _drawWallMeasurements(canvas, room, points, bbox, useImperial, paintSize);
-  }
   
-  /// Draw wall measurements for a room.
-  static void _drawWallMeasurements(
-    PdfGraphics canvas,
-    Room room,
-    List<PdfPoint> screenPoints,
-    _BoundingBox bbox,
-    bool useImperial,
-    PdfPoint size,
-  ) {
-    if (room.vertices.length < 2) return;
-    
-    // Get unique vertices
-    final uniqueVertices = room.vertices.length > 1 && 
-                           room.vertices.first == room.vertices.last
-        ? room.vertices.sublist(0, room.vertices.length - 1)
-        : room.vertices;
-    
-    final uniqueScreenPoints = screenPoints.length > 1 && 
-                               screenPoints.first == screenPoints.last
-        ? screenPoints.sublist(0, screenPoints.length - 1)
-        : screenPoints;
-    
-    if (uniqueVertices.length < 2) return;
-    
-    // Draw dimension for each wall segment
-    for (int i = 0; i < uniqueVertices.length; i++) {
-      final j = (i + 1) % uniqueVertices.length;
-      final startWorld = uniqueVertices[i];
-      final endWorld = uniqueVertices[j];
-      final startScreen = uniqueScreenPoints[i];
-      final endScreen = uniqueScreenPoints[j];
-      
-      // Calculate distance in mm
-      final distanceMm = math.sqrt(
-        math.pow(endWorld.dx - startWorld.dx, 2) + 
-        math.pow(endWorld.dy - startWorld.dy, 2)
-      );
-      
-      // Only draw if wall is long enough
-      final screenDistance = math.sqrt(
-        math.pow(endScreen.x - startScreen.x, 2) + 
-        math.pow(endScreen.y - startScreen.y, 2)
-      );
-      if (screenDistance < 15) continue; // Skip very short walls
-      
-      // Calculate midpoint
-      final midpoint = PdfPoint(
-        (startScreen.x + endScreen.x) / 2,
-        (startScreen.y + endScreen.y) / 2,
-      );
-      
-      // Calculate perpendicular direction for dimension line
-      final dx = endScreen.x - startScreen.x;
-      final dy = endScreen.y - startScreen.y;
-      final length = math.sqrt(dx * dx + dy * dy);
-      if (length == 0) continue;
-      
-      final perpX = -dy / length;
-      final perpY = dx / length;
-      const offset = 8.0; // Offset distance from wall (in points)
-      
-      final dimStart = PdfPoint(
-        midpoint.x + perpX * offset,
-        midpoint.y + perpY * offset,
-      );
-      final dimEnd = PdfPoint(
-        midpoint.x - perpX * offset,
-        midpoint.y - perpY * offset,
-      );
-      
-      // Draw dimension line (only if within bounds)
-      if (dimStart.x >= 0 && dimStart.x <= size.x &&
-          dimStart.y >= 0 && dimStart.y <= size.y &&
-          dimEnd.x >= 0 && dimEnd.x <= size.x &&
-          dimEnd.y >= 0 && dimEnd.y <= size.y) {
-        canvas.setStrokeColor(PdfColor.fromInt(0xFF757575)); // Grey
-        canvas.drawLine(
-          dimStart.x,
-          dimStart.y,
-          dimEnd.x,
-          dimEnd.y,
-        );
-        
-        // Draw extension lines (from wall to dimension line)
-        canvas.setStrokeColor(PdfColor.fromInt(0xFFBDBDBD)); // Light grey
-        canvas.drawLine(
-          startScreen.x,
-          startScreen.y,
-          dimStart.x,
-          dimStart.y,
-        );
-        canvas.drawLine(
-          endScreen.x,
-          endScreen.y,
-          dimEnd.x,
-          dimEnd.y,
-        );
-      }
-      
-      // Note: Text rendering in CustomPaint is limited, so measurements
-      // will be added as overlay widgets in a future enhancement
-    }
-  }
 
   /// Build room label as a text widget (overlay on top of drawing).
   static pw.Widget _buildRoomLabelWidget(
@@ -763,18 +561,15 @@ class PdfExportService {
     centerX /= room.vertices.length;
     centerY /= room.vertices.length;
     
-    // Convert to PDF coordinates (with scale and offset)
+    // Convert centroid to PDF coordinates (with scale and offset)
     final pdfX = offsetX + (centerX - bbox.minX) * pointPerMm * scale;
     final pdfY = offsetY + (centerY - bbox.minY) * pointPerMm * scale;
     
-    String labelText;
-    if (room.name != null && room.name!.isNotEmpty) {
-      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
-      labelText = '${room.name!}\n$areaText';
-    } else {
-      final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
-      labelText = areaText;
-    }
+    // Build label text (room name + area when available)
+    final areaText = UnitConverter.formatArea(room.areaMm2, useImperial: useImperial);
+    final labelText = (room.name != null && room.name!.isNotEmpty)
+        ? '${room.name!}\n$areaText'
+        : areaText;
     
     // Keep labels fully on-page (prevents clipping near edges)
     // Slightly wider and scale text down if needed to avoid cut-off.
@@ -814,35 +609,6 @@ class PdfExportService {
         ),
       ),
     );
-  }
-
-  /// Draw grid lines on the PDF canvas.
-  static void _drawGrid(
-    PdfGraphics canvas,
-    PdfPoint paintSize,
-    _BoundingBox bbox,
-    double scale,
-    double offsetX,
-    double offsetY,
-  ) {
-    const gridSpacingMm = 100.0; // 10cm grid
-    final gridSpacingPt = gridSpacingMm * pointPerMm * scale;
-    
-    canvas.setStrokeColor(PdfColor.fromInt(0xFFE0E0E0)); // Light grey
-    
-    // Calculate grid bounds in scaled coordinates
-    final widthPt = (bbox.maxX - bbox.minX) * pointPerMm * scale;
-    final heightPt = (bbox.maxY - bbox.minY) * pointPerMm * scale;
-    
-    // Vertical lines
-    for (double x = 0; x <= widthPt; x += gridSpacingPt) {
-      canvas.drawLine(x, 0, x, heightPt);
-    }
-    
-    // Horizontal lines
-    for (double y = 0; y <= heightPt; y += gridSpacingPt) {
-      canvas.drawLine(0, y, widthPt, y);
-    }
   }
 
   /// Build header with project name.

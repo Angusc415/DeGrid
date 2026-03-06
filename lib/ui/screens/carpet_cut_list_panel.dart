@@ -74,7 +74,7 @@ class CarpetCutListPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Theme.of(context).primaryColor.withOpacity(0.1),
+        color: Theme.of(context).primaryColor.withAlpha(26),
         border: Border(
           bottom: BorderSide(
             color: Theme.of(context).dividerColor,
@@ -101,7 +101,7 @@ class CarpetCutListPanel extends StatelessWidget {
           Text(
             'Strip lengths from current layout. Includes trim.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                  color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
                 ),
           ),
           const SizedBox(height: 8),
@@ -123,7 +123,7 @@ class CarpetCutListPanel extends StatelessWidget {
           'No rooms with carpet assigned.\nAssign products in the Rooms tab.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                color: Theme.of(context).textTheme.bodyMedium?.color?.withAlpha(179),
               ),
         ),
       ),
@@ -304,7 +304,7 @@ class _RoomCutListCard extends StatelessWidget {
             Text(
               'Lay: ${layout.layAngleDeg == 0 ? "0° (horizontal)" : "90° (vertical)"} · ${layout.numStrips} strips',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                    color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
                   ),
             ),
             if (onVariantChanged != null && candidates.length > 1) ...[
@@ -331,7 +331,7 @@ class _RoomCutListCard extends StatelessWidget {
               '${layout.totalLinearWithWasteMm != null && layout.totalLinearMm > 0 ? " · Waste: ${((layout.totalLinearWithWasteMm! - layout.totalLinearMm) / layout.totalLinearMm * 100).toStringAsFixed(1)}%" : ""}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 12,
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.9),
+                    color: Theme.of(context).colorScheme.primary.withAlpha(230),
                   ),
             ),
             if (hasSeamOverrides && onResetSeams != null) ...[
@@ -352,7 +352,7 @@ class _RoomCutListCard extends StatelessWidget {
               'Includes trim: ${trimMm.round()} mm each end',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 11,
-                    color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7),
+                    color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
                   ),
             ),
             if (layout.numStrips > 1) ...[
@@ -361,7 +361,7 @@ class _RoomCutListCard extends StatelessWidget {
                 'Seam positions (from ${layout.referenceEdgeLabel}):',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontWeight: FontWeight.w600,
-                      color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.85),
+                      color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(217),
                     ),
               ),
               const SizedBox(height: 2),
@@ -369,7 +369,7 @@ class _RoomCutListCard extends StatelessWidget {
                 _formatSeamPositions(layout),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontSize: 12,
-                      color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                      color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
                     ),
               ),
             ],
@@ -418,7 +418,7 @@ class _RoomCutListCard extends StatelessWidget {
                                 fontSize: 11,
                                 fontStyle: isSliver ? FontStyle.italic : null,
                                 color: isSliver
-                                    ? Theme.of(context).colorScheme.error.withOpacity(0.9)
+                                    ? Theme.of(context).colorScheme.error.withAlpha(230)
                                     : null,
                               ),
                         ),
@@ -455,7 +455,7 @@ class _RoomCutListCard extends StatelessWidget {
         label,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontWeight: FontWeight.w600,
-              color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+              color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
             ),
       ),
     );
@@ -534,7 +534,7 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
           'Roll cut — drag segments to reorder',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.85),
+                color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(217),
               ),
         ),
         const SizedBox(height: 6),
@@ -570,7 +570,7 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
                 '${i + 1}→${_order[i] + 1}: ${UnitConverter.formatDistance(widget.stripLengthsMm[_order[i]], useImperial: widget.useImperial)}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontSize: 11,
-                      color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.9),
+                      color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
                     ),
               ),
           ],
@@ -594,7 +594,7 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
           margin: const EdgeInsets.symmetric(vertical: 2),
           decoration: BoxDecoration(
             color: isHighlight
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.4)
+                ? Theme.of(context).colorScheme.primary.withAlpha(102)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(2),
           ),
@@ -609,8 +609,6 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
     required int stripIndex,
     required double widthPx,
   }) {
-    final len = widget.stripLengthsMm[stripIndex];
-    final label = UnitConverter.formatDistance(len, useImperial: widget.useImperial);
     return LongPressDraggable<int>(
       data: orderIndex,
       feedback: Material(
@@ -621,7 +619,7 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
           height: _barHeight,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
+            color: Theme.of(context).colorScheme.primary.withAlpha(153),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(
               color: Theme.of(context).colorScheme.primary,
@@ -654,10 +652,10 @@ class _RollCutDiagramState extends State<_RollCutDiagram> {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: stripIndex.isEven
-            ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-            : Theme.of(context).colorScheme.primary.withOpacity(0.5),
+            ? Theme.of(context).colorScheme.primary.withAlpha(77)
+            : Theme.of(context).colorScheme.primary.withAlpha(128),
         border: Border.all(
-          color: Theme.of(context).colorScheme.primary.withOpacity(0.7),
+          color: Theme.of(context).colorScheme.primary.withAlpha(179),
           width: 1.5,
         ),
         borderRadius: BorderRadius.circular(3),

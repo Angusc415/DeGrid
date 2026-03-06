@@ -577,10 +577,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     });
   }
 
-  void _toggleCutListExpanded() {
-    setState(() => _planState = _planState?.copyWith(cutListExpanded: !(_planState!.cutListExpanded)) ?? _planState);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -783,7 +779,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
             ),
             boxShadow: [
               BoxShadow(
-                color: theme.shadowColor.withOpacity(0.2),
+                color: theme.shadowColor.withAlpha(51),
                 blurRadius: 6,
                 offset: const Offset(0, 2),
               ),
@@ -905,7 +901,7 @@ class _OffcutsSection extends StatelessWidget {
             'Remaining: ',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.9),
+                  color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
                 ),
           ),
           Expanded(
@@ -1214,8 +1210,8 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
     final fillColor = widget.isSliver
         ? Colors.amber.shade200
         : (widget.piece.stripIndex.isEven
-            ? baseColor.withOpacity(0.5)
-            : baseColor.withOpacity(0.7));
+            ? baseColor.withAlpha(128)
+            : baseColor.withAlpha(179));
     final borderColor = widget.isOverlap
         ? Theme.of(context).colorScheme.error
         : baseColor;
@@ -1250,7 +1246,7 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
                   UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontSize: 10,
-                        color: Theme.of(context).colorScheme.onPrimary.withOpacity(0.9),
+                        color: Theme.of(context).colorScheme.onPrimary.withAlpha(230),
                       ),
                 ),
               ],
@@ -1267,7 +1263,7 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
         color: fillColor,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: borderColor, width: borderWidth),
-        boxShadow: widget.isSliver ? [BoxShadow(color: Colors.amber.withOpacity(0.5), blurRadius: 4)] : null,
+        boxShadow: widget.isSliver ? [BoxShadow(color: Colors.amber.withAlpha(128), blurRadius: 4)] : null,
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1283,7 +1279,7 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
             UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontSize: 10,
-                  color: Theme.of(context).colorScheme.onPrimary.withOpacity(0.9),
+                  color: Theme.of(context).colorScheme.onPrimary.withAlpha(230),
                 ),
           ),
         ],
@@ -1318,81 +1314,6 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
   }
 }
 
-class _UnplacedTray extends StatelessWidget {
-  final List<RollCutPiece> unplaced;
-  final List<CarpetProduct> carpetProducts;
-  final bool useImperial;
-  final void Function(String? cutId) onSelectCut;
-  final String? selectedCutId;
-
-  const _UnplacedTray({
-    required this.unplaced,
-    required this.carpetProducts,
-    required this.useImperial,
-    required this.onSelectCut,
-    this.selectedCutId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
-        border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text(
-              'Unplaced',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-            ),
-          ),
-          if (unplaced.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                child: Text(
-                  'All cuts placed',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
-                ),
-              ),
-            )
-          else
-            Column(
-              children: [
-                for (final c in unplaced)
-                  ListTile(
-                    dense: true,
-                    leading: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: c.fromOffcut ? Colors.teal : _productColor(c.product, carpetProducts),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Theme.of(context).colorScheme.outline.withOpacity(0.5)),
-                      ),
-                    ),
-                    title: Text(c.cutId),
-                    subtitle: Text(
-                      '${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} · ${c.roomName}'
-                      '${c.roomShapeVerticesMm != null ? ' (room shape)' : ''}'
-                      '${c.fromOffcut ? ' · from offcut' : ''}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    selected: selectedCutId == c.cutId,
-                    onTap: () => onSelectCut(c.cutId),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _CutInspector extends StatelessWidget {
   final RollPlanState plan;
   final bool useImperial;
@@ -1414,7 +1335,7 @@ class _CutInspector extends StatelessWidget {
     if (cutId == null) {
       return Container(
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(77),
           border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
         ),
         child: Center(
@@ -1430,7 +1351,7 @@ class _CutInspector extends StatelessWidget {
     final pos = plan.placements[cutId];
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(77),
         border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       padding: const EdgeInsets.all(12),
@@ -1490,122 +1411,6 @@ class _CutInspector extends StatelessWidget {
           SizedBox(width: 90, child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
           Expanded(child: Text(value, style: const TextStyle(fontSize: 12))),
         ],
-      ),
-    );
-  }
-}
-
-class _CutListSection extends StatelessWidget {
-  final RollPlanState plan;
-  final bool useImperial;
-  final bool expanded;
-  final VoidCallback onToggleExpanded;
-  final void Function(String? cutId) onSelectCut;
-  final String? selectedCutId;
-
-  const _CutListSection({
-    required this.plan,
-    required this.useImperial,
-    required this.expanded,
-    required this.onToggleExpanded,
-    required this.onSelectCut,
-    this.selectedCutId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        InkWell(
-          onTap: onToggleExpanded,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                Icon(expanded ? Icons.expand_more : Icons.expand_less),
-                const SizedBox(width: 8),
-                Text('Cut list', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-        ),
-        if (expanded)
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: SingleChildScrollView(
-              child: Table(
-                columnWidths: const {
-                  0: FlexColumnWidth(0.6),
-                  1: FlexColumnWidth(1.2),
-                  2: FlexColumnWidth(0.8),
-                  3: FlexColumnWidth(0.8),
-                  4: FlexColumnWidth(0.6),
-                },
-                children: [
-                  TableRow(
-                    children: [
-                      _th(context, 'ID'),
-                      _th(context, 'Room'),
-                      _th(context, 'Length'),
-                      _th(context, 'Start'),
-                      _th(context, 'Status'),
-                    ],
-                  ),
-                  ...plan.allCuts.map((c) {
-                    final pos = plan.placements[c.cutId];
-                    final status = c.fromOffcut
-                        ? (pos != null ? 'Placed (offcut)' : 'Unplaced (offcut)')
-                        : (pos != null ? 'Placed' : 'Unplaced');
-                    return TableRow(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                          child: GestureDetector(
-                            onTap: () => onSelectCut(c.cutId),
-                            child: Text(c.cutId, style: TextStyle(fontWeight: selectedCutId == c.cutId ? FontWeight.bold : null)),
-                          ),
-                        ),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(c.roomName)),
-                        Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text(UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial))),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Text(
-                            pos != null
-                                ? '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)}, ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}'
-                                : '—',
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Text(
-                            status,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: pos != null ? null : Theme.of(context).colorScheme.error,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  }),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _th(BuildContext context, String label) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
-            ),
       ),
     );
   }
@@ -1742,7 +1547,7 @@ class _RollCutViewState extends State<RollCutView> {
           '${widget.roomName} — ${widget.product.name}',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.9),
+                color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
               ),
         ),
         const SizedBox(height: 4),
@@ -1750,7 +1555,7 @@ class _RollCutViewState extends State<RollCutView> {
           'Roll: ${UnitConverter.formatDistance(_rollWidthMm, useImperial: widget.useImperial)} wide × ${UnitConverter.formatDistance(rollLenMm, useImperial: widget.useImperial)} long. Drag cuts along the roll.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 fontSize: 12,
-                color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7),
+                color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
               ),
         ),
         const SizedBox(height: 12),
@@ -1821,8 +1626,8 @@ class _RollCutViewState extends State<RollCutView> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: cutIndex.isEven
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
-                : Theme.of(context).colorScheme.primary.withOpacity(0.7),
+                ? Theme.of(context).colorScheme.primary.withAlpha(128)
+                : Theme.of(context).colorScheme.primary.withAlpha(179),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5),
           ),

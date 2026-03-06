@@ -79,7 +79,7 @@ class _PlanLengthInputPadState extends State<PlanLengthInputPad> {
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: Colors.black.withAlpha(51),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -130,7 +130,7 @@ class _PlanLengthInputPadState extends State<PlanLengthInputPad> {
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: Colors.black.withAlpha(51),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),

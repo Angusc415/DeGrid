@@ -1,7 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'viewport.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/opening.dart';
@@ -126,73 +125,20 @@ class PlanPainter extends CustomPainter {
         canvas.drawImageRect(m.backgroundImage!, srcRect, destRect, paint);
       }
 
-      // Draw completed rooms (filled polygons with outline) first
-      // Defensive check: ensure m.completedRooms is a valid, iterable list
-      // This handles hot reload issues where the list might become non-iterable or undefined
-      try {
-        // First check if m.completedRooms exists and is not null/undefined
-        if (m.completedRooms == null) {
-          debugPrint('Warning: m.completedRooms is null');
-          // Continue to draw draft room even if m.completedRooms is null
-        } else {
-          // Check if it's actually a list and has items
-          try {
-            final length = m.completedRooms.length;
-            if (length > 0) {
-              // Use indexed iteration as it's more reliable on web
-              for (int i = 0; i < length; i++) {
-                try {
-                  final room = m.completedRooms[i];
-                  if (room != null && room.vertices.isNotEmpty) {
-                    _drawRoom(
-                      canvas,
-                      room,
-                      roomIndex: i,
-                      isDraft: false,
-                      isSelected: i == m.selectedRoomIndex,
-                      hasCarpet: m.roomCarpetAssignments.containsKey(i),
-                      stripLayout: _getStripLayoutForRoom(i, room),
-                    );
-                    _drawRoomVertices(canvas, room, roomIndex: i);
-                  }
-                } catch (e) {
-                  // Skip invalid rooms during hot reload
-                  debugPrint('Error drawing room at index $i: $e');
-                }
-              }
-            }
-          } catch (e) {
-            // If we can't access length, try for-in as fallback
-            debugPrint('Indexed access failed, trying for-in: $e');
-            try {
-              int index = 0;
-              for (final room in m.completedRooms) {
-                try {
-                    if (room != null && room.vertices.isNotEmpty) {
-                      _drawRoom(
-                        canvas,
-                        room,
-                        roomIndex: index,
-                        isDraft: false,
-                        isSelected: index == m.selectedRoomIndex,
-                        hasCarpet: m.roomCarpetAssignments.containsKey(index),
-                        stripLayout: _getStripLayoutForRoom(index, room),
-                      );
-                      _drawRoomVertices(canvas, room, roomIndex: index);
-                      index++;
-                    }
-                } catch (e) {
-                  debugPrint('Error drawing room: $e');
-                }
-              }
-            } catch (e2) {
-              debugPrint('For-in also failed: $e2');
-            }
-          }
-        }
-      } catch (e) {
-        // Handle case where m.completedRooms is not accessible at all (hot reload issue)
-        debugPrint('Error accessing m.completedRooms: $e');
+      // Draw completed rooms (filled polygons with outline) first.
+      for (int i = 0; i < m.completedRooms.length; i++) {
+        final room = m.completedRooms[i];
+        if (room.vertices.isEmpty) continue;
+        _drawRoom(
+          canvas,
+          room,
+          roomIndex: i,
+          isDraft: false,
+          isSelected: i == m.selectedRoomIndex,
+          hasCarpet: m.roomCarpetAssignments.containsKey(i),
+          stripLayout: _getStripLayoutForRoom(i, room),
+        );
+        _drawRoomVertices(canvas, room, roomIndex: i);
       }
 
       // Draw door-edge interaction points (gap start/end) so users can snap or start drawing from them
@@ -284,7 +230,7 @@ class PlanPainter extends CustomPainter {
       debugPrint('Stack trace: $stackTrace');
       
       // Draw a simple error indicator
-      final errorPaint = Paint()..color = Colors.red.withOpacity(0.3);
+      final errorPaint = Paint()..color = Colors.red.withAlpha(77);
       canvas.drawRect(Offset.zero & size, errorPaint);
       
       // Try to draw text (might fail, but worth trying)
@@ -333,7 +279,7 @@ class PlanPainter extends CustomPainter {
     final g0 = m.vp.worldToScreen(gapStart);
     final g1 = m.vp.worldToScreen(gapEnd);
     final gapPaint = Paint()
-      ..color = Colors.orange.withOpacity(0.5)
+      ..color = Colors.orange.withAlpha(128)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
     canvas.drawLine(g0, g1, gapPaint);
@@ -383,7 +329,7 @@ class PlanPainter extends CustomPainter {
     const maxShaftLenMm = 320.0; // cap arrow length so it doesn't span the whole room
 
     final linePaint = Paint()
-      ..color = Colors.brown.shade800.withOpacity(0.9)
+      ..color = Colors.brown.shade800.withAlpha(230)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.8
       ..strokeCap = StrokeCap.round;
@@ -500,7 +446,6 @@ class PlanPainter extends CustomPainter {
       centerWorld.dx + dir.dx * headBaseT,
       centerWorld.dy + dir.dy * headBaseT,
     );
-    final headBaseScreen = m.vp.worldToScreen(headBaseWorld);
     final perp = Offset(-dir.dy, dir.dx); // rotate 90°
     final perpUnitLen = perp.distance;
     if (perpUnitLen <= 1e-6) return;
@@ -515,60 +460,6 @@ class PlanPainter extends CustomPainter {
     );
     canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), linePaint);
     canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), linePaint);
-  }
-
-  /// Clip segment [p1]-[p2] to polygon [verts]; returns 0–2 sub-segments (as t0,t1 in [0,1]) that lie inside the polygon.
-  List<({double t0, double t1})> _clipSegmentToPolygon(Offset p1, Offset p2, List<Offset> verts) {
-    if (verts.length < 3) return [];
-    final d = p2 - p1;
-    final List<double> tList = [];
-    for (int i = 0; i < verts.length; i++) {
-      final a = verts[i];
-      final b = verts[(i + 1) % verts.length];
-      final e = b - a;
-      final c = a - p1;
-      final denom = d.dx * e.dy - d.dy * e.dx;
-      if (denom.abs() < 1e-9) continue;
-      final t = (c.dx * e.dy - c.dy * e.dx) / denom;
-      final u = (c.dx * d.dy - c.dy * d.dx) / denom;
-      if (t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) {
-        tList.add(t.clamp(0.0, 1.0));
-      }
-    }
-    if (_pointInPolygon(p1, verts)) tList.add(0.0);
-    if (_pointInPolygon(p2, verts)) tList.add(1.0);
-    tList.sort();
-    // Deduplicate (tolerance)
-    double? prev;
-    final unique = <double>[];
-    for (final t in tList) {
-      if (prev == null || (t - prev!).abs() > 1e-6) {
-        unique.add(t);
-        prev = t;
-      }
-    }
-    final result = <({double t0, double t1})>[];
-    for (int i = 0; i < unique.length - 1; i++) {
-      final t0 = unique[i];
-      final t1 = unique[i + 1];
-      final mid = Offset(p1.dx + (t0 + t1) / 2 * d.dx, p1.dy + (t0 + t1) / 2 * d.dy);
-      if (_pointInPolygon(mid, verts)) result.add((t0: t0, t1: t1));
-    }
-    return result;
-  }
-
-  bool _pointInPolygon(Offset point, List<Offset> polygon) {
-    if (polygon.length < 3) return false;
-    bool inside = false;
-    for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      final xi = polygon[i].dx, yi = polygon[i].dy;
-      final xj = polygon[j].dx, yj = polygon[j].dy;
-      if (((yi > point.dy) != (yj > point.dy)) &&
-          (point.dx < (xj - xi) * (point.dy - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
-    }
-    return inside;
   }
 
   void _drawCarpetStrips(Canvas canvas, Room room, StripLayout layout) {
@@ -586,7 +477,7 @@ class PlanPainter extends CustomPainter {
 
     // Blue dotted line = end of each carpet strip width
     final stripPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.8)
+      ..color = Colors.blue.withAlpha(204)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
@@ -630,7 +521,9 @@ class PlanPainter extends CustomPainter {
     final productIndex = m.roomCarpetAssignments[roomIndex];
     if (productIndex == null ||
         productIndex < 0 ||
-        productIndex >= m.carpetProducts.length) return null;
+        productIndex >= m.carpetProducts.length) {
+      return null;
+    }
     final product = m.carpetProducts[productIndex];
     if (product.rollWidthMm <= 0) return null;
     final seamOverride = m.roomCarpetSeamOverrides[roomIndex];
@@ -681,8 +574,8 @@ class PlanPainter extends CustomPainter {
       final fillColor = (productIndex != null &&
               productIndex >= 0 &&
               productIndex < m.carpetProducts.length)
-          ? _carpetProductPalette[productIndex % _carpetProductPalette.length].withOpacity(0.35)
-          : Colors.brown.shade100.withOpacity(0.35);
+          ? _carpetProductPalette[productIndex % _carpetProductPalette.length].withAlpha(89)
+          : Colors.brown.shade100.withAlpha(89);
       final carpetFill = Paint()
         ..color = fillColor
         ..style = PaintingStyle.fill;
@@ -734,7 +627,7 @@ class PlanPainter extends CustomPainter {
     }
 
     // Helper: project point [p] onto edge [a]–[b] and return param t in [0,1].
-    double _projectParam(Offset a, Offset b, Offset p) {
+    double projectParam(Offset a, Offset b, Offset p) {
       final ab = b - a;
       final abLen2 = ab.dx * ab.dx + ab.dy * ab.dy;
       if (abLen2 <= 0) return 0.0;
@@ -744,7 +637,7 @@ class PlanPainter extends CustomPainter {
     }
 
     // Helper: true when both endpoints of [gap] lie on edge [v0]–[v1].
-    bool _edgeHasGap(Offset v0, Offset v1, ({Offset start, Offset end, bool isDoor}) gap) {
+    bool edgeHasGap(Offset v0, Offset v1, ({Offset start, Offset end, bool isDoor}) gap) {
       const tolMm = 0.5;
       final d0 = _distancePointToSegment(gap.start, v0, v1);
       final d1 = _distancePointToSegment(gap.end, v0, v1);
@@ -764,7 +657,7 @@ class PlanPainter extends CustomPainter {
       // Find any door gap that lies along this edge (could belong to this room or a neighbour).
       ({Offset start, Offset end, bool isDoor})? matchedGap;
       for (final g in doorGaps) {
-        if (_edgeHasGap(v0, v1, g)) {
+        if (edgeHasGap(v0, v1, g)) {
           matchedGap = g;
           break;
         }
@@ -776,8 +669,8 @@ class PlanPainter extends CustomPainter {
       }
 
       // Project gap endpoints onto this edge so we can split the stroke at the doorway.
-      final tA = _projectParam(v0, v1, matchedGap.start);
-      final tB = _projectParam(v0, v1, matchedGap.end);
+      final tA = projectParam(v0, v1, matchedGap.start);
+      final tB = projectParam(v0, v1, matchedGap.end);
       final t0 = math.min(tA, tB);
       final t1 = math.max(tA, tB);
 
@@ -873,63 +766,11 @@ class PlanPainter extends CustomPainter {
     _drawNameButton(canvas, center);
   }
   
-  /// Draw area label with prominent background for better visibility.
-  void _drawAreaLabel(Canvas canvas, Offset center, String areaText, {double offsetY = 0}) {
-    final areaPainter = TextPainter(
-      text: TextSpan(
-        text: areaText,
-        style: TextStyle(
-          color: Colors.blue.shade700,
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
-    );
-    
-    areaPainter.layout();
-    
-    // Draw background box for better readability
-    final padding = 6.0;
-    final boxRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(
-        center.dx - areaPainter.width / 2 - padding,
-        center.dy + offsetY - areaPainter.height / 2 - padding,
-        areaPainter.width + padding * 2,
-        areaPainter.height + padding * 2,
-      ),
-      const Radius.circular(4),
-    );
-    
-    // Draw white background with slight transparency
-    final backgroundPaint = Paint()
-      ..color = Colors.white.withOpacity(0.9)
-      ..style = PaintingStyle.fill;
-    canvas.drawRRect(boxRect, backgroundPaint);
-    
-    // Draw border
-    final borderPaint = Paint()
-      ..color = Colors.blue.shade300
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRRect(boxRect, borderPaint);
-    
-    // Draw area text
-    areaPainter.paint(
-      canvas,
-      Offset(
-        center.dx - areaPainter.width / 2,
-        center.dy + offsetY - areaPainter.height / 2,
-      ),
-    );
-  }
-  
   /// Draw a clickable button icon for naming/renaming the room.
   void _drawNameButton(Canvas canvas, Offset center) {
     // Draw button background circle
     final buttonPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.2)
+      ..color = Colors.blue.withAlpha(51)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, 20, buttonPaint);
     
@@ -1019,7 +860,7 @@ class PlanPainter extends CustomPainter {
       final radius = isSelected ? 8.0 : (isHovered ? 7.0 : 6.0);
       final color = isSelected 
           ? Colors.orange 
-          : (isHovered ? Colors.orange.withOpacity(0.7) : Colors.blue);
+          : (isHovered ? Colors.orange.withAlpha(179) : Colors.blue);
       
       // Outer ring for better visibility
       canvas.drawCircle(
@@ -1094,7 +935,7 @@ class PlanPainter extends CustomPainter {
           color: teal.shade700,
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          backgroundColor: Colors.white.withOpacity(0.9),
+          backgroundColor: Colors.white.withAlpha(230),
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1146,7 +987,7 @@ class PlanPainter extends CustomPainter {
     final end = m.vp.worldToScreen(endWorld);
 
     final paint = Paint()
-      ..color = Colors.purpleAccent.withOpacity(0.8)
+      ..color = Colors.purpleAccent.withAlpha(204)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
@@ -1171,8 +1012,8 @@ class PlanPainter extends CustomPainter {
     final dimensionLineStart = midpoint + perp * offsetDistance;
     final dimensionLineEnd = midpoint - perp * offsetDistance;
     
-    final lineColor = isTemporary ? Colors.teal : Colors.grey.withOpacity(0.6);
-    final extColor = isTemporary ? Colors.teal.withOpacity(0.6) : Colors.grey.withOpacity(0.4);
+    final lineColor = isTemporary ? Colors.teal : Colors.grey.withAlpha(153);
+    final extColor = isTemporary ? Colors.teal.withAlpha(153) : Colors.grey.withAlpha(102);
     final useDashed = isTemporary || isDashed;
     
     // Draw dimension line (perpendicular to wall)
@@ -1210,7 +1051,7 @@ class PlanPainter extends CustomPainter {
           color: isTemporary ? Colors.teal.shade700 : Colors.grey.shade700,
           fontSize: 12,
           fontWeight: FontWeight.w500,
-          backgroundColor: Colors.white.withOpacity(0.8),
+          backgroundColor: Colors.white.withAlpha(204),
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1257,8 +1098,12 @@ class PlanPainter extends CustomPainter {
     
     // Sweep from angle1 to angle2 (normalized to (-π, π]) so the arc connects both lines exactly
     double sweep = angle2 - angle1;
-    while (sweep > math.pi) sweep -= 2 * math.pi;
-    while (sweep < -math.pi) sweep += 2 * math.pi;
+    while (sweep > math.pi) {
+      sweep -= 2 * math.pi;
+    }
+    while (sweep < -math.pi) {
+      sweep += 2 * math.pi;
+    }
     
     final startAngle = angle1;
     
@@ -1270,7 +1115,7 @@ class PlanPainter extends CustomPainter {
     
     // Draw arc - start at angle1, sweep the correct amount
     final arcPaint = Paint()
-      ..color = Colors.blue.shade600.withOpacity(0.7)
+      ..color = Colors.blue.shade600.withAlpha(179)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
@@ -1279,7 +1124,7 @@ class PlanPainter extends CustomPainter {
     // Draw small lines from vertex to the actual line directions (at arc radius)
     // These lines connect the vertex to where the arc should start/end on the actual lines
     final linePaint = Paint()
-      ..color = Colors.blue.shade600.withOpacity(0.5)
+      ..color = Colors.blue.shade600.withAlpha(128)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     // Line 1: from vertex along dir1 (first line direction)
@@ -1326,7 +1171,7 @@ class PlanPainter extends CustomPainter {
           color: Colors.blue.shade800,
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          backgroundColor: Colors.white.withOpacity(0.95),
+          backgroundColor: Colors.white.withAlpha(242),
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1337,7 +1182,7 @@ class PlanPainter extends CustomPainter {
     final w = textPainter.width + pad * 2;
     final h = textPainter.height + 2;
     final rect = Rect.fromCenter(center: pos, width: w, height: h);
-    canvas.drawRect(rect, Paint()..color = Colors.white.withOpacity(0.95));
+    canvas.drawRect(rect, Paint()..color = Colors.white.withAlpha(242));
     textPainter.paint(canvas, pos - Offset(textPainter.width / 2, textPainter.height / 2) + const Offset(0, 1));
   }
 
@@ -1350,7 +1195,7 @@ class PlanPainter extends CustomPainter {
     // Draw lines between vertices with measurements
     if (vertices.length > 1) {
       final linePaint = Paint()
-        ..color = Colors.blue.shade700.withOpacity(0.85)
+        ..color = Colors.blue.shade700.withAlpha(217)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.5;
 
@@ -1380,8 +1225,12 @@ class PlanPainter extends CustomPainter {
           final angle1 = math.atan2(dir1.dy, dir1.dx);
           final angle2 = math.atan2(dir2.dy, dir2.dx);
           double diffRad = angle2 - angle1;
-          while (diffRad < 0) diffRad += 2 * math.pi;
-          while (diffRad >= 2 * math.pi) diffRad -= 2 * math.pi;
+          while (diffRad < 0) {
+            diffRad += 2 * math.pi;
+          }
+          while (diffRad >= 2 * math.pi) {
+            diffRad -= 2 * math.pi;
+          }
           double angleDeg = diffRad * (180.0 / math.pi);
           if (angleDeg > 180.0) angleDeg = 360.0 - angleDeg;
           // Display complementary angle (e.g. 9° → 171°)
@@ -1399,7 +1248,7 @@ class PlanPainter extends CustomPainter {
       final distanceMm = (m.hoverPositionWorldMm! - lastWorld).distance;
       
       final previewPaint = Paint()
-        ..color = Colors.blue.shade700.withOpacity(0.9)
+        ..color = Colors.blue.shade700.withAlpha(230)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.5
         ..strokeCap = StrokeCap.round;
@@ -1432,7 +1281,7 @@ class PlanPainter extends CustomPainter {
               color: Colors.blue.shade700,
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              backgroundColor: Colors.white.withOpacity(0.9),
+              backgroundColor: Colors.white.withAlpha(230),
             ),
           ),
           textDirection: TextDirection.ltr,
@@ -1456,13 +1305,13 @@ class PlanPainter extends CustomPainter {
       // Draw visual feedback for snapped grid point
       // Outer highlight circle (subtle)
       final gridHighlightPaint = Paint()
-        ..color = Colors.blue.withOpacity(0.2)
+        ..color = Colors.blue.withAlpha(51)
         ..style = PaintingStyle.fill;
       canvas.drawCircle(hoverScreen, 8, gridHighlightPaint);
       
       // Inner snap indicator (more visible)
       final snapIndicatorPaint = Paint()
-        ..color = Colors.blue.withOpacity(0.7)
+        ..color = Colors.blue.withAlpha(179)
         ..style = PaintingStyle.fill;
       canvas.drawCircle(hoverScreen, 4, snapIndicatorPaint);
     }
@@ -1479,14 +1328,14 @@ class PlanPainter extends CustomPainter {
     }
 
     // Indicator for "drawing from" vertex: ring + slight emphasis
-    if (vertices.length >= 1) {
+    if (vertices.isNotEmpty) {
       final fromScreen = m.vp.worldToScreen(vertices[drawingFromIndex]);
       final ringPaint = Paint()
         ..color = Colors.orange
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3;
       canvas.drawCircle(fromScreen, 9, ringPaint);
-      final innerPaint = Paint()..color = Colors.orange.withOpacity(0.3);
+      final innerPaint = Paint()..color = Colors.orange.withAlpha(77);
       canvas.drawCircle(fromScreen, 7, innerPaint);
     }
   }
@@ -1520,7 +1369,7 @@ class PlanPainter extends CustomPainter {
     double startY = (minY / gridMm).floor() * gridMm;
 
     final gridPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.35)
+      ..color = Colors.grey.withAlpha(89)
       ..strokeWidth = strokeWidth
       ..style = PaintingStyle.stroke;
 
@@ -1536,23 +1385,6 @@ class PlanPainter extends CustomPainter {
     }
   }
   
-  /// Format grid spacing as a readable label (e.g., "1 cm", "1 m")
-  String _formatGridLabel(double gridMm) {
-    if (gridMm >= 10000) {
-      return '${(gridMm / 1000).toStringAsFixed(0)} m';
-    } else if (gridMm >= 1000) {
-      return '${(gridMm / 1000).toStringAsFixed(1)} m';
-    } else if (gridMm >= 100) {
-      return '${(gridMm / 10).toStringAsFixed(0)} cm';
-    } else if (gridMm >= 10) {
-      return '${gridMm.toStringAsFixed(0)} cm';
-    } else if (gridMm >= 1) {
-      return '${gridMm.toStringAsFixed(0)} mm';
-    } else {
-      return '${(gridMm * 10).toStringAsFixed(0)} mm';
-    }
-  }
-
   @override
   bool shouldRepaint(covariant PlanPainter oldDelegate) => true;
 }

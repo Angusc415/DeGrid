@@ -507,8 +507,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           margin: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
           decoration: BoxDecoration(
             color: isHovering
-                ? Colors.amber.withOpacity(0.2)
-                : Colors.grey.withOpacity(0.05),
+                ? Colors.amber.withAlpha(51)
+                : Colors.grey.withAlpha(13),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: isHovering ? Colors.amber : Colors.transparent,
@@ -620,7 +620,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             child: Container(
               decoration: isHovering
                   ? BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
+                      color: Colors.blue.withAlpha(26),
                       borderRadius: BorderRadius.circular(8),
                     )
                   : null,
@@ -913,8 +913,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: isHovering
-                                  ? Colors.blue.withOpacity(0.15)
-                                  : Colors.grey.withOpacity(0.05),
+                                  ? Colors.blue.withAlpha(38)
+                                  : Colors.grey.withAlpha(13),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: isHovering ? Colors.blue : Colors.transparent,

@@ -37,9 +37,7 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
   void initState() {
     super.initState();
     _wallWidthMm = widget.initialWallWidthMm.clamp(10.0, 500.0);
-    _doorThicknessMm = widget.initialDoorThicknessMm != null
-        ? widget.initialDoorThicknessMm!.clamp(10.0, 500.0)
-        : null;
+    _doorThicknessMm = widget.initialDoorThicknessMm?.clamp(10.0, 500.0);
     _useImperial = widget.initialUseImperial;
     _showGrid = widget.initialShowGrid;
   }
