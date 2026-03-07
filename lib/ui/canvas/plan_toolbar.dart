@@ -627,11 +627,16 @@ class _ZoomMenuButtonState extends State<_ZoomMenuButton> {
   }
 
   void _hideMenu() {
+    if (!_isMenuOpen) return;
     _overlayEntry?.remove();
     _overlayEntry = null;
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _isMenuOpen = false;
+      });
+    } else {
       _isMenuOpen = false;
-    });
+    }
   }
 
   Widget _buildMenuItem({
@@ -656,7 +661,8 @@ class _ZoomMenuButtonState extends State<_ZoomMenuButton> {
 
   @override
   void dispose() {
-    _hideMenu();
+    _overlayEntry?.remove();
+    _overlayEntry = null;
     super.dispose();
   }
 

@@ -1003,15 +1003,18 @@ class PlanCanvasState extends State<PlanCanvas> {
         // Second tap on same room: deselect
         if (_selectedRoomIndex == clickedRoomIndex) {
           _pendingSelectedVertex = null;
-          setState(() {
-            _selectedVertex = null;
-            _selectedRoomIndex = null;
-            _isEditingVertex = false;
-            _showRoomActionsMenu = false;
-            _showCarpetDirectionPicker = false;
-          });
+          if (mounted) {
+            setState(() {
+              _selectedVertex = null;
+              _selectedRoomIndex = null;
+              _isEditingVertex = false;
+              _showRoomActionsMenu = false;
+              _showCarpetDirectionPicker = false;
+            });
+          }
           // Notify parent so cut list / roll sheet clear their selection-based filters.
-          widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+          final newSelected = null;
+          widget.onRoomsChanged?.call(_completedRooms, _useImperial, newSelected);
           return;
         }
         final room = _completedRooms[clickedRoomIndex];
@@ -1033,15 +1036,17 @@ class PlanCanvasState extends State<PlanCanvas> {
       }
 
       _pendingSelectedVertex = null;
-      setState(() {
-        _selectedRoomIndex = null;
-        _selectedVertex = null;
-        _isEditingVertex = false;
-        _showRoomActionsMenu = false;
-        _showCarpetDirectionPicker = false;
-      });
+      if (mounted) {
+        setState(() {
+          _selectedRoomIndex = null;
+          _selectedVertex = null;
+          _isEditingVertex = false;
+          _showRoomActionsMenu = false;
+          _showCarpetDirectionPicker = false;
+        });
+      }
       // Notify parent so selection-based filters reset when tapping empty space.
-      widget.onRoomsChanged?.call(_completedRooms, _useImperial, _selectedRoomIndex);
+      widget.onRoomsChanged?.call(_completedRooms, _useImperial, null);
     }
   }
 
@@ -3993,7 +3998,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                     ),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<double>(
-                      initialValue: widthMm,
+                      value: widthMm,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
