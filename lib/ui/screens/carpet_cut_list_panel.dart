@@ -17,6 +17,8 @@ class CarpetCutListPanel extends StatelessWidget {
   final bool useImperial;
   /// When set, rooms with overrides show a "Reset to auto" button.
   final Map<int, List<double>> roomCarpetSeamOverrides;
+  /// When a room has seam overrides, locked strip direction (0 or 90).
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final void Function(int roomIndex)? onResetSeamsForRoom;
   /// Room index -> layout variant (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
   final Map<int, int> roomCarpetLayoutVariantIndex;
@@ -30,6 +32,7 @@ class CarpetCutListPanel extends StatelessWidget {
     required this.openings,
     this.useImperial = false,
     this.roomCarpetSeamOverrides = const {},
+    this.roomCarpetSeamLayDirectionDeg = const {},
     this.onResetSeamsForRoom,
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
@@ -143,6 +146,8 @@ class CarpetCutListPanel extends StatelessWidget {
 
       final seamOverride = roomCarpetSeamOverrides[roomIndex];
       final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+      final layDirectionDeg = roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
       final opts = CarpetLayoutOptions.forRoom(
         roomIndex: roomIndex,
         minStripWidthMm: product.minStripWidthMm ?? 100,
@@ -151,7 +156,7 @@ class CarpetCutListPanel extends StatelessWidget {
         wasteAllowancePercent: 5,
         openings: openings,
         seamPositionsOverrideMm: seamOverride,
-        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
+        layDirectionDeg: layDirectionDeg,
       );
       final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
       final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];
@@ -193,6 +198,8 @@ class CarpetCutListPanel extends StatelessWidget {
 
       final seamOverride = roomCarpetSeamOverrides[roomIndex];
       final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+      final layDirectionDeg = roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
       final opts = CarpetLayoutOptions.forRoom(
         roomIndex: roomIndex,
         minStripWidthMm: product.minStripWidthMm ?? 100,
@@ -201,7 +208,7 @@ class CarpetCutListPanel extends StatelessWidget {
         wasteAllowancePercent: 5,
         openings: openings,
         seamPositionsOverrideMm: seamOverride,
-        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
+        layDirectionDeg: layDirectionDeg,
       );
       final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
       final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];

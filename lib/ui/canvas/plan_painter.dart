@@ -44,6 +44,10 @@ class PlanPaintModel {
   final Map<int, int> roomCarpetAssignments;
   final List<CarpetProduct> carpetProducts;
   final Map<int, List<double>> roomCarpetSeamOverrides;
+  /// When a room has seam overrides, lock strip direction to this (0 or 90). Empty if not locked.
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
+  /// Per-room layout variant: 0 = Auto, 1 = 0° (horizontal strips), 2 = 90° (vertical strips).
+  final Map<int, int> roomCarpetLayoutVariantIndex;
   /// Optional project-level door thickness in millimeters (used when drawing doors).
   final double? doorThicknessMm;
 
@@ -78,6 +82,8 @@ class PlanPaintModel {
     Map<int, int>? roomCarpetAssignments,
     List<CarpetProduct>? carpetProducts,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    Map<int, double>? roomCarpetSeamLayDirectionDeg,
+    Map<int, int>? roomCarpetLayoutVariantIndex,
     this.doorThicknessMm,
   })  : completedRooms = completedRooms ?? [],
         measurePointsWorld = measurePointsWorld ?? [],
@@ -85,7 +91,9 @@ class PlanPaintModel {
         openings = openings ?? [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
         carpetProducts = carpetProducts ?? const [],
-        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {};
+        roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {},
+        roomCarpetSeamLayDirectionDeg = roomCarpetSeamLayDirectionDeg ?? const {},
+        roomCarpetLayoutVariantIndex = roomCarpetLayoutVariantIndex ?? const {};
 }
 
 /// Custom painter for the plan canvas (rooms, draft, grid, dimensions, etc.).
@@ -517,6 +525,11 @@ class PlanPainter extends CustomPainter {
     return (p - proj).distance;
   }
 
+  /// Lay direction from variant index: 0 = auto (null), 1 = 0°, 2 = 90°.
+  static double? _layDirectionDegFromVariant(int variantIndex) {
+    return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
+  }
+
   StripLayout? _getStripLayoutForRoom(int roomIndex, Room room) {
     final productIndex = m.roomCarpetAssignments[roomIndex];
     if (productIndex == null ||
@@ -527,7 +540,10 @@ class PlanPainter extends CustomPainter {
     final product = m.carpetProducts[productIndex];
     if (product.rollWidthMm <= 0) return null;
     final seamOverride = m.roomCarpetSeamOverrides[roomIndex];
+    final variantIndex = m.roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+    final layDirectionDeg = m.roomCarpetSeamLayDirectionDeg[roomIndex] ?? _layDirectionDegFromVariant(variantIndex);
     final opts = CarpetLayoutOptions(
+      layDirectionDeg: layDirectionDeg,
       minStripWidthMm: product.minStripWidthMm ?? 100,
       trimAllowanceMm: product.trimAllowanceMm ?? 75,
       patternRepeatMm: product.patternRepeatMm ?? 0,
