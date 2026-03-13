@@ -3,269 +3,10 @@ import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
+import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
 import '../../core/units/unit_converter.dart';
 import 'carpet_cut_list_panel.dart';
-
-// --- Roll plan data (visual packing board) ---
-
-/// A single cut piece: one strip for a room. Identified by cutId (e.g. A1, B2).
-class RollCutPiece {
-  final String cutId;
-  final int roomIndex;
-  final String roomName;
-  final int rollLaneIndex; // which roll lane this cut belongs to (same room+product)
-  final CarpetProduct product;
-  final int stripIndex;
-  final double lengthMm;
-  final double trimMm;
-  final double breadthMm; // strip width
-  final bool isSliver;
-  final double? patternRepeatMm;
-  /// True when this cut is planned to be taken from an offcut (remaining piece) rather than fresh roll.
-  final bool fromOffcut;
-  /// Roll index the offcut comes from, when [fromOffcut] is true.
-  final int? sourceOffcutRollIndex;
-  /// Room polygon in mm for single-piece template cuts. Null for strip cuts.
-  final List<Offset>? roomShapeVerticesMm;
-  /// Lay direction for single-piece: true = strips run along x. Used to transform room shape.
-  final bool? layAlongX;
-
-  const RollCutPiece({
-    required this.cutId,
-    required this.roomIndex,
-    required this.roomName,
-    required this.rollLaneIndex,
-    required this.product,
-    required this.stripIndex,
-    required this.lengthMm,
-    required this.trimMm,
-    required this.breadthMm,
-    required this.isSliver,
-    this.fromOffcut = false,
-    this.sourceOffcutRollIndex,
-    this.patternRepeatMm,
-    this.roomShapeVerticesMm,
-    this.layAlongX,
-  });
-
-  RollCutPiece copyWith({
-    String? cutId,
-    int? roomIndex,
-    String? roomName,
-    int? rollLaneIndex,
-    CarpetProduct? product,
-    int? stripIndex,
-    double? lengthMm,
-    double? trimMm,
-    double? breadthMm,
-    bool? isSliver,
-    double? patternRepeatMm,
-    bool? fromOffcut,
-    int? sourceOffcutRollIndex,
-    List<Offset>? roomShapeVerticesMm,
-    bool? layAlongX,
-  }) {
-    return RollCutPiece(
-      cutId: cutId ?? this.cutId,
-      roomIndex: roomIndex ?? this.roomIndex,
-      roomName: roomName ?? this.roomName,
-      rollLaneIndex: rollLaneIndex ?? this.rollLaneIndex,
-      product: product ?? this.product,
-      stripIndex: stripIndex ?? this.stripIndex,
-      lengthMm: lengthMm ?? this.lengthMm,
-      trimMm: trimMm ?? this.trimMm,
-      breadthMm: breadthMm ?? this.breadthMm,
-      isSliver: isSliver ?? this.isSliver,
-      patternRepeatMm: patternRepeatMm ?? this.patternRepeatMm,
-      fromOffcut: fromOffcut ?? this.fromOffcut,
-      sourceOffcutRollIndex: sourceOffcutRollIndex ?? this.sourceOffcutRollIndex,
-      roomShapeVerticesMm: roomShapeVerticesMm ?? this.roomShapeVerticesMm,
-      layAlongX: layAlongX ?? this.layAlongX,
-    );
-  }
-}
-
-/// One roll lane on the board. Single roll = one lane for all rooms' cuts.
-class RollLaneData {
-  final int rollIndex;
-  final Room? room; // null for combined roll
-  final CarpetProduct product;
-  final StripLayout? layout; // null for combined; used only for roll length hint
-  /// Total linear mm of all cuts on this roll (for default length when no product length).
-  final double totalLinearMm;
-
-  RollLaneData({
-    required this.rollIndex,
-    this.room,
-    required this.product,
-    this.layout,
-    required this.totalLinearMm,
-  });
-
-  double get rollWidthMm => product.rollWidthMm > 0 ? product.rollWidthMm : 4000;
-  /// Length of the roll (along the roll) in mm. Used as the horizontal scale so cuts are shown to scale.
-  /// When product has no roll length, use at least the roll width (e.g. 3660mm) so the bar represents a real roll.
-  double get rollLengthMm {
-    if (product.rollLengthM != null && product.rollLengthM! > 0) {
-      return product.rollLengthM! * 1000;
-    }
-    final minLength = rollWidthMm; // e.g. 3660mm – roll is at least as long as it is wide
-    return (totalLinearMm * 1.2).clamp(minLength, double.infinity);
-  }
-}
-
-/// 2D placement on the roll: (alongMm, perpMm). Along = roll length axis, perp = roll width axis.
-typedef RollCutPlacement = Offset;
-
-/// Remaining piece on a roll lane after placed cuts (tail from end of last cut to end of roll).
-class RollOffcut {
-  final int rollIndex;
-  final double startAlongMm;
-  final double lengthMm;
-  final double breadthMm;
-
-  const RollOffcut({
-    required this.rollIndex,
-    required this.startAlongMm,
-    required this.lengthMm,
-    required this.breadthMm,
-  });
-}
-
-/// State for the roll planning board: all cuts, lanes, placements, selection.
-class RollPlanState {
-  final List<RollCutPiece> allCuts;
-  final List<RollLaneData> lanes;
-  /// cutId -> 2D position (dx = alongMm, dy = perpMm). Absent = unplaced.
-  final Map<String, RollCutPlacement> placements;
-  final String? selectedCutId;
-  final bool cutListExpanded;
-  /// Sum of layout cost (material + seam + sliver) for all rooms, for summary display.
-  final double totalScoreCostMm;
-
-  const RollPlanState({
-    required this.allCuts,
-    required this.lanes,
-    required this.placements,
-    this.selectedCutId,
-    this.cutListExpanded = true,
-    this.totalScoreCostMm = 0,
-  });
-
-  List<RollCutPiece> get unplacedCuts =>
-      allCuts.where((c) => !placements.containsKey(c.cutId)).toList();
-
-  List<RollCutPiece> placedCutsOnLane(int rollIndex) {
-    return allCuts
-        .where((c) => c.rollLaneIndex == rollIndex && placements.containsKey(c.cutId))
-        .toList()
-      ..sort((a, b) {
-        final pa = placements[a.cutId]!;
-        final pb = placements[b.cutId]!;
-        final cmp = pa.dx.compareTo(pb.dx);
-        return cmp != 0 ? cmp : pa.dy.compareTo(pb.dy);
-      });
-  }
-
-  double totalLinearMm() =>
-      allCuts.fold<double>(0, (s, c) => s + c.lengthMm);
-
-  double wasteMmForLane(int rollIndex) {
-    final placed = placedCutsOnLane(rollIndex);
-    if (placed.isEmpty) return 0;
-    final lane = lanes[rollIndex];
-    final rollArea = lane.rollLengthMm * lane.rollWidthMm;
-    final usedArea = placed.fold<double>(0, (s, c) => s + c.lengthMm * c.breadthMm);
-    return ((rollArea - usedArea) / lane.rollWidthMm).clamp(0, double.infinity);
-  }
-
-  /// Offcuts (remaining tail) per lane: from end of rightmost cut to end of roll, full width.
-  List<RollOffcut> offcuts() {
-    final out = <RollOffcut>[];
-    for (final lane in lanes) {
-      final placed = placedCutsOnLane(lane.rollIndex);
-      final rollWidth = lane.rollWidthMm;
-      final endAlong = placed.isEmpty
-          ? 0.0
-          : placed.fold<double>(0, (m, c) {
-              final e = placements[c.cutId]!.dx + c.lengthMm;
-              return e > m ? e : m;
-            });
-      final tailLength = (lane.rollLengthMm - endAlong).clamp(0.0, double.infinity);
-      if (tailLength > 0) {
-        out.add(RollOffcut(
-          rollIndex: lane.rollIndex,
-          startAlongMm: endAlong,
-          lengthMm: tailLength,
-          breadthMm: rollWidth,
-        ));
-      }
-    }
-    return out;
-  }
-
-  /// 2D axis-aligned overlap: cut A at (ax,ay) size (aLength, aBreadth) vs B.
-  bool _cutsOverlap(RollCutPiece a, RollCutPiece b, RollLaneData lane) {
-    final pa = placements[a.cutId]!;
-    final pb = placements[b.cutId]!;
-    final aRight = pa.dx + a.lengthMm;
-    final aBottom = pa.dy + a.breadthMm;
-    final bRight = pb.dx + b.lengthMm;
-    final bBottom = pb.dy + b.breadthMm;
-    return pa.dx < bRight && pb.dx < aRight && pa.dy < bBottom && pb.dy < aBottom;
-  }
-
-  int get overlapCount {
-    int n = 0;
-    for (final lane in lanes) {
-      final placed = placedCutsOnLane(lane.rollIndex);
-      for (int i = 0; i < placed.length; i++) {
-        for (int j = i + 1; j < placed.length; j++) {
-          if (_cutsOverlap(placed[i], placed[j], lane)) n++;
-        }
-      }
-    }
-    return n;
-  }
-
-  /// Cut IDs that overlap another cut on their lane.
-  Set<String> overlappingCutIds() {
-    final out = <String>{};
-    for (final lane in lanes) {
-      final placed = placedCutsOnLane(lane.rollIndex);
-      for (int i = 0; i < placed.length; i++) {
-        for (int j = 0; j < placed.length; j++) {
-          if (i == j) continue;
-          if (_cutsOverlap(placed[i], placed[j], lane)) {
-            out.add(placed[i].cutId);
-            out.add(placed[j].cutId);
-          }
-        }
-      }
-    }
-    return out;
-  }
-
-  RollPlanState copyWith({
-    List<RollCutPiece>? allCuts,
-    List<RollLaneData>? lanes,
-    Map<String, RollCutPlacement>? placements,
-    String? selectedCutId,
-    bool clearSelection = false,
-    bool? cutListExpanded,
-    double? totalScoreCostMm,
-  }) {
-    return RollPlanState(
-      allCuts: allCuts ?? this.allCuts,
-      lanes: lanes ?? this.lanes,
-      placements: placements ?? Map.from(this.placements),
-      selectedCutId: clearSelection ? null : (selectedCutId ?? this.selectedCutId),
-      cutListExpanded: cutListExpanded ?? this.cutListExpanded,
-      totalScoreCostMm: totalScoreCostMm ?? this.totalScoreCostMm,
-    );
-  }
-}
 
 /// Bottom sheet (pull-up tab) showing cut list first; "Roll cut" button shows roll board.
 /// Opened from the bottom-center Cuts tab.
@@ -275,15 +16,21 @@ class CarpetRollCutSheet extends StatefulWidget {
   final Map<int, int> roomCarpetAssignments;
   final List<Opening> openings;
   final Map<int, List<double>> roomCarpetSeamOverrides;
+
+  /// When a room has seam overrides, locked strip direction (0 or 90). Use so moving seam doesn't flip direction.
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
   final bool useImperial;
   final void Function(int roomIndex)? onResetSeamsForRoom;
+
   /// When set, roll cut + cut list views are filtered to rooms
   /// that share the same carpet product as this room.
   final int? selectedRoomIndex;
+
   /// Called when the user drags the top handle; [deltaDy] is the pointer delta in pixels.
   final void Function(double deltaDy)? onResizeDrag;
+
   /// Called when the user taps the top handle (toggle height).
   final VoidCallback? onToggleHeight;
 
@@ -294,6 +41,7 @@ class CarpetRollCutSheet extends StatefulWidget {
     required this.roomCarpetAssignments,
     required this.openings,
     this.roomCarpetSeamOverrides = const {},
+    this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
     this.useImperial = false,
@@ -311,6 +59,7 @@ class CarpetRollCutSheet extends StatefulWidget {
     required Map<int, int> roomCarpetAssignments,
     required List<Opening> openings,
     Map<int, List<double>> roomCarpetSeamOverrides = const {},
+    Map<int, double> roomCarpetSeamLayDirectionDeg = const {},
     Map<int, int> roomCarpetLayoutVariantIndex = const {},
     void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged,
     bool useImperial = false,
@@ -327,6 +76,7 @@ class CarpetRollCutSheet extends StatefulWidget {
         roomCarpetAssignments: roomCarpetAssignments,
         openings: openings,
         roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+        roomCarpetSeamLayDirectionDeg: roomCarpetSeamLayDirectionDeg,
         roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
         onLayoutVariantChanged: onLayoutVariantChanged,
         useImperial: useImperial,
@@ -342,25 +92,34 @@ class CarpetRollCutSheet extends StatefulWidget {
 
 class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   RollPlanState? _planState;
+
   /// Local copy of layout variant so the sheet updates when user changes it without waiting for parent rebuild.
   late Map<int, int> _layoutVariantIndex;
 
   @override
   void initState() {
     super.initState();
-    _layoutVariantIndex = Map<int, int>.from(widget.roomCarpetLayoutVariantIndex);
+    _layoutVariantIndex = Map<int, int>.from(
+      widget.roomCarpetLayoutVariantIndex,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _rebuildPlanState());
   }
 
   @override
   void didUpdateWidget(covariant CarpetRollCutSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.roomCarpetLayoutVariantIndex != widget.roomCarpetLayoutVariantIndex) {
-      _layoutVariantIndex = Map<int, int>.from(widget.roomCarpetLayoutVariantIndex);
+    if (oldWidget.roomCarpetLayoutVariantIndex !=
+        widget.roomCarpetLayoutVariantIndex) {
+      _layoutVariantIndex = Map<int, int>.from(
+        widget.roomCarpetLayoutVariantIndex,
+      );
     }
     if (oldWidget.rooms != widget.rooms ||
         oldWidget.roomCarpetAssignments != widget.roomCarpetAssignments ||
-        oldWidget.carpetProducts != widget.carpetProducts) {
+        oldWidget.carpetProducts != widget.carpetProducts ||
+        oldWidget.roomCarpetSeamOverrides != widget.roomCarpetSeamOverrides ||
+        oldWidget.roomCarpetSeamLayDirectionDeg !=
+            widget.roomCarpetSeamLayDirectionDeg) {
       _rebuildPlanState();
     }
   }
@@ -387,7 +146,12 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       for (final e in widget.roomCarpetAssignments.entries) {
         final ri = e.key;
         final pi = e.value;
-        if (ri < 0 || ri >= widget.rooms.length || pi < 0 || pi >= widget.carpetProducts.length) continue;
+        if (ri < 0 ||
+            ri >= widget.rooms.length ||
+            pi < 0 ||
+            pi >= widget.carpetProducts.length) {
+          continue;
+        }
         final room = widget.rooms[ri];
         areaByProduct[pi] = (areaByProduct[pi] ?? 0) + room.areaMm2;
       }
@@ -402,11 +166,21 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       final ri = e.key;
       final pi = e.value;
       if (selectedProductIndex != null && pi != selectedProductIndex) continue;
-      if (ri < 0 || ri >= widget.rooms.length || pi < 0 || pi >= widget.carpetProducts.length) continue;
+      if (ri < 0 ||
+          ri >= widget.rooms.length ||
+          pi < 0 ||
+          pi >= widget.carpetProducts.length) {
+        continue;
+      }
       final room = widget.rooms[ri];
       final product = widget.carpetProducts[pi];
-      if (product.rollWidthMm <= 0) continue;
+      if (product.rollWidthMm <= 0) {
+        continue;
+      }
       final variantIndex = _layoutVariantIndex[ri] ?? 0;
+      final layDirectionDeg =
+          widget.roomCarpetSeamLayDirectionDeg[ri] ??
+          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
       final opts = CarpetLayoutOptions.forRoom(
         roomIndex: ri,
         minStripWidthMm: product.minStripWidthMm ?? 100,
@@ -415,11 +189,18 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         wasteAllowancePercent: 5,
         openings: widget.openings,
         seamPositionsOverrideMm: widget.roomCarpetSeamOverrides[ri],
-        layDirectionDeg: variantIndex == 0 ? null : (variantIndex == 1 ? 0 : 90),
+        layDirectionDeg: layDirectionDeg,
       );
       final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
       if (layout.numStrips > 0) {
-        list.add(_RoomWithCarpet(roomIndex: ri, room: room, product: product, layout: layout));
+        list.add(
+          _RoomWithCarpet(
+            roomIndex: ri,
+            room: room,
+            product: product,
+            layout: layout,
+          ),
+        );
       }
     }
     return list;
@@ -447,27 +228,37 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         final breadthMm = si < r.layout.stripWidthsMm.length
             ? r.layout.stripWidthsMm[si]
             : r.product.rollWidthMm;
-        final isSliver = r.layout.isSliverAt(si, r.product.minStripWidthMm ?? 100);
-        allCuts.add(RollCutPiece(
-          cutId: cutId,
-          roomIndex: r.roomIndex,
-          roomName: roomName,
-          rollLaneIndex: 0,
-          product: r.product,
-          stripIndex: si,
-          lengthMm: lengthMm,
-          trimMm: r.product.trimAllowanceMm ?? 75,
-          breadthMm: breadthMm,
-          isSliver: isSliver,
-          patternRepeatMm: r.product.patternRepeatMm,
-          roomShapeVerticesMm: r.layout.isSinglePiece ? r.layout.roomShapeVerticesMm : null,
-          layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
-        ));
+        final isSliver = r.layout.isSliverAt(
+          si,
+          r.product.minStripWidthMm ?? 100,
+        );
+        allCuts.add(
+          RollCutPiece(
+            cutId: cutId,
+            roomIndex: r.roomIndex,
+            roomName: roomName,
+            rollLaneIndex: 0,
+            product: r.product,
+            stripIndex: si,
+            lengthMm: lengthMm,
+            trimMm: r.product.trimAllowanceMm ?? 75,
+            breadthMm: breadthMm,
+            isSliver: isSliver,
+            patternRepeatMm: r.product.patternRepeatMm,
+            roomShapeVerticesMm: r.layout.isSinglePiece
+                ? r.layout.roomShapeVerticesMm
+                : null,
+            layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
+          ),
+        );
         placements[cutId] = Offset(alongPos, 0);
         alongPos += lengthMm;
       }
     }
-    final totalScoreCostMm = list.fold<double>(0, (s, r) => s + r.layout.scoreCostMm);
+    final totalScoreCostMm = list.fold<double>(
+      0,
+      (s, r) => s + r.layout.scoreCostMm,
+    );
     final lane = RollLaneData(
       rollIndex: 0,
       product: first.product,
@@ -478,8 +269,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     // Treat the tail length at the end of the roll as available offcut material,
     // and greedily assign the longest cuts that fit within this length as
     // "from offcut". This is a planning hint only; placements remain unchanged.
-    final availableOffcutLength =
-        (lane.rollLengthMm - totalLinear).clamp(0.0, double.infinity);
+    final availableOffcutLength = (lane.rollLengthMm - totalLinear).clamp(
+      0.0,
+      double.infinity,
+    );
     final cutsSorted = List<RollCutPiece>.from(allCuts)
       ..sort((a, b) => b.lengthMm.compareTo(a.lengthMm));
     final fromOffcutIds = <String>{};
@@ -491,9 +284,14 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       }
     }
     final annotatedCuts = allCuts
-        .map((c) => fromOffcutIds.contains(c.cutId)
-            ? c.copyWith(fromOffcut: true, sourceOffcutRollIndex: lane.rollIndex)
-            : c)
+        .map(
+          (c) => fromOffcutIds.contains(c.cutId)
+              ? c.copyWith(
+                  fromOffcut: true,
+                  sourceOffcutRollIndex: lane.rollIndex,
+                )
+              : c,
+        )
         .toList();
 
     final lanes = [lane];
@@ -515,15 +313,27 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     setState(() => _planState = _planState!.copyWith(placements: next));
   }
 
-  void _applyPlacementDelta(String cutId, double deltaAlongMm, double deltaPerpMm) {
+  void _applyPlacementDelta(
+    String cutId,
+    double deltaAlongMm,
+    double deltaPerpMm,
+  ) {
     if (_planState == null) return;
     final p = _planState!.placements[cutId];
     if (p == null) return;
-    final piece = _planState!.allCuts.where((c) => c.cutId == cutId).firstOrNull;
+    final piece = _planState!.allCuts
+        .where((c) => c.cutId == cutId)
+        .firstOrNull;
     if (piece == null) return;
     final lane = _planState!.lanes[piece.rollLaneIndex];
-    final maxAlong = (lane.rollLengthMm - piece.lengthMm).clamp(0.0, double.infinity);
-    final maxPerp = (lane.rollWidthMm - piece.breadthMm).clamp(0.0, double.infinity);
+    final maxAlong = (lane.rollLengthMm - piece.lengthMm).clamp(
+      0.0,
+      double.infinity,
+    );
+    final maxPerp = (lane.rollWidthMm - piece.breadthMm).clamp(
+      0.0,
+      double.infinity,
+    );
     final newAlong = (p.dx + deltaAlongMm).clamp(0.0, maxAlong).toDouble();
     final newPerp = (p.dy + deltaPerpMm).clamp(0.0, maxPerp).toDouble();
     _updatePlacement(cutId, Offset(newAlong, newPerp));
@@ -533,12 +343,19 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     if (_planState == null) return;
     final next = Map<String, RollCutPlacement>.from(_planState!.placements);
     next.remove(cutId);
-    setState(() => _planState = _planState!.copyWith(placements: next, clearSelection: true));
+    setState(
+      () => _planState = _planState!.copyWith(
+        placements: next,
+        clearSelection: true,
+      ),
+    );
   }
 
   void _placeOnRoll(String cutId) {
     if (_planState == null) return;
-    final piece = _planState!.allCuts.where((c) => c.cutId == cutId).firstOrNull;
+    final piece = _planState!.allCuts
+        .where((c) => c.cutId == cutId)
+        .firstOrNull;
     if (piece == null) return;
     final lane = _planState!.lanes[piece.rollLaneIndex];
     final rollLength = lane.rollLengthMm;
@@ -581,10 +398,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final content = _buildContent(context);
-    return Material(
-      color: theme.scaffoldBackgroundColor,
-      child: content,
-    );
+    return Material(color: theme.scaffoldBackgroundColor, child: content);
   }
 
   Widget _buildContent(BuildContext context) {
@@ -596,7 +410,9 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           _buildHandle(context),
           const Padding(
             padding: EdgeInsets.all(24),
-            child: Text('No rooms with carpet assigned. Assign products in the Rooms panel.'),
+            child: Text(
+              'No rooms with carpet assigned. Assign products in the Rooms panel.',
+            ),
           ),
         ],
       );
@@ -624,9 +440,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           return DefaultTabController(
             length: 2,
             initialIndex: 0,
-            child: SingleChildScrollView(
-              child: header,
-            ),
+            child: SingleChildScrollView(child: header),
           );
         }
 
@@ -675,6 +489,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       openings: widget.openings,
       useImperial: widget.useImperial,
       roomCarpetSeamOverrides: widget.roomCarpetSeamOverrides,
+      roomCarpetSeamLayDirectionDeg: widget.roomCarpetSeamLayDirectionDeg,
       roomCarpetLayoutVariantIndex: _layoutVariantIndex,
       onLayoutVariantChanged: _onLayoutVariantChanged,
       onResetSeamsForRoom: widget.onResetSeamsForRoom,
@@ -735,26 +550,39 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   void _exportCutSheet(BuildContext context, RollPlanState plan) {
     // CSV: cuts then offcuts
     final sb = StringBuffer();
-    sb.writeln('Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll,Source');
+    sb.writeln(
+      'Cut ID,Room,Length (m),Start along (m),Start perp (m),Roll,Source',
+    );
     for (final c in plan.allCuts) {
       final pos = plan.placements[c.cutId];
-      final roll = pos != null ? (plan.lanes[c.rollLaneIndex].room?.name ?? plan.lanes[c.rollLaneIndex].product.name) : '';
+      final roll = pos != null
+          ? (plan.lanes[c.rollLaneIndex].room?.name ??
+                plan.lanes[c.rollLaneIndex].product.name)
+          : '';
       final source = c.fromOffcut
           ? 'Offcut${c.sourceOffcutRollIndex != null ? ' (lane ${c.sourceOffcutRollIndex})' : ''}'
           : 'Roll';
-      sb.writeln('${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll,$source');
+      sb.writeln(
+        '${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll,$source',
+      );
     }
     final offcuts = plan.offcuts();
     if (offcuts.isNotEmpty) {
       sb.writeln();
       sb.writeln('Offcut,Lane,Length (m),Breadth (m),Start along (m)');
       for (final o in offcuts) {
-        sb.writeln('Remaining,${o.rollIndex},${o.lengthMm / 1000},${o.breadthMm / 1000},${o.startAlongMm / 1000}');
+        sb.writeln(
+          'Remaining,${o.rollIndex},${o.lengthMm / 1000},${o.breadthMm / 1000},${o.startAlongMm / 1000}',
+        );
       }
     }
     // TODO: share or copy to clipboard
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Export: ${plan.allCuts.length} cuts${offcuts.isNotEmpty ? ', ${offcuts.length} offcut(s)' : ''}. Copy from console or add share.')),
+      SnackBar(
+        content: Text(
+          'Export: ${plan.allCuts.length} cuts${offcuts.isNotEmpty ? ', ${offcuts.length} offcut(s)' : ''}. Copy from console or add share.',
+        ),
+      ),
     );
   }
 
@@ -845,7 +673,11 @@ class _SummaryBar extends StatelessWidget {
     final totalCuts = plan.allCuts.length;
     final overlaps = plan.overlapCount;
     final wastePct = total > 0 && plan.lanes.isNotEmpty
-        ? (plan.lanes.map((l) => plan.wasteMmForLane(l.rollIndex)).fold<double>(0, (a, b) => a + b) / total * 100)
+        ? (plan.lanes
+                  .map((l) => plan.wasteMmForLane(l.rollIndex))
+                  .fold<double>(0, (a, b) => a + b) /
+              total *
+              100)
         : 0.0;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -856,25 +688,49 @@ class _SummaryBar extends StatelessWidget {
           children: [
             Text(
               'Total: ${UnitConverter.formatDistance(total, useImperial: useImperial)} linear',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(width: 16),
             Text(
               'Cost: ${UnitConverter.formatDistance(plan.totalScoreCostMm, useImperial: useImperial)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+              ),
             ),
             const SizedBox(width: 16),
-            Text('Waste: ${wastePct.toStringAsFixed(1)}%', style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              'Waste: ${wastePct.toStringAsFixed(1)}%',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(width: 16),
-            Text('Placed: $placed/$totalCuts', style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              'Placed: $placed/$totalCuts',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             if (overlaps > 0) ...[
               const SizedBox(width: 8),
-              Text('Warnings: $overlaps overlap(s)', style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12)),
+              Text(
+                'Warnings: $overlaps overlap(s)',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
             ],
             const SizedBox(width: 16),
-            TextButton.icon(onPressed: onAutoPlace, icon: const Icon(Icons.refresh, size: 18), label: const Text('Auto place')),
+            TextButton.icon(
+              onPressed: onAutoPlace,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Auto place'),
+            ),
             const SizedBox(width: 8),
-            TextButton.icon(onPressed: onExport, icon: const Icon(Icons.download, size: 18), label: const Text('Export')),
+            TextButton.icon(
+              onPressed: onExport,
+              icon: const Icon(Icons.download, size: 18),
+              label: const Text('Export'),
+            ),
           ],
         ),
       ),
@@ -900,9 +756,11 @@ class _OffcutsSection extends StatelessWidget {
           Text(
             'Remaining: ',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
-                ),
+              fontWeight: FontWeight.w600,
+              color: Theme.of(
+                context,
+              ).textTheme.bodySmall?.color?.withAlpha(230),
+            ),
           ),
           Expanded(
             child: Wrap(
@@ -912,8 +770,8 @@ class _OffcutsSection extends StatelessWidget {
                 return Text(
                   'Lane ${o.rollIndex}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.secondary,
-                      ),
+                    color: Theme.of(context).colorScheme.secondary,
+                  ),
                 );
               }).toList(),
             ),
@@ -937,13 +795,17 @@ const List<Color> _productColorPalette = [
   Color(0xFFC2185B), // pink
 ];
 
-int _productColorIndex(CarpetProduct product, List<CarpetProduct> carpetProducts) {
+int _productColorIndex(
+  CarpetProduct product,
+  List<CarpetProduct> carpetProducts,
+) {
   final i = carpetProducts.indexWhere((p) => p.name == product.name);
   return i >= 0 ? i : 0;
 }
 
 Color _productColor(CarpetProduct product, List<CarpetProduct> carpetProducts) {
-  return _productColorPalette[_productColorIndex(product, carpetProducts) % _productColorPalette.length];
+  return _productColorPalette[_productColorIndex(product, carpetProducts) %
+      _productColorPalette.length];
 }
 
 class _RollBoard extends StatelessWidget {
@@ -952,7 +814,8 @@ class _RollBoard extends StatelessWidget {
   final bool useImperial;
   final Set<String> overlappingCutIds;
   final void Function(String cutId, RollCutPlacement pos) onPlacementChanged;
-  final void Function(String cutId, double deltaAlongMm, double deltaPerpMm)? onPlacementDelta;
+  final void Function(String cutId, double deltaAlongMm, double deltaPerpMm)?
+  onPlacementDelta;
   final void Function(String? cutId) onSelectCut;
   final String? selectedCutId;
 
@@ -982,7 +845,9 @@ class _RollBoard extends StatelessWidget {
       builder: (context, constraints) {
         final availWidth = constraints.maxWidth - 24;
         if (availWidth <= 0) return const SizedBox.shrink();
-        final rollHeightPx = (rollWidthMm / rollLengthMm * availWidth).clamp(_minRollHeightPx, 200.0).toDouble();
+        final rollHeightPx = (rollWidthMm / rollLengthMm * availWidth)
+            .clamp(_minRollHeightPx, 200.0)
+            .toDouble();
         final pxPerMmAlong = availWidth / rollLengthMm;
         final pxPerMmPerp = rollHeightPx / rollWidthMm;
         final label = lane.room != null
@@ -998,14 +863,16 @@ class _RollBoard extends StatelessWidget {
                 children: [
                   Text(
                     label,
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Text(
                     'Roll: ${UnitConverter.formatDistance(rollWidthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(rollLengthMm, useImperial: useImperial)}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).hintColor,
-                        ),
+                      color: Theme.of(context).hintColor,
+                    ),
                   ),
                 ],
               ),
@@ -1047,14 +914,31 @@ class _RollBoard extends StatelessWidget {
                         onTap: () => onSelectCut(c.cutId),
                         onDragEnd: (double deltaAlongMm, double deltaPerpMm) {
                           if (onPlacementDelta != null) {
-                            onPlacementDelta!(c.cutId, deltaAlongMm, deltaPerpMm);
+                            onPlacementDelta!(
+                              c.cutId,
+                              deltaAlongMm,
+                              deltaPerpMm,
+                            );
                           } else {
                             final p = plan.placements[c.cutId]!;
-                            final maxAlong = (rollLengthMm - c.lengthMm).clamp(0.0, double.infinity);
-                            final maxPerp = (rollWidthMm - c.breadthMm).clamp(0.0, double.infinity);
-                            final newAlong = (p.dx + deltaAlongMm).clamp(0.0, maxAlong).toDouble();
-                            final newPerp = (p.dy + deltaPerpMm).clamp(0.0, maxPerp).toDouble();
-                            onPlacementChanged(c.cutId, Offset(newAlong, newPerp));
+                            final maxAlong = (rollLengthMm - c.lengthMm).clamp(
+                              0.0,
+                              double.infinity,
+                            );
+                            final maxPerp = (rollWidthMm - c.breadthMm).clamp(
+                              0.0,
+                              double.infinity,
+                            );
+                            final newAlong = (p.dx + deltaAlongMm)
+                                .clamp(0.0, maxAlong)
+                                .toDouble();
+                            final newPerp = (p.dy + deltaPerpMm)
+                                .clamp(0.0, maxPerp)
+                                .toDouble();
+                            onPlacementChanged(
+                              c.cutId,
+                              Offset(newAlong, newPerp),
+                            );
                           }
                         },
                       ),
@@ -1125,7 +1009,9 @@ class _RoomShapePainter extends CustomPainter {
 
     canvas.drawPath(
       path,
-      Paint()..color = fillColor..style = PaintingStyle.fill,
+      Paint()
+        ..color = fillColor
+        ..style = PaintingStyle.fill,
     );
     canvas.drawPath(
       path,
@@ -1151,6 +1037,7 @@ class _RoomShapePainter extends CustomPainter {
 /// Cut block on the roll: positioned at 2D (alongMm, perpMm), draggable in both axes.
 class _HorizontalCutBlock extends StatefulWidget {
   final RollCutPiece piece;
+
   /// Color for this product (roll board); offcut/sliver override still apply.
   final Color? productColor;
   final RollCutPlacement startOffset;
@@ -1166,8 +1053,10 @@ class _HorizontalCutBlock extends StatefulWidget {
   final bool isSelected;
   final bool isSliver;
   final bool isOverlap;
+
   /// True when this cut is marked as sourced from an offcut.
   final bool isFromOffcut;
+
   /// Optional tooltip (e.g. "From offcut (lane 0)" or cut ID + length). Applied inside the block so [Positioned] stays direct child of [Stack].
   final String? tooltipMessage;
   final VoidCallback onTap;
@@ -1200,18 +1089,24 @@ class _HorizontalCutBlock extends StatefulWidget {
 }
 
 class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
-  Widget _buildBlockContent(BuildContext context, double widthPx, double heightPx) {
+  Widget _buildBlockContent(
+    BuildContext context,
+    double widthPx,
+    double heightPx,
+  ) {
     final shape = widget.piece.roomShapeVerticesMm;
     final layAlongX = widget.piece.layAlongX ?? true;
 
     final primary = Theme.of(context).colorScheme.primary;
     final offcutColor = Colors.teal;
-    final baseColor = widget.isFromOffcut ? offcutColor : (widget.productColor ?? primary);
+    final baseColor = widget.isFromOffcut
+        ? offcutColor
+        : (widget.productColor ?? primary);
     final fillColor = widget.isSliver
         ? Colors.amber.shade200
         : (widget.piece.stripIndex.isEven
-            ? baseColor.withAlpha(128)
-            : baseColor.withAlpha(179));
+              ? baseColor.withAlpha(128)
+              : baseColor.withAlpha(179));
     final borderColor = widget.isOverlap
         ? Theme.of(context).colorScheme.error
         : baseColor;
@@ -1238,16 +1133,21 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
                 Text(
                   widget.piece.cutId,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                      ),
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
                 ),
                 Text(
-                  UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
+                  UnitConverter.formatDistance(
+                    widget.piece.lengthMm,
+                    useImperial: widget.useImperial,
+                  ),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 10,
-                        color: Theme.of(context).colorScheme.onPrimary.withAlpha(230),
-                      ),
+                    fontSize: 10,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onPrimary.withAlpha(230),
+                  ),
                 ),
               ],
             ),
@@ -1263,7 +1163,9 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
         color: fillColor,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: borderColor, width: borderWidth),
-        boxShadow: widget.isSliver ? [BoxShadow(color: Colors.amber.withAlpha(128), blurRadius: 4)] : null,
+        boxShadow: widget.isSliver
+            ? [BoxShadow(color: Colors.amber.withAlpha(128), blurRadius: 4)]
+            : null,
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1271,16 +1173,19 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
           Text(
             widget.piece.cutId,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                ),
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onPrimary,
+            ),
           ),
           Text(
-            UnitConverter.formatDistance(widget.piece.lengthMm, useImperial: widget.useImperial),
+            UnitConverter.formatDistance(
+              widget.piece.lengthMm,
+              useImperial: widget.useImperial,
+            ),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 10,
-                  color: Theme.of(context).colorScheme.onPrimary.withAlpha(230),
-                ),
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onPrimary.withAlpha(230),
+            ),
           ),
         ],
       ),
@@ -1289,10 +1194,22 @@ class _HorizontalCutBlockState extends State<_HorizontalCutBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final leftPx = (widget.startOffset.dx * widget.pxPerMmAlong).clamp(4.0, widget.rollWidthPx - 4);
-    final topPx = (widget.startOffset.dy * widget.pxPerMmPerp).clamp(4.0, widget.rollHeightPx - 4);
-    final widthPx = (widget.piece.lengthMm * widget.pxPerMmAlong).clamp(widget.minBlockWidthPx, double.infinity);
-    final heightPx = (widget.piece.breadthMm * widget.pxPerMmPerp).clamp(widget.minBlockHeightPx, widget.rollHeightPx - 8);
+    final leftPx = (widget.startOffset.dx * widget.pxPerMmAlong).clamp(
+      4.0,
+      widget.rollWidthPx - 4,
+    );
+    final topPx = (widget.startOffset.dy * widget.pxPerMmPerp).clamp(
+      4.0,
+      widget.rollHeightPx - 4,
+    );
+    final widthPx = (widget.piece.lengthMm * widget.pxPerMmAlong).clamp(
+      widget.minBlockWidthPx,
+      double.infinity,
+    );
+    final heightPx = (widget.piece.breadthMm * widget.pxPerMmPerp).clamp(
+      widget.minBlockHeightPx,
+      widget.rollHeightPx - 8,
+    );
     final content = GestureDetector(
       onTap: widget.onTap,
       onPanUpdate: (d) {
@@ -1335,13 +1252,19 @@ class _CutInspector extends StatelessWidget {
     if (cutId == null) {
       return Container(
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(77),
-          border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+          color: Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest.withAlpha(77),
+          border: Border(
+            left: BorderSide(color: Theme.of(context).dividerColor),
+          ),
         ),
         child: Center(
           child: Text(
             'Select a cut',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
           ),
         ),
       );
@@ -1351,7 +1274,9 @@ class _CutInspector extends StatelessWidget {
     final pos = plan.placements[cutId];
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(77),
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withAlpha(77),
         border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       padding: const EdgeInsets.all(12),
@@ -1360,23 +1285,45 @@ class _CutInspector extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Cut Inspector', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+            Text(
+              'Cut Inspector',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 8),
             _row('Cut ID', c.cutId),
             _row('Room', c.roomName),
-            if (c.roomShapeVerticesMm != null) _row('Type', 'Template cut (room shape)'),
-            _row('Length', UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)),
-            _row('Trim', '+${UnitConverter.formatDistance(c.trimMm, useImperial: useImperial)} each end'),
-            if (c.patternRepeatMm != null) _row('Pattern', '${c.patternRepeatMm! / 1000} m'),
+            if (c.roomShapeVerticesMm != null)
+              _row('Type', 'Template cut (room shape)'),
+            _row(
+              'Length',
+              UnitConverter.formatDistance(
+                c.lengthMm,
+                useImperial: useImperial,
+              ),
+            ),
+            _row(
+              'Trim',
+              '+${UnitConverter.formatDistance(c.trimMm, useImperial: useImperial)} each end',
+            ),
+            if (c.patternRepeatMm != null)
+              _row('Pattern', '${c.patternRepeatMm! / 1000} m'),
             _row(
               'Status',
               c.fromOffcut
-                  ? (pos != null ? 'Placed (from offcut)' : 'Unplaced (from offcut)')
+                  ? (pos != null
+                        ? 'Placed (from offcut)'
+                        : 'Unplaced (from offcut)')
                   : (pos != null ? 'Placed' : 'Unplaced'),
             ),
             if (c.fromOffcut && c.sourceOffcutRollIndex != null)
               _row('Source roll', 'Lane ${c.sourceOffcutRollIndex}'),
-            if (pos != null) _row('Position', '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)} × ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}'),
+            if (pos != null)
+              _row(
+                'Position',
+                '${UnitConverter.formatDistance(pos.dx, useImperial: useImperial)} × ${UnitConverter.formatDistance(pos.dy, useImperial: useImperial)}',
+              ),
             if (c.isSliver) _row('Note', 'Sliver'),
             const SizedBox(height: 12),
             if (pos != null)
@@ -1408,7 +1355,13 @@ class _CutInspector extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 90, child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
+          SizedBox(
+            width: 90,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+          ),
           Expanded(child: Text(value, style: const TextStyle(fontSize: 12))),
         ],
       ),
@@ -1455,17 +1408,21 @@ class _RollCutViewState extends State<RollCutView> {
   /// For each cut: (stripIndex, lengthMm, startMm on roll). No overlap; within roll length.
   late List<({int stripIndex, double lengthMm, double startMm})> _cuts;
 
-  static const double _pxPerMmLength = 0.08; // roll length (horizontal) in pixels per mm
-  static const double _pxPerMmWidth = 0.022; // roll width (vertical) so 3660mm → ~80px
+  static const double _pxPerMmLength =
+      0.08; // roll length (horizontal) in pixels per mm
+  static const double _pxPerMmWidth =
+      0.022; // roll width (vertical) so 3660mm → ~80px
   static const double _minSegmentWidthPx = 40.0;
   static const double _minRollHeightPx = 56.0;
   static const double _maxRollHeightPx = 120.0;
 
   /// Roll width in mm (full width of carpet, e.g. 3660).
-  double get _rollWidthMm => widget.product.rollWidthMm > 0 ? widget.product.rollWidthMm : 4000;
+  double get _rollWidthMm =>
+      widget.product.rollWidthMm > 0 ? widget.product.rollWidthMm : 4000;
 
   /// Height in px of the roll strip (represents full carpet width).
-  double get _rollHeightPx => (_rollWidthMm * _pxPerMmWidth).clamp(_minRollHeightPx, _maxRollHeightPx);
+  double get _rollHeightPx =>
+      (_rollWidthMm * _pxPerMmWidth).clamp(_minRollHeightPx, _maxRollHeightPx);
 
   double get _rollLengthMm {
     if (widget.product.rollLengthM != null && widget.product.rollLengthM! > 0) {
@@ -1516,7 +1473,10 @@ class _RollCutViewState extends State<RollCutView> {
           anyOverlap = true;
           final snapBefore = (a - len).clamp(0.0, rollLen - len);
           final snapAfter = b.clamp(0.0, rollLen - len);
-          newStart = (newStart - snapBefore).abs() <= (newStart - snapAfter).abs() ? snapBefore : snapAfter;
+          newStart =
+              (newStart - snapBefore).abs() <= (newStart - snapAfter).abs()
+              ? snapBefore
+              : snapAfter;
         }
       }
       if (!anyOverlap) break;
@@ -1529,7 +1489,11 @@ class _RollCutViewState extends State<RollCutView> {
     final newStart = _clampStart(cutIndex, c.startMm + deltaMm);
     if ((newStart - c.startMm).abs() < 0.1) return;
     setState(() {
-      _cuts[cutIndex] = (stripIndex: c.stripIndex, lengthMm: c.lengthMm, startMm: newStart);
+      _cuts[cutIndex] = (
+        stripIndex: c.stripIndex,
+        lengthMm: c.lengthMm,
+        startMm: newStart,
+      );
     });
   }
 
@@ -1537,7 +1501,10 @@ class _RollCutViewState extends State<RollCutView> {
   Widget build(BuildContext context) {
     if (widget.stripLengthsMm.isEmpty) return const SizedBox.shrink();
     final rollLenMm = _rollLengthMm;
-    final rollLengthPx = (rollLenMm * _pxPerMmLength).clamp(280.0, double.infinity);
+    final rollLengthPx = (rollLenMm * _pxPerMmLength).clamp(
+      280.0,
+      double.infinity,
+    );
     final rollH = _rollHeightPx;
 
     return Column(
@@ -1546,17 +1513,17 @@ class _RollCutViewState extends State<RollCutView> {
         Text(
           '${widget.roomName} — ${widget.product.name}',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
-              ),
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
+          ),
         ),
         const SizedBox(height: 4),
         Text(
           'Roll: ${UnitConverter.formatDistance(_rollWidthMm, useImperial: widget.useImperial)} wide × ${UnitConverter.formatDistance(rollLenMm, useImperial: widget.useImperial)} long. Drag cuts along the roll.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontSize: 12,
-                color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
-              ),
+            fontSize: 12,
+            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
+          ),
         ),
         const SizedBox(height: 12),
         // Roll = full width of carpet (height) × length (horizontal, scrollable)
@@ -1585,7 +1552,13 @@ class _RollCutViewState extends State<RollCutView> {
                   ),
                   // Cuts on top (each cut spans full roll width = full height)
                   for (int i = 0; i < _cuts.length; i++)
-                    _buildDraggableCut(context, i, rollLengthPx, rollLenMm, rollH),
+                    _buildDraggableCut(
+                      context,
+                      i,
+                      rollLengthPx,
+                      rollLenMm,
+                      rollH,
+                    ),
                 ],
               ),
             ),
@@ -1599,7 +1572,9 @@ class _RollCutViewState extends State<RollCutView> {
             for (int i = 0; i < _cuts.length; i++)
               Text(
                 '${_cuts[i].stripIndex + 1}: ${UnitConverter.formatDistance(_cuts[i].lengthMm, useImperial: widget.useImperial)} @ ${UnitConverter.formatDistance(_cuts[i].startMm, useImperial: widget.useImperial)}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontSize: 11),
               ),
           ],
         ),
@@ -1607,10 +1582,22 @@ class _RollCutViewState extends State<RollCutView> {
     );
   }
 
-  Widget _buildDraggableCut(BuildContext context, int cutIndex, double rollLengthPx, double rollLenMm, double rollHeightPx) {
+  Widget _buildDraggableCut(
+    BuildContext context,
+    int cutIndex,
+    double rollLengthPx,
+    double rollLenMm,
+    double rollHeightPx,
+  ) {
     final c = _cuts[cutIndex];
-    final leftPx = (c.startMm / rollLenMm * rollLengthPx).clamp(0.0, rollLengthPx - 4);
-    final widthPx = (c.lengthMm / rollLenMm * rollLengthPx).clamp(_minSegmentWidthPx, double.infinity);
+    final leftPx = (c.startMm / rollLenMm * rollLengthPx).clamp(
+      0.0,
+      rollLengthPx - 4,
+    );
+    final widthPx = (c.lengthMm / rollLenMm * rollLengthPx).clamp(
+      _minSegmentWidthPx,
+      double.infinity,
+    );
 
     return Positioned(
       left: leftPx,
@@ -1629,16 +1616,20 @@ class _RollCutViewState extends State<RollCutView> {
                 ? Theme.of(context).colorScheme.primary.withAlpha(128)
                 : Theme.of(context).colorScheme.primary.withAlpha(179),
             borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.primary,
+              width: 1.5,
+            ),
           ),
           child: Tooltip(
-            message: 'Strip ${c.stripIndex + 1}: ${UnitConverter.formatDistance(c.lengthMm, useImperial: widget.useImperial)} — drag along roll',
+            message:
+                'Strip ${c.stripIndex + 1}: ${UnitConverter.formatDistance(c.lengthMm, useImperial: widget.useImperial)} — drag along roll',
             child: Text(
               '${c.stripIndex + 1}',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onPrimary,
+              ),
             ),
           ),
         ),
