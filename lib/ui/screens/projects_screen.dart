@@ -31,6 +31,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   final Set<int> _expandedFolderIds = {};
   bool _isLoading = true;
   bool _isInitializing = true;
+  final GlobalKey _projectListAreaKey = GlobalKey();
+  bool _isDraggingItem = false;
+  bool _isDraggingOutsideList = false;
+  Offset? _lastDragGlobalPosition;
 
   @override
   void initState() {
@@ -458,6 +462,33 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   static const int _rootTargetId = -1;
 
+  Folder? _findFolderById(int id) {
+    for (final folder in _folders) {
+      if (folder.id == id) return folder;
+    }
+    return null;
+  }
+
+  int _outsideDropTargetFor(_DragItem item) {
+    if (item.isFolder) {
+      final folder = _findFolderById(item.id);
+      if (folder == null || folder.parentId == null) return _rootTargetId;
+      final parentFolder = _findFolderById(folder.parentId!);
+      return parentFolder?.parentId ?? _rootTargetId;
+    }
+
+    Project? project;
+    for (final p in _projects) {
+      if (p.id == item.id) {
+        project = p;
+        break;
+      }
+    }
+    if (project == null || project.folderId == null) return _rootTargetId;
+    final currentFolder = _findFolderById(project.folderId!);
+    return currentFolder?.parentId ?? _rootTargetId;
+  }
+
   Future<void> _handleDrop(_DragItem item, int? targetFolderId) async {
     if (_projectService == null) return;
     final destFolderId = targetFolderId == _rootTargetId ? null : targetFolderId;
@@ -494,47 +525,47 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     }
   }
 
-  /// Drop zone to move an item up one level (to parent folder or root).
-  Widget _buildMoveUpDropZone(int targetFolderId, {bool indent = false}) {
-    final isRoot = targetFolderId == _rootTargetId;
-    return DragTarget<_DragItem>(
-      onAcceptWithDetails: (details) => _handleDrop(details.data, targetFolderId),
-      builder: (context, candidateData, rejectedData) {
-        final isHovering = candidateData.isNotEmpty;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: EdgeInsets.only(left: indent ? 48 : 24, right: 16, top: 8, bottom: 8),
-          margin: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
-          decoration: BoxDecoration(
-            color: isHovering
-                ? Colors.amber.withAlpha(51)
-                : Colors.grey.withAlpha(13),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isHovering ? Colors.amber : Colors.transparent,
-              width: 1.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                isRoot ? Icons.folder_open : Icons.subdirectory_arrow_left,
-                color: isHovering ? Colors.amber : Colors.grey,
-                size: 22,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                isRoot ? 'Drop here to move to root' : 'Drop here to move up',
-                style: TextStyle(
-                  color: isHovering ? Colors.amber.shade800 : Colors.grey,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  bool _isPointInsideProjectList(Offset globalPoint) {
+    final renderObject = _projectListAreaKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) return true;
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final rect = topLeft & renderObject.size;
+    return rect.contains(globalPoint);
+  }
+
+  void _onDragStarted() {
+    if (!mounted) return;
+    setState(() {
+      _isDraggingItem = true;
+      _isDraggingOutsideList = false;
+      _lastDragGlobalPosition = null;
+    });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    final isInside = _isPointInsideProjectList(details.globalPosition);
+    if (!mounted) return;
+    setState(() {
+      _lastDragGlobalPosition = details.globalPosition;
+      _isDraggingOutsideList = !isInside;
+    });
+  }
+
+  void _onDragEnd(_DragItem item, DraggableDetails details) {
+    // Use actual release position for outside detection, not only wasAccepted.
+    // This avoids quick-drop timing issues near DragTarget edges.
+    final releasePoint = _lastDragGlobalPosition ?? details.offset;
+    final releasedOutsideList = !_isPointInsideProjectList(releasePoint);
+    // Move up one level when released outside list OR when not accepted.
+    if (releasedOutsideList || !details.wasAccepted) {
+      _handleDrop(item, _outsideDropTargetFor(item));
+    }
+    if (!mounted) return;
+    setState(() {
+      _isDraggingItem = false;
+      _isDraggingOutsideList = false;
+      _lastDragGlobalPosition = null;
+    });
   }
 
   List<Widget> _buildFolderTiles(int? parentId) {
@@ -585,7 +616,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           ],
         ),
         children: [
-          _buildMoveUpDropZone(folder.parentId == null ? _rootTargetId : folder.parentId!, indent: true),
           ..._buildFolderTiles(folder.id),
           ...projectsInFolder.map((p) => _buildProjectTile(p, indent: true)),
         ],
@@ -603,6 +633,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           final isHovering = candidateData.isNotEmpty;
           return Draggable<_DragItem>(
             data: _DragItem(isFolder: true, id: folder.id),
+            onDragStarted: _onDragStarted,
+            onDragUpdate: _onDragUpdate,
+            onDragEnd: (details) =>
+                _onDragEnd(_DragItem(isFolder: true, id: folder.id), details),
             feedback: Material(
               elevation: 4,
               child: Opacity(
@@ -682,6 +716,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     );
     return Draggable<_DragItem>(
       data: _DragItem(isFolder: false, id: project.id),
+      onDragStarted: _onDragStarted,
+      onDragUpdate: _onDragUpdate,
+      onDragEnd: (details) =>
+          _onDragEnd(_DragItem(isFolder: false, id: project.id), details),
       feedback: Material(
         elevation: 4,
         child: Opacity(
@@ -902,44 +940,41 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               : RefreshIndicator(
                   onRefresh: _loadData,
                   child: ListView(
+                    key: _projectListAreaKey,
                     children: [
-                      DragTarget<_DragItem>(
-                        onAcceptWithDetails: (details) => _handleDrop(details.data, _rootTargetId),
-                        builder: (context, candidateData, rejectedData) {
-                          final isHovering = candidateData.isNotEmpty;
-                          return AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: isHovering
-                                  ? Colors.blue.withAlpha(38)
-                                  : Colors.grey.withAlpha(13),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isHovering ? Colors.blue : Colors.transparent,
-                                width: 2,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.folder_open,
-                                  color: isHovering ? Colors.blue : Colors.grey,
-                                  size: 28,
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        height: _isDraggingItem ? 36 : 0,
+                        margin: _isDraggingItem
+                            ? const EdgeInsets.fromLTRB(8, 8, 8, 4)
+                            : EdgeInsets.zero,
+                        padding: _isDraggingItem
+                            ? const EdgeInsets.symmetric(horizontal: 12)
+                            : EdgeInsets.zero,
+                        decoration: BoxDecoration(
+                          color: _isDraggingOutsideList
+                              ? Colors.grey.withAlpha(60)
+                              : Colors.grey.withAlpha(22),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _isDraggingOutsideList
+                                ? Colors.grey.shade500
+                                : Colors.transparent,
+                            width: 1.5,
+                          ),
+                        ),
+                        alignment: Alignment.centerLeft,
+                        child: _isDraggingItem
+                            ? Text(
+                                _isDraggingOutsideList
+                                    ? 'Release to move to root'
+                                    : 'Drag outside list to move to root',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade700,
                                 ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Drop here to move to root',
-                                  style: TextStyle(
-                                    color: isHovering ? Colors.blue : Colors.grey,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                              )
+                            : null,
                       ),
                       ..._buildFolderTiles(null),
                       ..._buildProjectTiles(null),

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../../core/config/feature_flags.dart';
 
 import '../canvas/plan_canvas.dart';
 import '../editor/editor_controller.dart';
@@ -118,6 +119,7 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _openCarpetProducts(EditorViewState state) {
+    if (!kEnableCarpetFeatures) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => CarpetProductsScreen(
@@ -154,9 +156,11 @@ class _EditorScreenState extends State<EditorScreen> {
               selectedRoomIndex: state.selectedRoomIndex,
               onRoomSelected: _onRoomSelected,
               onRoomDeleted: _onRoomDeleted,
-              carpetProducts: state.carpetProducts,
-              roomCarpetAssignments: state.roomCarpetAssignments,
-              onCarpetAssigned: _editorController.setRoomCarpet,
+              carpetProducts: kEnableCarpetFeatures ? state.carpetProducts : const [],
+              roomCarpetAssignments:
+                  kEnableCarpetFeatures ? state.roomCarpetAssignments : const {},
+              onCarpetAssigned:
+                  kEnableCarpetFeatures ? _editorController.setRoomCarpet : null,
             ),
           ),
         ],
@@ -183,11 +187,12 @@ class _EditorScreenState extends State<EditorScreen> {
                 tooltip: 'Project settings',
                 onPressed: () => _showProjectSettingsSheet(state),
               ),
-              IconButton(
-                icon: const Icon(Icons.layers),
-                tooltip: 'Carpet products',
-                onPressed: () => _openCarpetProducts(state),
-              ),
+              if (kEnableCarpetFeatures)
+                IconButton(
+                  icon: const Icon(Icons.layers),
+                  tooltip: 'Carpet products',
+                  onPressed: () => _openCarpetProducts(state),
+                ),
               Builder(
                 builder: (context) => IconButton(
                   icon: const Icon(Icons.view_list),
@@ -213,46 +218,52 @@ class _EditorScreenState extends State<EditorScreen> {
                   if (kIsWeb && _isPanelOpen) _buildSidePanel(state),
                 ],
               ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: MediaQuery.of(context).size.height * _cutsPanelFraction,
-                child: CarpetRollCutSheet(
-                  rooms: state.rooms,
-                  carpetProducts: state.carpetProducts,
-                  roomCarpetAssignments: state.roomCarpetAssignments,
-                  openings: state.openings,
-                  roomCarpetSeamOverrides: state.roomCarpetSeamOverrides,
-                  roomCarpetSeamLayDirectionDeg:
-                      state.roomCarpetSeamLayDirectionDeg,
-                  roomCarpetLayoutVariantIndex:
-                      state.roomCarpetLayoutVariantIndex,
-                  onLayoutVariantChanged:
-                      _editorController.setRoomLayoutVariant,
-                  useImperial: state.useImperial,
-                  onResetSeamsForRoom:
-                      _editorController.clearSeamOverridesForRoom,
-                  selectedRoomIndex: state.selectedRoomIndex,
-                  onResizeDrag: (deltaDy) {
-                    final height = MediaQuery.of(context).size.height;
-                    final delta = -deltaDy / height;
-                    setState(() {
-                      _cutsPanelFraction = (_cutsPanelFraction + delta).clamp(
-                        0.06,
-                        0.92,
-                      );
-                    });
-                  },
-                  onToggleHeight: () {
-                    setState(() {
-                      _cutsPanelFraction = _cutsPanelFraction < 0.5
-                          ? 0.7
-                          : 0.08;
-                    });
-                  },
+              if (kEnableCarpetFeatures)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: MediaQuery.of(context).size.height * _cutsPanelFraction,
+                  child: CarpetRollCutSheet(
+                    rooms: state.rooms,
+                    carpetProducts: state.carpetProducts,
+                    roomCarpetAssignments: state.roomCarpetAssignments,
+                    openings: state.openings,
+                    roomCarpetSeamOverrides: state.roomCarpetSeamOverrides,
+                    roomCarpetSeamLayDirectionDeg:
+                        state.roomCarpetSeamLayDirectionDeg,
+                    roomCarpetLayoutVariantIndex:
+                        state.roomCarpetLayoutVariantIndex,
+                    onLayoutVariantChanged:
+                        _editorController.setRoomLayoutVariant,
+                    stripSplitStrategy: state.stripSplitStrategy,
+                    onStripSplitStrategyChanged:
+                        _editorController.setStripSplitStrategy,
+                    roomCarpetStripPieceLengthsOverrideMm:
+                        state.roomCarpetStripPieceLengthsOverrideMm,
+                    useImperial: state.useImperial,
+                    onResetSeamsForRoom:
+                        _editorController.clearSeamOverridesForRoom,
+                    selectedRoomIndex: state.selectedRoomIndex,
+                    onResizeDrag: (deltaDy) {
+                      final height = MediaQuery.of(context).size.height;
+                      final delta = -deltaDy / height;
+                      setState(() {
+                        _cutsPanelFraction = (_cutsPanelFraction + delta).clamp(
+                          0.06,
+                          0.92,
+                        );
+                      });
+                    },
+                    onToggleHeight: () {
+                      setState(() {
+                        _cutsPanelFraction = _cutsPanelFraction < 0.5
+                            ? 0.7
+                            : 0.08;
+                      });
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
           endDrawer: kIsWeb

@@ -18,6 +18,7 @@ import '../../core/roll_planning/roll_planner.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/models/project.dart';
+import '../../core/config/feature_flags.dart';
 import '../editor/editor_controller.dart';
 import 'plan_toolbar.dart';
 import 'plan_floorplan_menu.dart';
@@ -107,9 +108,21 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Room index -> layout variant index (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
   final Map<int, int> _roomCarpetLayoutVariantIndex = {};
 
+  /// Strip layout: when to split a strip into pieces along the run (user-adjustable).
+  StripSplitStrategy _stripSplitStrategy = StripSplitStrategy.auto;
+
+  /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
+  /// Key = roomIndex. Value = list of piece-length lists per strip; when set, replaces planner's stripPieceLengthsMm.
+  final Map<int, List<List<double>>> _roomCarpetStripPieceLengthsOverrideMm = {};
+
   /// When non-null, user is dragging this seam (room index, seam index 0-based).
   int? _draggingSeamRoomIndex;
   int? _draggingSeamIndex;
+
+  /// When non-null, user is dragging an along-run seam (strip split into pieces). Drag out of room to remove seam.
+  int? _draggingAlongSeamRoomIndex;
+  int? _draggingAlongSeamStripIndex;
+  int? _draggingAlongSeamIndex;
 
   // Unit system: false = metric (mm/cm), true = imperial (ft/in)
   bool _useImperial = false;
@@ -958,6 +971,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   Offset? get _selectedRoomCenterScreen => _selectedRoomCenterScreenFor(this);
 
   void _applyCarpetDirectionForSelectedRoom(int variantIndex) {
+    if (!kEnableCarpetFeatures) return;
     final idx = _selectedRoomIndex;
     if (idx == null) return;
     // Reuse existing variant semantics: 0 = Auto, 1 = horizontal, 2 = vertical.
@@ -988,19 +1002,53 @@ class PlanCanvasState extends State<PlanCanvas> {
     final layDirectionDeg =
         _roomCarpetSeamLayDirectionDeg[roomIndex] ??
         _layDirectionDegFromVariant(variantIndex);
-    final opts = CarpetLayoutOptions(
-      layDirectionDeg: layDirectionDeg,
+    final opts = CarpetLayoutOptions.forRoom(
+      roomIndex: roomIndex,
       minStripWidthMm: product.minStripWidthMm ?? 100,
       trimAllowanceMm: product.trimAllowanceMm ?? 75,
       patternRepeatMm: product.patternRepeatMm ?? 0,
       wasteAllowancePercent: 5,
       openings: _openings,
-      roomIndex: roomIndex,
       seamPositionsOverrideMm: seamOverride?.isNotEmpty == true
           ? seamOverride
           : null,
+      layDirectionDeg: layDirectionDeg,
+      maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
+      stripSplitStrategy: _stripSplitStrategy,
     );
-    return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+    final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+    // Apply user's along-seam merges (dragged seams out) if any.
+    final override = _roomCarpetStripPieceLengthsOverrideMm[roomIndex];
+    if (override != null &&
+        override.isNotEmpty &&
+        override.length == layout.numStrips) {
+      final stripLengthsMm = override
+          .map((p) => p.fold<double>(0.0, (a, b) => a + b))
+          .toList();
+      return StripLayout(
+        numStrips: layout.numStrips,
+        stripLengthsMm: stripLengthsMm,
+        stripWidthsMm: layout.stripWidthsMm,
+        stripPieceLengthsMm: override,
+        layAngleDeg: layout.layAngleDeg,
+        bboxMinX: layout.bboxMinX,
+        bboxMinY: layout.bboxMinY,
+        bboxWidth: layout.bboxWidth,
+        bboxHeight: layout.bboxHeight,
+        layAlongX: layout.layAlongX,
+        rollWidthMm: layout.rollWidthMm,
+        seamCount: layout.seamCount,
+        totalLinearWithWasteMm: layout.totalLinearWithWasteMm,
+        seamPositionsMmOverride: layout.seamPositionsMmOverride,
+        isSinglePiece: layout.isSinglePiece,
+        roomShapeVerticesMm: layout.roomShapeVerticesMm,
+        scoreMaterialMm: layout.scoreMaterialMm,
+        scoreSeamPenaltyMm: layout.scoreSeamPenaltyMm,
+        scoreSliverPenaltyMm: layout.scoreSliverPenaltyMm,
+        scoreCostMm: layout.scoreCostMm,
+      );
+    }
+    return layout;
   }
 
   /// Hit-test: find seam line near [screenPos]. Returns (roomIndex, seamIndex) or null.
@@ -1041,6 +1089,62 @@ class PlanCanvasState extends State<PlanCanvas> {
         if (d < bestDist) {
           bestDist = d;
           best = (roomIndex: ri, seamIndex: si);
+        }
+      }
+    }
+    return best;
+  }
+
+  /// Hit-test: find along-run seam (between pieces of same strip) near [screenPos].
+  /// Returns (roomIndex, stripIndex, alongSeamIndex) or null. Drag such a seam out of room to remove it (merge pieces).
+  ({int roomIndex, int stripIndex, int alongSeamIndex})? _findAlongSeamAtScreenPosition(
+    Offset screenPos,
+  ) {
+    const hitSlopPx = 14.0;
+    ({int roomIndex, int stripIndex, int alongSeamIndex})? best;
+    double bestDist = hitSlopPx + 1;
+    for (int ri = 0; ri < _completedRooms.length; ri++) {
+      if (!_roomCarpetAssignments.containsKey(ri)) continue;
+      final layout = _computeStripLayoutForRoom(ri, _completedRooms[ri]);
+      if (layout == null) continue;
+      for (int stri = 0; stri < layout.numStrips; stri++) {
+        final pieces = layout.pieceLengthsForStrip(stri);
+        if (pieces.length < 2) continue;
+        double cum = 0.0;
+        for (int ai = 0; ai < pieces.length - 1; ai++) {
+          cum += pieces[ai];
+          Offset p1World;
+          Offset p2World;
+          final stripWidth = stri < layout.stripWidthsMm.length
+              ? layout.stripWidthsMm[stri]
+              : (layout.rollWidthMm > 0 ? layout.rollWidthMm : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth));
+          final stripStart = stri == 0 ? 0.0 : (stri < layout.stripWidthsMm.length
+              ? layout.stripWidthsMm.sublist(0, stri).fold<double>(0.0, (a, b) => a + b)
+              : stri * (layout.rollWidthMm > 0 ? layout.rollWidthMm : stripWidth));
+          final stripEnd = stripStart + stripWidth;
+          if (layout.layAlongX) {
+            final x = layout.bboxMinX + cum;
+            p1World = Offset(x, layout.bboxMinY + stripStart);
+            p2World = Offset(x, layout.bboxMinY + stripEnd);
+          } else {
+            final y = layout.bboxMinY + cum;
+            p1World = Offset(layout.bboxMinX + stripStart, y);
+            p2World = Offset(layout.bboxMinX + stripEnd, y);
+          }
+          final p1 = _vp.worldToScreen(p1World);
+          final p2 = _vp.worldToScreen(p2World);
+          final seg = p2 - p1;
+          final len = seg.distance;
+          if (len <= 0) continue;
+          final toPoint = screenPos - p1;
+          final t = (toPoint.dx * seg.dx + toPoint.dy * seg.dy) / (len * len);
+          final closest = t.clamp(0.0, 1.0);
+          final proj = p1 + Offset(seg.dx * closest, seg.dy * closest);
+          final d = (screenPos - proj).distance;
+          if (d < bestDist) {
+            bestDist = d;
+            best = (roomIndex: ri, stripIndex: stri, alongSeamIndex: ai);
+          }
         }
       }
     }
@@ -1233,33 +1337,59 @@ class PlanCanvasState extends State<PlanCanvas> {
                   );
                 }
               }
-              // Seam drag: in pan mode, check for seam hit (all platforms; mouse or touch)
+              // Along-seam drag: in pan mode, check for along-run seam hit first (drag out to remove seam)
               if ((e.buttons == 1 || e.buttons == 0) &&
                   _isPanMode &&
                   _draftRoomVertices == null) {
-                final hit = _findSeamAtScreenPosition(e.localPosition);
-                if (hit != null) {
+                final alongHit = _findAlongSeamAtScreenPosition(e.localPosition);
+                if (alongHit != null) {
                   setState(() {
                     final layout = _computeStripLayoutForRoom(
-                      hit.roomIndex,
-                      _completedRooms[hit.roomIndex],
+                      alongHit.roomIndex,
+                      _completedRooms[alongHit.roomIndex],
                     );
-                    if (layout != null && layout.numStrips >= 2) {
-                      if (!_roomCarpetSeamOverrides.containsKey(
-                        hit.roomIndex,
-                      )) {
-                        _roomCarpetSeamOverrides[hit.roomIndex] =
-                            List<double>.from(
-                              layout.seamPositionsFromReferenceMm,
-                            );
-                        _roomCarpetSeamLayDirectionDeg[hit.roomIndex] =
-                            layout.layAlongX ? 0.0 : 90.0;
+                    if (layout != null) {
+                      final pieces = layout.pieceLengthsForStrip(alongHit.stripIndex);
+                      if (pieces.length >= 2) {
+                        if (!_roomCarpetStripPieceLengthsOverrideMm.containsKey(alongHit.roomIndex)) {
+                          _roomCarpetStripPieceLengthsOverrideMm[alongHit.roomIndex] = [
+                            for (int i = 0; i < layout.numStrips; i++)
+                              List<double>.from(layout.pieceLengthsForStrip(i)),
+                          ];
+                        }
+                        _draggingAlongSeamRoomIndex = alongHit.roomIndex;
+                        _draggingAlongSeamStripIndex = alongHit.stripIndex;
+                        _draggingAlongSeamIndex = alongHit.alongSeamIndex;
+                        _hasUnsavedChanges = true;
                       }
-                      _draggingSeamRoomIndex = hit.roomIndex;
-                      _draggingSeamIndex = hit.seamIndex;
-                      _hasUnsavedChanges = true;
                     }
                   });
+                } else {
+                  // Cross-strip seam drag
+                  final hit = _findSeamAtScreenPosition(e.localPosition);
+                  if (hit != null) {
+                    setState(() {
+                      final layout = _computeStripLayoutForRoom(
+                        hit.roomIndex,
+                        _completedRooms[hit.roomIndex],
+                      );
+                      if (layout != null && layout.numStrips >= 2) {
+                        if (!_roomCarpetSeamOverrides.containsKey(
+                          hit.roomIndex,
+                        )) {
+                          _roomCarpetSeamOverrides[hit.roomIndex] =
+                              List<double>.from(
+                                layout.seamPositionsFromReferenceMm,
+                              );
+                          _roomCarpetSeamLayDirectionDeg[hit.roomIndex] =
+                              layout.layAlongX ? 0.0 : 90.0;
+                        }
+                        _draggingSeamRoomIndex = hit.roomIndex;
+                        _draggingSeamIndex = hit.seamIndex;
+                        _hasUnsavedChanges = true;
+                      }
+                    });
+                  }
                 }
               }
             },
@@ -1293,6 +1423,13 @@ class PlanCanvasState extends State<PlanCanvas> {
                 setState(() {
                   _draggingSeamRoomIndex = null;
                   _draggingSeamIndex = null;
+                });
+              }
+              if (_draggingAlongSeamRoomIndex != null) {
+                setState(() {
+                  _draggingAlongSeamRoomIndex = null;
+                  _draggingAlongSeamStripIndex = null;
+                  _draggingAlongSeamIndex = null;
                 });
               }
             },
@@ -1402,6 +1539,39 @@ class PlanCanvasState extends State<PlanCanvas> {
                 if (distance > _panSlopPx) {
                   _longPressRoomMoveTimer?.cancel();
                   _longPressRoomMoveTimer = null;
+                }
+              }
+              // Along-seam drag: if dragged out of room run, remove seam (merge pieces)
+              if (_draggingAlongSeamRoomIndex != null &&
+                  _draggingAlongSeamStripIndex != null &&
+                  _draggingAlongSeamIndex != null) {
+                final ri = _draggingAlongSeamRoomIndex!;
+                final stri = _draggingAlongSeamStripIndex!;
+                final ai = _draggingAlongSeamIndex!;
+                final layout = _computeStripLayoutForRoom(ri, _completedRooms[ri]);
+                if (layout != null) {
+                  final runLen = layout.layAlongX ? layout.bboxWidth : layout.bboxHeight;
+                  final world = _vp.screenToWorld(e.localPosition);
+                  final runCoord = layout.layAlongX
+                      ? (world.dx - layout.bboxMinX)
+                      : (world.dy - layout.bboxMinY);
+                  const outMarginMm = 50.0;
+                  if (runCoord < -outMarginMm || runCoord > runLen + outMarginMm) {
+                    setState(() {
+                      final override = _roomCarpetStripPieceLengthsOverrideMm[ri]!;
+                      final stripPieces = List<double>.from(override[stri]);
+                      if (ai >= 0 && ai < stripPieces.length - 1) {
+                        stripPieces[ai] = stripPieces[ai] + stripPieces[ai + 1];
+                        stripPieces.removeAt(ai + 1);
+                        override[stri] = stripPieces;
+                        _draggingAlongSeamRoomIndex = null;
+                        _draggingAlongSeamStripIndex = null;
+                        _draggingAlongSeamIndex = null;
+                        _hasUnsavedChanges = true;
+                      }
+                    });
+                    return;
+                  }
                 }
               }
               // Seam drag: update seam position
@@ -1598,35 +1768,61 @@ class PlanCanvasState extends State<PlanCanvas> {
                             _handlePanStart(details.localFocalPoint);
                           } else {
                             _scaleGestureIsVertexEdit = false;
-                            // Non-web: also start seam drag if pointer hits a seam (so scale gesture owns the drag)
-                            final hit = _findSeamAtScreenPosition(
+                            // Non-web: also start along-seam or cross-seam drag if pointer hits a seam
+                            final alongHit = _findAlongSeamAtScreenPosition(
                               details.localFocalPoint,
                             );
-                            if (hit != null) {
+                            if (alongHit != null) {
                               setState(() {
                                 final layout = _computeStripLayoutForRoom(
-                                  hit.roomIndex,
-                                  _completedRooms[hit.roomIndex],
+                                  alongHit.roomIndex,
+                                  _completedRooms[alongHit.roomIndex],
                                 );
-                                if (layout != null && layout.numStrips >= 2) {
-                                  if (!_roomCarpetSeamOverrides.containsKey(
-                                    hit.roomIndex,
-                                  )) {
-                                    _roomCarpetSeamOverrides[hit.roomIndex] =
-                                        List<double>.from(
-                                          layout.seamPositionsFromReferenceMm,
-                                        );
-                                    _roomCarpetSeamLayDirectionDeg[hit
-                                        .roomIndex] = layout.layAlongX
-                                        ? 0.0
-                                        : 90.0;
+                                if (layout != null) {
+                                  final pieces = layout.pieceLengthsForStrip(alongHit.stripIndex);
+                                  if (pieces.length >= 2) {
+                                    if (!_roomCarpetStripPieceLengthsOverrideMm.containsKey(alongHit.roomIndex)) {
+                                      _roomCarpetStripPieceLengthsOverrideMm[alongHit.roomIndex] = [
+                                        for (int i = 0; i < layout.numStrips; i++)
+                                          List<double>.from(layout.pieceLengthsForStrip(i)),
+                                      ];
+                                    }
+                                    _draggingAlongSeamRoomIndex = alongHit.roomIndex;
+                                    _draggingAlongSeamStripIndex = alongHit.stripIndex;
+                                    _draggingAlongSeamIndex = alongHit.alongSeamIndex;
+                                    _hasUnsavedChanges = true;
                                   }
-                                  _draggingSeamRoomIndex = hit.roomIndex;
-                                  _draggingSeamIndex = hit.seamIndex;
-                                  _hasUnsavedChanges = true;
                                 }
                               });
                             } else {
+                              final hit = _findSeamAtScreenPosition(
+                                details.localFocalPoint,
+                              );
+                              if (hit != null) {
+                                setState(() {
+                                  final layout = _computeStripLayoutForRoom(
+                                    hit.roomIndex,
+                                    _completedRooms[hit.roomIndex],
+                                  );
+                                  if (layout != null && layout.numStrips >= 2) {
+                                    if (!_roomCarpetSeamOverrides.containsKey(
+                                      hit.roomIndex,
+                                    )) {
+                                      _roomCarpetSeamOverrides[hit.roomIndex] =
+                                          List<double>.from(
+                                            layout.seamPositionsFromReferenceMm,
+                                          );
+                                      _roomCarpetSeamLayDirectionDeg[hit
+                                          .roomIndex] = layout.layAlongX
+                                          ? 0.0
+                                          : 90.0;
+                                    }
+                                    _draggingSeamRoomIndex = hit.roomIndex;
+                                    _draggingSeamIndex = hit.seamIndex;
+                                    _hasUnsavedChanges = true;
+                                  }
+                                });
+                              } else {
                               if (_debugVertexEdit)
                                 debugPrint(
                                   'PlanCanvas: scaleStart → potential pan/tap (no vertex or tap on image)',
@@ -1634,6 +1830,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                               setState(() {
                                 _panStartScreen = details.localFocalPoint;
                               });
+                            }
                             }
                             // Long-press timer for "move room" is started in Listener.onPointerDown (all platforms)
                           }
@@ -1651,6 +1848,40 @@ class PlanCanvasState extends State<PlanCanvas> {
                   : (details) {
                       // Check pointer count: 1 = drawing/panning/measure/seam-drag, 2+ = pan/zoom
                       if (details.pointerCount == 1) {
+                        // Along-seam drag: if dragged out of room run, remove seam (merge pieces)
+                        if (_draggingAlongSeamRoomIndex != null &&
+                            _draggingAlongSeamStripIndex != null &&
+                            _draggingAlongSeamIndex != null) {
+                          final ri = _draggingAlongSeamRoomIndex!;
+                          final stri = _draggingAlongSeamStripIndex!;
+                          final ai = _draggingAlongSeamIndex!;
+                          final layout = _computeStripLayoutForRoom(ri, _completedRooms[ri]);
+                          if (layout != null) {
+                            final runLen = layout.layAlongX ? layout.bboxWidth : layout.bboxHeight;
+                            final world = _vp.screenToWorld(details.localFocalPoint);
+                            final runCoord = layout.layAlongX
+                                ? (world.dx - layout.bboxMinX)
+                                : (world.dy - layout.bboxMinY);
+                            const outMarginMm = 50.0;
+                            if (runCoord < -outMarginMm || runCoord > runLen + outMarginMm) {
+                              setState(() {
+                                final override = _roomCarpetStripPieceLengthsOverrideMm[ri]!;
+                                final stripPieces = List<double>.from(override[stri]);
+                                if (ai >= 0 && ai < stripPieces.length - 1) {
+                                  stripPieces[ai] = stripPieces[ai] + stripPieces[ai + 1];
+                                  stripPieces.removeAt(ai + 1);
+                                  override[stri] = stripPieces;
+                                  _draggingAlongSeamRoomIndex = null;
+                                  _draggingAlongSeamStripIndex = null;
+                                  _draggingAlongSeamIndex = null;
+                                  _hasUnsavedChanges = true;
+                                }
+                              });
+                              return;
+                            }
+                          }
+                          return;
+                        }
                         // Seam drag: update position (non-web; Listener handles web)
                         if (_draggingSeamRoomIndex != null &&
                             _draggingSeamIndex != null) {
@@ -1803,6 +2034,14 @@ class PlanCanvasState extends State<PlanCanvas> {
                         });
                         return;
                       }
+                      if (_draggingAlongSeamRoomIndex != null) {
+                        setState(() {
+                          _draggingAlongSeamRoomIndex = null;
+                          _draggingAlongSeamStripIndex = null;
+                          _draggingAlongSeamIndex = null;
+                        });
+                        return;
+                      }
                       final wasMovingRoom = _isMovingRoom;
                       if (_isMovingRoom) {
                         setState(() {
@@ -1927,13 +2166,32 @@ class PlanCanvasState extends State<PlanCanvas> {
                           vp: _vp,
                           completedRooms: _safeCopyRooms(_completedRooms),
                           openings: List<Opening>.from(_openings),
-                          roomCarpetAssignments: _roomCarpetAssignments,
+                          roomCarpetAssignments: kEnableCarpetFeatures
+                              ? _roomCarpetAssignments
+                              : const {},
                           carpetProducts: _carpetProducts,
-                          roomCarpetSeamOverrides: _roomCarpetSeamOverrides,
-                          roomCarpetSeamLayDirectionDeg:
-                              _roomCarpetSeamLayDirectionDeg,
-                          roomCarpetLayoutVariantIndex:
-                              _roomCarpetLayoutVariantIndex,
+                          roomCarpetSeamOverrides: kEnableCarpetFeatures
+                              ? _roomCarpetSeamOverrides
+                              : const {},
+                          roomCarpetSeamLayDirectionDeg: kEnableCarpetFeatures
+                              ? _roomCarpetSeamLayDirectionDeg
+                              : const {},
+                          roomCarpetLayoutVariantIndex: kEnableCarpetFeatures
+                              ? _roomCarpetLayoutVariantIndex
+                              : const {},
+                          roomCarpetStripPieceLengthsOverrideMm:
+                              kEnableCarpetFeatures
+                              ? Map<int, List<List<double>>>.from(
+                                  _roomCarpetStripPieceLengthsOverrideMm.map(
+                                    (k, v) => MapEntry(
+                                      k,
+                                      v
+                                          .map((p) => List<double>.from(p))
+                                          .toList(),
+                                    ),
+                                  ),
+                                )
+                              : const {},
                           pendingDoorEdge: _pendingDoorEdge,
                           draftRoomVertices: _draftRoomVertices != null
                               ? List<Offset>.from(_draftRoomVertices!)
@@ -1979,7 +2237,7 @@ class PlanCanvasState extends State<PlanCanvas> {
             child: LinearProgressIndicator(minHeight: 2),
           ),
         // Room actions (three-dots) button + menu near selected room
-        if (_selectedRoomCenterScreen != null) ...[
+        if (kEnableCarpetFeatures && _selectedRoomCenterScreen != null) ...[
           Positioned(
             left: _selectedRoomCenterScreen!.dx - 16,
             top: _selectedRoomCenterScreen!.dy - 44,
@@ -2055,7 +2313,9 @@ class PlanCanvasState extends State<PlanCanvas> {
               ),
             ),
         ],
-        if (_selectedRoomCenterScreen != null && _showCarpetDirectionPicker)
+        if (kEnableCarpetFeatures &&
+            _selectedRoomCenterScreen != null &&
+            _showCarpetDirectionPicker)
           Positioned(
             left: _selectedRoomCenterScreen!.dx - 80,
             top: _selectedRoomCenterScreen!.dy - 140,
