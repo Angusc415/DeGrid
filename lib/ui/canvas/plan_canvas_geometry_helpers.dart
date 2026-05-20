@@ -66,51 +66,7 @@ extension PlanCanvasGeometryHelpers on PlanCanvasState {
   }
 
   void _addOpeningOnAdjacentRoom(Opening primary) {
-    if (primary.roomIndex < 0 || primary.roomIndex >= _completedRooms.length) {
-      return;
-    }
-    final room1 = _completedRooms[primary.roomIndex];
-    final verts1 = room1.vertices;
-    if (verts1.isEmpty) return;
-    final i1 = primary.edgeIndex % verts1.length;
-    final j1 = (i1 + 1) % verts1.length;
-    final v0 = verts1[i1];
-    final v1 = verts1[j1];
-    final edgeLen = (v1 - v0).distance;
-    if (edgeLen <= 0) return;
-
-    const double tol = 1e-3;
-
-    for (int ri = 0; ri < _completedRooms.length; ri++) {
-      if (ri == primary.roomIndex) continue;
-      final room2 = _completedRooms[ri];
-      final verts2 = room2.vertices;
-      if (verts2.isEmpty) continue;
-      for (int ei = 0; ei < verts2.length; ei++) {
-        final k0 = ei;
-        final k1 = (ei + 1) % verts2.length;
-        final w0 = verts2[k0];
-        final w1 = verts2[k1];
-        if ((v0 - w1).distance > tol || (v1 - w0).distance > tol) continue;
-
-        final width = primary.widthMm.clamp(0.0, edgeLen);
-        final off2 = (edgeLen - (primary.offsetMm + width)).clamp(
-          0.0,
-          edgeLen - width,
-        );
-
-        _openings.add(
-          Opening(
-            roomIndex: ri,
-            edgeIndex: ei,
-            offsetMm: off2,
-            widthMm: width,
-            isDoor: primary.isDoor,
-          ),
-        );
-        return;
-      }
-    }
+    _replaceOpenings(syncMirroredOpenings(_completedRooms, _openings));
   }
 
   Offset _snapAngleToConstraint(

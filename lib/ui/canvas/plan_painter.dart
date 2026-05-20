@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'viewport.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/opening.dart';
+import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
@@ -48,8 +49,12 @@ class PlanPaintModel {
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   /// Per-room layout variant: 0 = Auto, 1 = 0° (horizontal strips), 2 = 90° (vertical strips).
   final Map<int, int> roomCarpetLayoutVariantIndex;
+  /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   /// Optional project-level door thickness in millimeters (used when drawing doors).
   final double? doorThicknessMm;
+  /// Temporary jamb dimensions while dragging a room into alignment.
+  final List<RoomMoveAlignHint> roomMoveAlignHints;
 
   PlanPaintModel({
     required this.vp,
@@ -84,8 +89,11 @@ class PlanPaintModel {
     Map<int, List<double>>? roomCarpetSeamOverrides,
     Map<int, double>? roomCarpetSeamLayDirectionDeg,
     Map<int, int>? roomCarpetLayoutVariantIndex,
+    Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     this.doorThicknessMm,
+    List<RoomMoveAlignHint>? roomMoveAlignHints,
   })  : completedRooms = completedRooms ?? [],
+        roomMoveAlignHints = roomMoveAlignHints ?? const [],
         measurePointsWorld = measurePointsWorld ?? [],
         placedDimensions = placedDimensions ?? [],
         openings = openings ?? [],
@@ -93,7 +101,8 @@ class PlanPaintModel {
         carpetProducts = carpetProducts ?? const [],
         roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {},
         roomCarpetSeamLayDirectionDeg = roomCarpetSeamLayDirectionDeg ?? const {},
-        roomCarpetLayoutVariantIndex = roomCarpetLayoutVariantIndex ?? const {};
+        roomCarpetLayoutVariantIndex = roomCarpetLayoutVariantIndex ?? const {},
+        roomCarpetStripPieceLengthsOverrideMm = roomCarpetStripPieceLengthsOverrideMm ?? const {};
 }
 
 /// Custom painter for the plan canvas (rooms, draft, grid, dimensions, etc.).
@@ -182,6 +191,10 @@ class PlanPainter extends CustomPainter {
         final endScreen = m.vp.worldToScreen(d.toMm);
         final distanceMm = (d.toMm - d.fromMm).distance;
         _drawDimension(canvas, startScreen, endScreen, distanceMm, isDashed: true);
+      }
+
+      for (final hint in m.roomMoveAlignHints) {
+        _drawRoomMoveAlignHint(canvas, hint);
       }
 
       // Measure mode: straight dotted line (2 points) or bent dotted polyline (3+ points)
@@ -512,6 +525,83 @@ class PlanPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Draw along-run seams when a strip is split into multiple pieces (one line + arrow per seam, same direction).
+  void _drawAlongRunSeams(Canvas canvas, Room room, StripLayout layout) {
+    final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    if (verts.length < 3) return;
+    final roomPath = Path()
+      ..addPolygon(verts.map((v) => m.vp.worldToScreen(v)).toList(), true);
+    canvas.save();
+    canvas.clipPath(roomPath);
+
+    final seamPaint = Paint()
+      ..color = Colors.blue.withAlpha(204)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    const headLenMm = 40.0;
+    const headWidthMm = 25.0;
+
+    for (int stri = 0; stri < layout.numStrips; stri++) {
+      final pieces = layout.pieceLengthsForStrip(stri);
+      if (pieces.length < 2) continue;
+      double stripStartPerp = 0.0;
+      for (int i = 0; i < stri; i++) {
+        stripStartPerp += i < layout.stripWidthsMm.length
+            ? layout.stripWidthsMm[i]
+            : layout.rollWidthMm;
+      }
+      final stripWidth = stri < layout.stripWidthsMm.length
+          ? layout.stripWidthsMm[stri]
+          : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth);
+      double cum = 0.0;
+      for (int ai = 0; ai < pieces.length - 1; ai++) {
+        cum += pieces[ai];
+        Offset p1World;
+        Offset p2World;
+        Offset arrowBaseWorld;
+        Offset arrowTipWorld;
+        if (layout.layAlongX) {
+          final x = layout.bboxMinX + cum;
+          final yStart = layout.bboxMinY + stripStartPerp;
+          final yEnd = yStart + stripWidth;
+          p1World = Offset(x, yStart);
+          p2World = Offset(x, yEnd);
+          final midY = (yStart + yEnd) / 2;
+          arrowBaseWorld = Offset(x, midY);
+          arrowTipWorld = Offset(x + headLenMm, midY);
+        } else {
+          final y = layout.bboxMinY + cum;
+          final xStart = layout.bboxMinX + stripStartPerp;
+          final xEnd = xStart + stripWidth;
+          p1World = Offset(xStart, y);
+          p2World = Offset(xEnd, y);
+          final midX = (xStart + xEnd) / 2;
+          arrowBaseWorld = Offset(midX, y);
+          arrowTipWorld = Offset(midX, y + headLenMm);
+        }
+        final p1Screen = m.vp.worldToScreen(p1World);
+        final p2Screen = m.vp.worldToScreen(p2World);
+        _drawDashedLine(canvas, p1Screen, p2Screen, seamPaint, dashLength: 4, gapLength: 5);
+        final baseScreen = m.vp.worldToScreen(arrowBaseWorld);
+        final tipScreen = m.vp.worldToScreen(arrowTipWorld);
+        canvas.drawLine(baseScreen, tipScreen, seamPaint);
+        final dir = (arrowTipWorld - arrowBaseWorld).distance > 1e-6
+            ? (arrowTipWorld - arrowBaseWorld) / (arrowTipWorld - arrowBaseWorld).distance
+            : Offset(1, 0);
+        final perp = Offset(-dir.dy, dir.dx);
+        final headBaseWorld = arrowTipWorld - dir * headLenMm * 0.6;
+        final headLWorld = headBaseWorld + perp * headWidthMm;
+        final headRWorld = headBaseWorld - perp * headWidthMm;
+        canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), seamPaint);
+        canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), seamPaint);
+      }
+    }
+    canvas.restore();
+  }
+
   /// Distance from point [p] to the line segment [a]–[b] in world millimetres.
   double _distancePointToSegment(Offset p, Offset a, Offset b) {
     final ab = b - a;
@@ -542,17 +632,49 @@ class PlanPainter extends CustomPainter {
     final seamOverride = m.roomCarpetSeamOverrides[roomIndex];
     final variantIndex = m.roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
     final layDirectionDeg = m.roomCarpetSeamLayDirectionDeg[roomIndex] ?? _layDirectionDegFromVariant(variantIndex);
-    final opts = CarpetLayoutOptions(
-      layDirectionDeg: layDirectionDeg,
+    final opts = CarpetLayoutOptions.forRoom(
+      roomIndex: roomIndex,
       minStripWidthMm: product.minStripWidthMm ?? 100,
       trimAllowanceMm: product.trimAllowanceMm ?? 75,
       patternRepeatMm: product.patternRepeatMm ?? 0,
       wasteAllowancePercent: 5,
       openings: m.openings,
-      roomIndex: roomIndex,
       seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
+      layDirectionDeg: layDirectionDeg,
+      maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
     );
-    return RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+    final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
+    final override = m.roomCarpetStripPieceLengthsOverrideMm[roomIndex];
+    if (override != null &&
+        override.isNotEmpty &&
+        override.length == layout.numStrips) {
+      final stripLengthsMm = override
+          .map((p) => p.fold<double>(0.0, (a, b) => a + b))
+          .toList();
+      return StripLayout(
+        numStrips: layout.numStrips,
+        stripLengthsMm: stripLengthsMm,
+        stripWidthsMm: layout.stripWidthsMm,
+        stripPieceLengthsMm: override,
+        layAngleDeg: layout.layAngleDeg,
+        bboxMinX: layout.bboxMinX,
+        bboxMinY: layout.bboxMinY,
+        bboxWidth: layout.bboxWidth,
+        bboxHeight: layout.bboxHeight,
+        layAlongX: layout.layAlongX,
+        rollWidthMm: layout.rollWidthMm,
+        seamCount: layout.seamCount,
+        totalLinearWithWasteMm: layout.totalLinearWithWasteMm,
+        seamPositionsMmOverride: layout.seamPositionsMmOverride,
+        isSinglePiece: layout.isSinglePiece,
+        roomShapeVerticesMm: layout.roomShapeVerticesMm,
+        scoreMaterialMm: layout.scoreMaterialMm,
+        scoreSeamPenaltyMm: layout.scoreSeamPenaltyMm,
+        scoreSliverPenaltyMm: layout.scoreSliverPenaltyMm,
+        scoreCostMm: layout.scoreCostMm,
+      );
+    }
+    return layout;
   }
 
   /// Same palette as roll cut sheet so product colors match on canvas and roll board.
@@ -603,6 +725,13 @@ class PlanPainter extends CustomPainter {
         stripLayout.numStrips > 1 &&
         room.vertices.length >= 3) {
       _drawCarpetStrips(canvas, room, stripLayout);
+    }
+
+    // Along-run seams (strip split into pieces): dotted lines + arrows in lay direction
+    if (stripLayout != null &&
+        stripLayout.totalPieceCount > stripLayout.numStrips &&
+        room.vertices.length >= 3) {
+      _drawAlongRunSeams(canvas, room, stripLayout);
     }
 
     // Roll direction arrow - shows which way to roll the carpet
@@ -670,60 +799,101 @@ class PlanPainter extends CustomPainter {
       final edgeLenMm = (v1 - v0).distance;
       if (edgeLenMm <= 0) continue;
 
-      // Find any door gap that lies along this edge (could belong to this room or a neighbour).
-      ({Offset start, Offset end, bool isDoor})? matchedGap;
+      // Find all door gaps that lie along this edge (could belong to this room or a neighbour).
+      final matchedGaps = <({Offset start, Offset end, bool isDoor})>[];
       for (final g in doorGaps) {
         if (edgeHasGap(v0, v1, g)) {
-          matchedGap = g;
-          break;
+          matchedGaps.add(g);
         }
       }
 
-      if (matchedGap == null) {
+      if (matchedGaps.isEmpty) {
         canvas.drawLine(p0, p1, outlinePaint);
         continue;
       }
 
-      // Project gap endpoints onto this edge so we can split the stroke at the doorway.
-      final tA = projectParam(v0, v1, matchedGap.start);
-      final tB = projectParam(v0, v1, matchedGap.end);
-      final t0 = math.min(tA, tB);
-      final t1 = math.max(tA, tB);
+      // Project all gap endpoints onto this edge and merge overlaps.
+      final intervals = <({double t0, double t1, bool isDoor})>[];
+      for (final g in matchedGaps) {
+        final tA = projectParam(v0, v1, g.start);
+        final tB = projectParam(v0, v1, g.end);
+        final t0 = math.min(tA, tB);
+        final t1 = math.max(tA, tB);
+        if (t1 - t0 > 1e-6) {
+          intervals.add((t0: t0, t1: t1, isDoor: g.isDoor));
+        }
+      }
+      intervals.sort((a, b) => a.t0.compareTo(b.t0));
 
-      final gapStartScreen = Offset(
-        p0.dx + (p1.dx - p0.dx) * t0,
-        p0.dy + (p1.dy - p0.dy) * t0,
-      );
-      final gapEndScreen = Offset(
-        p0.dx + (p1.dx - p0.dx) * t1,
-        p0.dy + (p1.dy - p0.dy) * t1,
-      );
+      final merged = <({double t0, double t1, bool hasDoor})>[];
+      for (final interval in intervals) {
+        if (merged.isEmpty || interval.t0 > merged.last.t1 + 1e-6) {
+          merged.add((t0: interval.t0, t1: interval.t1, hasDoor: interval.isDoor));
+        } else {
+          final last = merged.removeLast();
+          merged.add((
+            t0: last.t0,
+            t1: math.max(last.t1, interval.t1),
+            hasDoor: last.hasDoor || interval.isDoor,
+          ));
+        }
+      }
 
-      canvas.drawLine(p0, gapStartScreen, outlinePaint);
-      canvas.drawLine(gapEndScreen, p1, outlinePaint);
+      // Draw wall segments outside merged gaps.
+      double cursorT = 0.0;
+      for (final gap in merged) {
+        if (gap.t0 > cursorT) {
+          final segStart = Offset(
+            p0.dx + (p1.dx - p0.dx) * cursorT,
+            p0.dy + (p1.dy - p0.dy) * cursorT,
+          );
+          final segEnd = Offset(
+            p0.dx + (p1.dx - p0.dx) * gap.t0,
+            p0.dy + (p1.dy - p0.dy) * gap.t0,
+          );
+          canvas.drawLine(segStart, segEnd, outlinePaint);
+        }
 
-      if (matchedGap.isDoor) {
-        final doorPaint = Paint()
-          ..color = Colors.brown.shade700
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = doorBasePx
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.miter;
-        final gapMid = Offset(
-          (gapStartScreen.dx + gapEndScreen.dx) / 2,
-          (gapStartScreen.dy + gapEndScreen.dy) / 2,
+        if (gap.hasDoor) {
+          final gapStartScreen = Offset(
+            p0.dx + (p1.dx - p0.dx) * gap.t0,
+            p0.dy + (p1.dy - p0.dy) * gap.t0,
+          );
+          final gapEndScreen = Offset(
+            p0.dx + (p1.dx - p0.dx) * gap.t1,
+            p0.dy + (p1.dy - p0.dy) * gap.t1,
+          );
+          final doorPaint = Paint()
+            ..color = Colors.brown.shade700
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = doorBasePx
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.miter;
+          final gapMid = Offset(
+            (gapStartScreen.dx + gapEndScreen.dx) / 2,
+            (gapStartScreen.dy + gapEndScreen.dy) / 2,
+          );
+          final gapVec = gapEndScreen - gapStartScreen;
+          final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
+          final rect = Rect.fromCircle(center: gapMid, radius: radius);
+          canvas.drawArc(rect, 0, math.pi / 2, false, doorPaint);
+        }
+
+        cursorT = math.max(cursorT, gap.t1);
+      }
+      if (cursorT < 1.0) {
+        final segStart = Offset(
+          p0.dx + (p1.dx - p0.dx) * cursorT,
+          p0.dy + (p1.dy - p0.dy) * cursorT,
         );
-        final gapVec = gapEndScreen - gapStartScreen;
-        final radius = (gapVec.distance / 2).clamp(4.0, 40.0);
-        final rect = Rect.fromCircle(center: gapMid, radius: radius);
-        canvas.drawArc(rect, 0, math.pi / 2, false, doorPaint);
+        canvas.drawLine(segStart, p1, outlinePaint);
       }
     }
 
     _drawRoomLabel(canvas, room, screenPoints);
     
     // Draw wall measurements/dimensions
-    _drawWallMeasurements(canvas, room, screenPoints);
+    _drawWallMeasurements(canvas, room, screenPoints, roomIndex: roomIndex);
   }
   
   /// Polygon area centroid – lies inside the polygon (e.g. L-shapes), unlike vertex centroid.
@@ -817,39 +987,124 @@ class PlanPainter extends CustomPainter {
     );
   }
 
-  /// Draw measurements on each wall segment of the room.
-  void _drawWallMeasurements(Canvas canvas, Room room, List<Offset> screenPoints) {
+  /// Draw measurements on each wall segment, split at door/opening gaps.
+  void _drawWallMeasurements(
+    Canvas canvas,
+    Room room,
+    List<Offset> screenPoints, {
+    required int roomIndex,
+  }) {
     if (room.vertices.length < 2) return;
-    
-    // Get unique vertices (skip closing vertex if duplicate)
-    final uniqueVertices = room.vertices.length > 1 && 
-                           room.vertices.first == room.vertices.last
-        ? room.vertices.sublist(0, room.vertices.length - 1)
-        : room.vertices;
-    
-    final uniqueScreenPoints = screenPoints.length > 1 && 
-                                screenPoints.first == screenPoints.last
-        ? screenPoints.sublist(0, screenPoints.length - 1)
-        : screenPoints;
-    
+
+    final uniqueVertices = uniquePolygonVertices(room.vertices);
+    final uniqueScreenPoints = uniquePolygonVertices(screenPoints);
     if (uniqueVertices.length < 2) return;
-    
-    // Draw dimension for each wall segment
+
     for (int i = 0; i < uniqueVertices.length; i++) {
-      final j = (i + 1) % uniqueVertices.length;
       final startWorld = uniqueVertices[i];
-      final endWorld = uniqueVertices[j];
+      final endWorld = uniqueVertices[(i + 1) % uniqueVertices.length];
       final startScreen = uniqueScreenPoints[i];
-      final endScreen = uniqueScreenPoints[j];
-      
-      // Calculate distance in mm
-      final distanceMm = (endWorld - startWorld).distance;
-      
-      // Only draw if wall is long enough to display measurement
+      final endScreen =
+          uniqueScreenPoints[(i + 1) % uniqueScreenPoints.length];
       final screenDistance = (endScreen - startScreen).distance;
-      if (screenDistance < 50) continue; // Skip very short walls
-      
-      _drawDimension(canvas, startScreen, endScreen, distanceMm);
+      if (screenDistance < 50) continue;
+
+      final gapsOnEdge = <({double t0, double t1})>[];
+      for (final o in m.openings) {
+        if (o.roomIndex != roomIndex) continue;
+        final seg = edgeSegment(room.vertices, o.edgeIndex);
+        if ((seg.a - startWorld).distance > 0.5 ||
+            (seg.b - endWorld).distance > 0.5) {
+          continue;
+        }
+        final edgeLen = (endWorld - startWorld).distance;
+        if (edgeLen <= 0) continue;
+        final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
+        final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(0.0, 1.0);
+        gapsOnEdge.add((t0: t0, t1: t1));
+      }
+
+      if (gapsOnEdge.isEmpty) {
+        _drawDimension(
+          canvas,
+          startScreen,
+          endScreen,
+          (endWorld - startWorld).distance,
+        );
+        continue;
+      }
+
+      gapsOnEdge.sort((a, b) => a.t0.compareTo(b.t0));
+      double tCursor = 0.0;
+      for (final g in gapsOnEdge) {
+        if (g.t0 > tCursor + 0.001) {
+          final p0w = Offset.lerp(startWorld, endWorld, tCursor)!;
+          final p1w = Offset.lerp(startWorld, endWorld, g.t0)!;
+          _drawDimension(
+            canvas,
+            Offset.lerp(startScreen, endScreen, tCursor)!,
+            Offset.lerp(startScreen, endScreen, g.t0)!,
+            (p1w - p0w).distance,
+          );
+        }
+        if (g.t1 > g.t0 + 0.001) {
+          final p0w = Offset.lerp(startWorld, endWorld, g.t0)!;
+          final p1w = Offset.lerp(startWorld, endWorld, g.t1)!;
+          _drawDimension(
+            canvas,
+            Offset.lerp(startScreen, endScreen, g.t0)!,
+            Offset.lerp(startScreen, endScreen, g.t1)!,
+            (p1w - p0w).distance,
+            isTemporary: true,
+          );
+        }
+        tCursor = g.t1;
+      }
+      if (tCursor < 0.999) {
+        final p0w = Offset.lerp(startWorld, endWorld, tCursor)!;
+        _drawDimension(
+          canvas,
+          Offset.lerp(startScreen, endScreen, tCursor)!,
+          endScreen,
+          (endWorld - p0w).distance,
+        );
+      }
+    }
+  }
+
+  void _drawRoomMoveAlignHint(Canvas canvas, RoomMoveAlignHint hint) {
+    final c0 = m.vp.worldToScreen(hint.cornerStartMm);
+    final g0 = m.vp.worldToScreen(hint.gapStartMm);
+    final g1 = m.vp.worldToScreen(hint.gapEndMm);
+    final c1 = m.vp.worldToScreen(hint.cornerEndMm);
+    final offsetSign = hint.hostWall ? -1.0 : 1.0;
+    if (hint.segBeforeMm > 1) {
+      _drawDimension(
+        canvas,
+        c0,
+        g0,
+        hint.segBeforeMm,
+        isTemporary: true,
+        dimensionOffsetSign: offsetSign,
+      );
+    }
+    _drawDimension(
+      canvas,
+      g0,
+      g1,
+      hint.openingWidthMm,
+      isTemporary: true,
+      dimensionOffsetSign: offsetSign,
+    );
+    if (hint.segAfterMm > 1) {
+      _drawDimension(
+        canvas,
+        g1,
+        c1,
+        hint.segAfterMm,
+        isTemporary: true,
+        dimensionOffsetSign: offsetSign,
+      );
     }
   }
   
@@ -1013,7 +1268,15 @@ class PlanPainter extends CustomPainter {
   /// Draw a dimension line with measurement text for a wall segment.
   /// When [isTemporary] is true, uses teal color and dotted lines for measure/add-dimension preview.
   /// When [isDashed] is true (e.g. permanent placed dimensions), uses grey color and dotted lines.
-  void _drawDimension(Canvas canvas, Offset start, Offset end, double distanceMm, {bool isTemporary = false, bool isDashed = false}) {
+  void _drawDimension(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    double distanceMm, {
+    bool isTemporary = false,
+    bool isDashed = false,
+    double dimensionOffsetSign = 1.0,
+  }) {
     // Calculate midpoint and perpendicular offset for dimension line
     final midpoint = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
     final wallVector = end - start;
@@ -1023,8 +1286,8 @@ class PlanPainter extends CustomPainter {
     // Perpendicular direction (rotate 90 degrees)
     final perp = Offset(-wallVector.dy / wallLength, wallVector.dx / wallLength);
     
-    // Offset distance from wall (20 pixels)
-    final offsetDistance = 20.0;
+    // Offset distance from wall (20 pixels); sign flips to opposite side of wall.
+    final offsetDistance = 20.0 * dimensionOffsetSign;
     final dimensionLineStart = midpoint + perp * offsetDistance;
     final dimensionLineEnd = midpoint - perp * offsetDistance;
     

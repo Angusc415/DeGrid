@@ -13,6 +13,8 @@ class Opening {
   final double widthMm;
   /// True = door (draw swing arc). False = opening only (window, pass-through; just the gap).
   final bool isDoor;
+  /// Pairs primary and mirrored openings on shared walls (optional).
+  final String? linkId;
 
   Opening({
     required this.roomIndex,
@@ -20,6 +22,7 @@ class Opening {
     required this.offsetMm,
     required this.widthMm,
     this.isDoor = true,
+    this.linkId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -28,6 +31,7 @@ class Opening {
         'offsetMm': offsetMm,
         'widthMm': widthMm,
         'isDoor': isDoor,
+        if (linkId != null) 'linkId': linkId,
       };
 
   factory Opening.fromJson(Map<String, dynamic> json) {
@@ -37,6 +41,7 @@ class Opening {
       offsetMm: (json['offsetMm'] as num).toDouble(),
       widthMm: (json['widthMm'] as num).toDouble(),
       isDoor: json['isDoor'] as bool? ?? true,
+      linkId: json['linkId'] as String?,
     );
   }
 

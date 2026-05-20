@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'viewport.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:file_picker/file_picker.dart';
@@ -12,6 +12,7 @@ import 'package:path/path.dart' as path;
 import '../../core/background_image_io.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/opening.dart';
+import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
@@ -33,6 +34,7 @@ part 'plan_canvas_persistence.dart';
 part 'plan_canvas_room_management.dart';
 part 'plan_canvas_room_editing.dart';
 part 'plan_canvas_tap.dart';
+part 'plan_canvas_room_move.dart';
 
 /// Angle lock for draw mode: none (free), snap to 90°, or snap to 45°.
 enum DrawAngleLock { none, snap90, snap45 }
@@ -188,6 +190,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   int? _roomMoveRoomIndex;
   Offset? _roomMoveAnchorWorld;
   List<Offset>? _roomMoveVerticesAtStart;
+  List<RoomMoveAlignHint> _roomMoveAlignHints = const [];
 
   // Undo/Redo history
   // Each history entry contains both completed rooms and draft room vertices
@@ -231,8 +234,9 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// The vertex before [ _draftDrawingFrom ] in draw order (for angle calculation).
   Offset? get _draftDrawingFromPrev {
-    if (_draftRoomVertices == null || _draftRoomVertices!.length < 2)
+    if (_draftRoomVertices == null || _draftRoomVertices!.length < 2) {
       return null;
+    }
     return _drawFromStart
         ? _draftRoomVertices![1]
         : _draftRoomVertices![_draftRoomVertices!.length - 2];
@@ -503,8 +507,9 @@ class PlanCanvasState extends State<PlanCanvas> {
   }
 
   void _fitFloorplanToView() {
-    if (_backgroundImage == null || _backgroundImageState == null || !mounted)
+    if (_backgroundImage == null || _backgroundImageState == null || !mounted) {
       return;
+    }
     final screenSize = MediaQuery.of(context).size;
     final eff = _backgroundImageState!.effectiveScaleMmPerPixel;
     final ox = _backgroundImageState!.offsetX;
@@ -928,6 +933,12 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// Openings (doors, pass-throughs) for layout options. Read-only copy.
   List<Opening> get openings => List<Opening>.from(_openings);
+
+  void _replaceOpenings(List<Opening> next) {
+    _openings
+      ..clear()
+      ..addAll(next);
+  }
 
   /// Room carpet seam overrides (room index -> seam positions mm). Read-only copy.
   Map<int, List<double>> get roomCarpetSeamOverrides =>
@@ -1397,18 +1408,7 @@ class PlanCanvasState extends State<PlanCanvas> {
               _longPressRoomMoveTimer?.cancel();
               _longPressRoomMoveTimer = null;
               if (_isMovingRoom) {
-                setState(() {
-                  _isMovingRoom = false;
-                  _roomMoveRoomIndex = null;
-                  _roomMoveAnchorWorld = null;
-                  _roomMoveVerticesAtStart = null;
-                });
-                _saveHistoryState();
-                widget.onRoomsChanged?.call(
-                  _completedRooms,
-                  _useImperial,
-                  _selectedRoomIndex,
-                );
+                _finishRoomMove(this);
               }
               _panStartScreen = null;
               if (kIsWeb && _isMeasureMode) {
@@ -1438,96 +1438,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             // Also track hover position for preview line (when not actively dragging to draw)
             onPointerMove: (e) {
               // Move whole room (works on web and supports mobile if scale doesn't deliver updates)
-              if (_isMovingRoom &&
-                  _roomMoveRoomIndex != null &&
-                  _roomMoveAnchorWorld != null &&
-                  _roomMoveVerticesAtStart != null) {
-                final currentWorld = _vp.screenToWorld(e.localPosition);
-                final baseDelta = currentWorld - _roomMoveAnchorWorld!;
-
-                // Snap moving room so its vertices "magnetize" to nearby vertices or door endpoints
-                // of other rooms when within ~20mm. This helps rooms snap together cleanly.
-                const double snapToleranceMm = 20.0;
-                double bestDist = snapToleranceMm;
-                Offset snappedDelta = baseDelta;
-
-                final idx = _roomMoveRoomIndex!;
-
-                // Candidate points: vertices of other rooms (excluding the moving room)
-                for (int ri = 0; ri < _completedRooms.length; ri++) {
-                  if (ri == idx) continue;
-                  final room = _completedRooms[ri];
-                  final verts =
-                      room.vertices.length > 1 &&
-                          room.vertices.first == room.vertices.last
-                      ? room.vertices.sublist(0, room.vertices.length - 1)
-                      : room.vertices;
-                  for (final vStatic in verts) {
-                    for (final vMovingStart in _roomMoveVerticesAtStart!) {
-                      final moved = vMovingStart + baseDelta;
-                      final d = (moved - vStatic).distance;
-                      if (d < bestDist) {
-                        bestDist = d;
-                        snappedDelta = baseDelta + (vStatic - moved);
-                      }
-                    }
-                  }
-                }
-
-                // Also allow snapping to door/opening endpoints on other rooms
-                for (final o in _openings) {
-                  if (o.roomIndex == idx) continue;
-                  if (o.roomIndex < 0 || o.roomIndex >= _completedRooms.length)
-                    continue;
-                  final room = _completedRooms[o.roomIndex];
-                  final verts = room.vertices;
-                  if (o.edgeIndex >= verts.length) continue;
-                  final i1 = (o.edgeIndex + 1) % verts.length;
-                  final v0 = verts[o.edgeIndex];
-                  final v1 = verts[i1];
-                  final edgeLen = (v1 - v0).distance;
-                  if (edgeLen <= 0) continue;
-                  final t0 = (o.offsetMm / edgeLen).clamp(0.0, 1.0);
-                  final t1 = ((o.offsetMm + o.widthMm) / edgeLen).clamp(
-                    0.0,
-                    1.0,
-                  );
-                  final gapStart = Offset(
-                    v0.dx + t0 * (v1.dx - v0.dx),
-                    v0.dy + t0 * (v1.dy - v0.dy),
-                  );
-                  final gapEnd = Offset(
-                    v0.dx + t1 * (v1.dx - v0.dx),
-                    v0.dy + t1 * (v1.dy - v0.dy),
-                  );
-                  for (final vStatic in [gapStart, gapEnd]) {
-                    for (final vMovingStart in _roomMoveVerticesAtStart!) {
-                      final moved = vMovingStart + baseDelta;
-                      final d = (moved - vStatic).distance;
-                      if (d < bestDist) {
-                        bestDist = d;
-                        snappedDelta = baseDelta + (vStatic - moved);
-                      }
-                    }
-                  }
-                }
-
-                final newVertices = _roomMoveVerticesAtStart!
-                    .map((v) => v + snappedDelta)
-                    .toList();
-                final room = _completedRooms[idx];
-                setState(() {
-                  _completedRooms[idx] = Room(
-                    vertices: newVertices,
-                    name: room.name,
-                  );
-                  _hasUnsavedChanges = true;
-                });
-                widget.onRoomsChanged?.call(
-                  _completedRooms,
-                  _useImperial,
-                  _selectedRoomIndex,
-                );
+              if (_isMovingRoom) {
+                _applyRoomMovePointerMove(this, e.localPosition);
                 return;
               }
               // Cancel long-press timer if user moved before 2s (all platforms).
@@ -1761,10 +1673,11 @@ class PlanCanvasState extends State<PlanCanvas> {
                           if (hasSelectedVertex && !touchOnImage) {
                             _scaleGestureIsVertexEdit = true;
                             final v = _selectedVertex ?? _pendingSelectedVertex;
-                            if (_debugVertexEdit)
+                            if (_debugVertexEdit) {
                               debugPrint(
                                 'PlanCanvas: scaleStart → vertex edit (vertex=${v!.roomIndex},${v.vertexIndex})',
                               );
+                            }
                             _handlePanStart(details.localFocalPoint);
                           } else {
                             _scaleGestureIsVertexEdit = false;
@@ -1823,17 +1736,18 @@ class PlanCanvasState extends State<PlanCanvas> {
                                   }
                                 });
                               } else {
-                              if (_debugVertexEdit)
-                                debugPrint(
-                                  'PlanCanvas: scaleStart → potential pan/tap (no vertex or tap on image)',
-                                );
-                              setState(() {
-                                _panStartScreen = details.localFocalPoint;
-                              });
-                            }
-                            }
+                                if (_debugVertexEdit) {
+                                  debugPrint(
+                                    'PlanCanvas: scaleStart → potential pan/tap (no vertex or tap on image)',
+                                  );
+                                }
+                                setState(() {
+                                  _panStartScreen = details.localFocalPoint;
+                                });
+                              }
                             // Long-press timer for "move room" is started in Listener.onPointerDown (all platforms)
                           }
+                        }
                         } else {
                           // Draw mode: start drawing
                           _handlePanStart(details.localFocalPoint);
@@ -1969,10 +1883,11 @@ class PlanCanvasState extends State<PlanCanvas> {
                           _lastScalePosition = details.localFocalPoint;
                           if (_debugVertexEdit &&
                               _scaleGestureIsVertexEdit &&
-                              !_isEditingVertex)
+                              !_isEditingVertex) {
                             debugPrint(
                               'PlanCanvas: scaleUpdate → vertex move (sync flag)',
                             );
+                          }
                           _handlePanUpdate(details.localFocalPoint);
                         } else if (_isPanning) {
                           // Pan mode: pan the viewport
@@ -2044,18 +1959,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                       }
                       final wasMovingRoom = _isMovingRoom;
                       if (_isMovingRoom) {
-                        setState(() {
-                          _isMovingRoom = false;
-                          _roomMoveRoomIndex = null;
-                          _roomMoveAnchorWorld = null;
-                          _roomMoveVerticesAtStart = null;
-                        });
-                        _saveHistoryState();
-                        widget.onRoomsChanged?.call(
-                          _completedRooms,
-                          _useImperial,
-                          _selectedRoomIndex,
-                        );
+                        _finishRoomMove(this);
                       }
                       if (_isMoveFloorplanMode) {
                         setState(() {
@@ -2220,6 +2124,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                           backgroundImage: _backgroundImage,
                           backgroundImageState: _backgroundImageState,
                           doorThicknessMm: _doorThicknessMm,
+                          roomMoveAlignHints: _roomMoveAlignHints,
                         ),
                       ),
                     ),
@@ -2748,8 +2653,9 @@ class PlanCanvasState extends State<PlanCanvas> {
         v1.dx * v2.dx + v1.dy * v2.dy,
       );
       final angleDeg = (angle.abs() * 180 / math.pi);
-      if (angleDeg < 90 - toleranceDeg || angleDeg > 90 + toleranceDeg)
+      if (angleDeg < 90 - toleranceDeg || angleDeg > 90 + toleranceDeg) {
         return null; // Not 90°
+      }
     }
 
     final p0 = quad[0];

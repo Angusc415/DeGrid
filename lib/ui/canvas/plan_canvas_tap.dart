@@ -8,7 +8,7 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
 
   if (state._isAddDoorMode) {
     final worldPos = state._vp.screenToWorld(localPosition);
-    const maxDistanceMm = 150.0;
+    const maxDistanceMm = 250.0;
     final result = state._findClosestEdgeToPoint(
       worldPos,
       maxDistanceMm: maxDistanceMm,
