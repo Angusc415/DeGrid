@@ -35,6 +35,13 @@ class Projects extends Table {
   TextColumn get carpetProductsJson => text().nullable()(); // JSON array of CarpetProduct: name, rollWidthMm, rollLengthM?, costPerSqm?
   TextColumn get roomCarpetAssignmentsJson => text().nullable()(); // JSON: list of {roomIndex, productIndex}
   TextColumn get roomCarpetSeamOverridesJson => text().nullable()(); // JSON: { "roomIndex": [posMm, ...], ... }
+  /// Carpet planning: waste allowance percent (user-adjustable, default 5%).
+  RealColumn get carpetWasteAllowancePercent => real().withDefault(const Constant(5.0))();
+  /// Carpet planning: strip split strategy index (StripSplitStrategy.index, default 0 = auto).
+  IntColumn get stripSplitStrategy => integer().withDefault(const Constant(0))();
+  TextColumn get roomCarpetSeamLayDirectionDegJson => text().nullable()(); // JSON: { "roomIndex": deg, ... }
+  TextColumn get roomCarpetLayoutVariantIndexJson => text().nullable()(); // JSON: { "roomIndex": variant, ... }
+  TextColumn get roomCarpetStripPieceLengthsJson => text().nullable()(); // JSON: { "roomIndex": [[mm,...], ...], ... }
 }
 
 /// Rooms table - stores room data for each project
@@ -65,7 +72,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration {
@@ -107,6 +114,13 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 12) {
           await _addColumnIfNotExists(m, projects, projects.doorThicknessMm);
+        }
+        if (from < 13) {
+          await _addColumnIfNotExists(m, projects, projects.carpetWasteAllowancePercent);
+          await _addColumnIfNotExists(m, projects, projects.stripSplitStrategy);
+          await _addColumnIfNotExists(m, projects, projects.roomCarpetSeamLayDirectionDegJson);
+          await _addColumnIfNotExists(m, projects, projects.roomCarpetLayoutVariantIndexJson);
+          await _addColumnIfNotExists(m, projects, projects.roomCarpetStripPieceLengthsJson);
         }
       },
     );

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,8 +7,50 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
+fun isReleaseTaskRequested(): Boolean {
+    return gradle.startParameter.taskNames.any { taskName ->
+        taskName.contains("release", ignoreCase = true)
+    }
+}
+
+fun validateReleaseSigning() {
+    if (!keystorePropertiesFile.exists()) {
+        throw GradleException(
+            "Missing android/key.properties for release builds. " +
+                "Copy android/key.properties.template and configure your upload keystore.",
+        )
+    }
+
+    val requiredKeys = listOf("storePassword", "keyPassword", "keyAlias", "storeFile")
+    val missingKeys =
+        requiredKeys.filter { key ->
+            (keystoreProperties[key] as? String).isNullOrBlank()
+        }
+
+    if (missingKeys.isNotEmpty()) {
+        throw GradleException(
+            "android/key.properties is missing required entries: ${missingKeys.joinToString(", ")}",
+        )
+    }
+
+    val storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+    if (!storeFile.exists()) {
+        throw GradleException("Release keystore file not found: ${storeFile.path}")
+    }
+}
+
+if (isReleaseTaskRequested()) {
+    validateReleaseSigning()
+}
+
 android {
-    namespace = "com.example.degrid"
+    namespace = "dev.degrid.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,21 +64,30 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.degrid"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        // Must stay stable after the first Play upload (changing ID publishes a new app).
+        applicationId = "dev.degrid.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }

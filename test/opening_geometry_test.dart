@@ -84,4 +84,55 @@ void main() {
     expect(target?.roomIndex, 1);
     expect(target?.edgeIndex, 3);
   });
+
+  test('computeRoomMoveSnap pulls plain room to host wall with door', () {
+    final rooms = [
+      Room(vertices: [
+        Offset.zero,
+        const Offset(1990, 0),
+        const Offset(1990, 1000),
+        const Offset(0, 1000),
+        Offset.zero,
+      ]),
+      Room(vertices: [
+        const Offset(2000, 0),
+        const Offset(4000, 0),
+        const Offset(4000, 1000),
+        const Offset(2000, 1000),
+        const Offset(2000, 0),
+      ]),
+    ];
+    final openings = <Opening>[
+      Opening(
+        roomIndex: 1,
+        edgeIndex: 3,
+        offsetMm: 400,
+        widthMm: 820,
+        isDoor: true,
+      ),
+    ];
+    final snap = computeRoomMoveSnap(
+      movingRoomIndex: 0,
+      movingVertsAtStart: rooms[0].vertices,
+      baseDelta: const Offset(15, 0),
+      rooms: rooms,
+      openings: openings,
+    );
+    expect(snap.delta.dx, closeTo(10, 2));
+    expect(snap.alignHints, isNotEmpty);
+    expect(snap.alignHints.first.roomIndex, 1);
+  });
+
+  test('findMovingEdgeNearestHostWall picks wall approaching doorway', () {
+    final moved = [
+      Offset.zero,
+      const Offset(1990, 0),
+      const Offset(1990, 1000),
+      const Offset(0, 1000),
+    ];
+    const hostWall = (a: Offset(2000, 0), b: Offset(2000, 1000));
+    final nearest = findMovingEdgeNearestHostWall(moved, hostWall);
+    expect(nearest?.edgeIndex, 1);
+    expect(nearest!.score, lessThan(100));
+  });
 }

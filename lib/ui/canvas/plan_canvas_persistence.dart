@@ -2,12 +2,18 @@ part of 'plan_canvas.dart';
 
 const String _backgroundImageDir = 'degrid_backgrounds';
 
+void _logPlanCanvas(String message) {
+  if (kDebugMode) {
+    debugPrint(message);
+  }
+}
+
 Future<void> _initializeDatabase(PlanCanvasState state) async {
   try {
-    debugPrint('PlanCanvas: Initializing database...');
+    _logPlanCanvas('PlanCanvas: Initializing database...');
 
     if (kIsWeb) {
-      debugPrint('PlanCanvas: Running on web - database not supported');
+      _logPlanCanvas('PlanCanvas: Running on web - database not supported');
       state.setState(() {
         state._isInitializing = false;
       });
@@ -31,13 +37,13 @@ Future<void> _initializeDatabase(PlanCanvasState state) async {
 
     state._db = AppDatabase();
     state._projectService = ProjectService(state._db!);
-    debugPrint('PlanCanvas: Database and service created');
+    _logPlanCanvas('PlanCanvas: Database and service created');
 
     try {
       await state._db!.customSelect('SELECT 1', readsFrom: {}).get();
-      debugPrint('PlanCanvas: Database connection established');
+      _logPlanCanvas('PlanCanvas: Database connection established');
     } catch (e) {
-      debugPrint(
+      _logPlanCanvas(
         'PlanCanvas: Warning - Could not pre-initialize database connection: $e',
       );
     }
@@ -45,7 +51,7 @@ Future<void> _initializeDatabase(PlanCanvasState state) async {
     state.setState(() {
       state._isInitializing = false;
     });
-    debugPrint('PlanCanvas: Initialization flag set to false');
+    _logPlanCanvas('PlanCanvas: Initialization flag set to false');
 
     if (state.widget.projectId != null) {
       await _loadProject(state, state.widget.projectId!);
@@ -55,8 +61,8 @@ Future<void> _initializeDatabase(PlanCanvasState state) async {
       });
     }
   } catch (e, stackTrace) {
-    debugPrint('PlanCanvas: Error initializing database: $e');
-    debugPrint('PlanCanvas: Stack trace: $stackTrace');
+    _logPlanCanvas('PlanCanvas: Error initializing database: $e');
+    _logPlanCanvas('PlanCanvas: Stack trace: $stackTrace');
     state.setState(() {
       state._isInitializing = false;
     });
@@ -75,7 +81,7 @@ Future<void> _initializeDatabase(PlanCanvasState state) async {
 
 Future<void> _loadProject(PlanCanvasState state, int projectId) async {
   if (state._projectService == null) {
-    debugPrint('Cannot load project: _projectService is null');
+    _logPlanCanvas('Cannot load project: _projectService is null');
     return;
   }
 
@@ -84,9 +90,9 @@ Future<void> _loadProject(PlanCanvasState state, int projectId) async {
   });
 
   try {
-    debugPrint('Loading project $projectId...');
+    _logPlanCanvas('Loading project $projectId...');
     final project = await state._projectService!.getProject(projectId);
-    debugPrint(
+    _logPlanCanvas(
       'Project loaded: ${project?.name}, rooms: ${project?.rooms.length}',
     );
 
@@ -112,7 +118,19 @@ Future<void> _loadProject(PlanCanvasState state, int projectId) async {
         state._roomCarpetSeamOverrides
           ..clear()
           ..addAll(project.roomCarpetSeamOverrides);
-        state._roomCarpetSeamLayDirectionDeg.clear();
+        state._roomCarpetSeamLayDirectionDeg
+          ..clear()
+          ..addAll(project.roomCarpetSeamLayDirectionDeg);
+        state._roomCarpetLayoutVariantIndex
+          ..clear()
+          ..addAll(project.roomCarpetLayoutVariantIndex);
+        state._roomCarpetStripPieceLengthsOverrideMm
+          ..clear()
+          ..addAll(project.roomCarpetStripPieceLengthsOverrideMm);
+        state._stripSplitStrategy = project.stripSplitStrategy;
+        state._carpetPlanningSettings = state._carpetPlanningSettings.copyWith(
+          wasteAllowancePercent: project.carpetWasteAllowancePercent,
+        );
         state.widget.onRoomCarpetAssignmentsChanged?.call(
           Map<int, int>.from(state._roomCarpetAssignments),
         );
@@ -142,8 +160,8 @@ Future<void> _loadProject(PlanCanvasState state, int projectId) async {
       state._saveHistoryState();
     }
   } catch (e, stackTrace) {
-    debugPrint('Error loading project: $e');
-    debugPrint('Stack trace: $stackTrace');
+    _logPlanCanvas('Error loading project: $e');
+    _logPlanCanvas('Stack trace: $stackTrace');
     state.setState(() {
       state._isLoading = false;
     });
@@ -172,7 +190,7 @@ Future<void> _loadBackgroundImageFromPath(
       state._backgroundImage = image;
     });
   } catch (e) {
-    debugPrint('PlanCanvas: failed to load background image: $e');
+    _logPlanCanvas('PlanCanvas: failed to load background image: $e');
   }
 }
 
@@ -251,7 +269,7 @@ Future<void> _importFloorplanImage(PlanCanvasState state) async {
       ).showSnackBar(const SnackBar(content: Text('Floorplan image imported')));
     }
   } catch (e) {
-    debugPrint('Import floorplan error: $e');
+    _logPlanCanvas('Import floorplan error: $e');
     if (state.mounted) {
       ScaffoldMessenger.of(
         state.context,
@@ -261,7 +279,7 @@ Future<void> _importFloorplanImage(PlanCanvasState state) async {
 }
 
 Future<void> _saveProject(PlanCanvasState state) async {
-  debugPrint('PlanCanvas: _saveProject called');
+  _logPlanCanvas('PlanCanvas: _saveProject called');
 
   if (kIsWeb) {
     if (state.mounted) {
@@ -279,7 +297,7 @@ Future<void> _saveProject(PlanCanvasState state) async {
   }
 
   if (state._isInitializing) {
-    debugPrint('PlanCanvas: Waiting for database initialization...');
+    _logPlanCanvas('PlanCanvas: Waiting for database initialization...');
     int waitCount = 0;
     const maxWait = 50;
     while (state._isInitializing && waitCount < maxWait) {
@@ -289,17 +307,17 @@ Future<void> _saveProject(PlanCanvasState state) async {
   }
 
   if (state._projectService == null) {
-    debugPrint(
+    _logPlanCanvas(
       'PlanCanvas: Cannot save project: _projectService is null after initialization',
     );
     if (!kIsWeb) {
-      debugPrint('PlanCanvas: Attempting to re-initialize database...');
+      _logPlanCanvas('PlanCanvas: Attempting to re-initialize database...');
       try {
         state._db = AppDatabase();
         state._projectService = ProjectService(state._db!);
-        debugPrint('PlanCanvas: Database re-initialized successfully');
+        _logPlanCanvas('PlanCanvas: Database re-initialized successfully');
       } catch (e) {
-        debugPrint('PlanCanvas: Failed to re-initialize: $e');
+        _logPlanCanvas('PlanCanvas: Failed to re-initialize: $e');
         if (state.mounted) {
           ScaffoldMessenger.of(state.context).showSnackBar(
             const SnackBar(
@@ -327,13 +345,13 @@ Future<void> _saveProject(PlanCanvasState state) async {
 
   String? projectName = state._currentProjectName;
   if (projectName == null || projectName.isEmpty) {
-    debugPrint('No project name, prompting user...');
+    _logPlanCanvas('No project name, prompting user...');
     projectName = await _promptProjectName(state);
     if (projectName == null || projectName.isEmpty) {
-      debugPrint('User cancelled project name prompt');
+      _logPlanCanvas('User cancelled project name prompt');
       return;
     }
-    debugPrint('User entered project name: $projectName');
+    _logPlanCanvas('User entered project name: $projectName');
   }
 
   state.setState(() {
@@ -341,7 +359,7 @@ Future<void> _saveProject(PlanCanvasState state) async {
   });
 
   try {
-    debugPrint(
+    _logPlanCanvas(
       'Saving project: name=$projectName, id=${state._currentProjectId}, rooms=${state._completedRooms.length}, viewport=${state._vp.mmPerPx}',
     );
     final projectId = await state._projectService!.saveProject(
@@ -352,6 +370,13 @@ Future<void> _saveProject(PlanCanvasState state) async {
       carpetProducts: state._carpetProducts,
       roomCarpetAssignments: state._roomCarpetAssignments,
       roomCarpetSeamOverrides: state._roomCarpetSeamOverrides,
+      roomCarpetSeamLayDirectionDeg: state._roomCarpetSeamLayDirectionDeg,
+      roomCarpetLayoutVariantIndex: state._roomCarpetLayoutVariantIndex,
+      roomCarpetStripPieceLengthsOverrideMm:
+          state._roomCarpetStripPieceLengthsOverrideMm,
+      carpetWasteAllowancePercent:
+          state._carpetPlanningSettings.wasteAllowancePercent,
+      stripSplitStrategy: state._stripSplitStrategy,
       viewport: state._vp,
       useImperial: state._useImperial,
       backgroundImagePath: state._backgroundImagePath,
@@ -359,7 +384,7 @@ Future<void> _saveProject(PlanCanvasState state) async {
       wallWidthMm: state._wallWidthMm,
       doorThicknessMm: state._doorThicknessMm,
     );
-    debugPrint('Project saved successfully with ID: $projectId');
+    _logPlanCanvas('Project saved successfully with ID: $projectId');
 
     state.setState(() {
       state._currentProjectId = projectId;
@@ -377,8 +402,8 @@ Future<void> _saveProject(PlanCanvasState state) async {
       );
     }
   } catch (e, stackTrace) {
-    debugPrint('Error saving project: $e');
-    debugPrint('Stack trace: $stackTrace');
+    _logPlanCanvas('Error saving project: $e');
+    _logPlanCanvas('Stack trace: $stackTrace');
     state.setState(() {
       state._isLoading = false;
     });

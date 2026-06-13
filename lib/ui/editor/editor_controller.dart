@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/geometry/room.dart';
+import '../../core/roll_planning/carpet_layout_options.dart';
 
 @immutable
 class EditorViewState {
@@ -18,6 +19,9 @@ class EditorViewState {
   final Map<int, List<double>> roomCarpetSeamOverrides;
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
+  final StripSplitStrategy stripSplitStrategy;
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+  final CarpetPlanningSettings carpetPlanningSettings;
 
   const EditorViewState({
     this.rooms = const [],
@@ -32,6 +36,9 @@ class EditorViewState {
     this.roomCarpetSeamOverrides = const {},
     this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
+    this.stripSplitStrategy = StripSplitStrategy.auto,
+    this.roomCarpetStripPieceLengthsOverrideMm = const {},
+    this.carpetPlanningSettings = const CarpetPlanningSettings(),
   });
 }
 
@@ -49,6 +56,8 @@ class EditorController extends ChangeNotifier {
   void Function(double? value)? _setDoorThicknessMm;
   void Function(bool value)? _setUseImperial;
   void Function(bool value)? _setShowGrid;
+  void Function(StripSplitStrategy value)? _setStripSplitStrategy;
+  void Function(CarpetPlanningSettings value)? _setCarpetPlanningSettings;
 
   EditorViewState get state => _state;
 
@@ -64,6 +73,8 @@ class EditorController extends ChangeNotifier {
     required void Function(double? value) setDoorThicknessMm,
     required void Function(bool value) setUseImperial,
     required void Function(bool value) setShowGrid,
+    void Function(StripSplitStrategy value)? setStripSplitStrategy,
+    void Function(CarpetPlanningSettings value)? setCarpetPlanningSettings,
   }) {
     _selectRoom = selectRoom;
     _deleteRoom = deleteRoom;
@@ -75,6 +86,8 @@ class EditorController extends ChangeNotifier {
     _setDoorThicknessMm = setDoorThicknessMm;
     _setUseImperial = setUseImperial;
     _setShowGrid = setShowGrid;
+    _setStripSplitStrategy = setStripSplitStrategy;
+    _setCarpetPlanningSettings = setCarpetPlanningSettings;
   }
 
   void unbind() {
@@ -88,6 +101,8 @@ class EditorController extends ChangeNotifier {
     _setDoorThicknessMm = null;
     _setUseImperial = null;
     _setShowGrid = null;
+    _setStripSplitStrategy = null;
+    _setCarpetPlanningSettings = null;
   }
 
   void updateState(EditorViewState state) {
@@ -118,4 +133,10 @@ class EditorController extends ChangeNotifier {
   void setUseImperial(bool value) => _setUseImperial?.call(value);
 
   void setShowGrid(bool value) => _setShowGrid?.call(value);
+
+  void setStripSplitStrategy(StripSplitStrategy value) =>
+      _setStripSplitStrategy?.call(value);
+
+  void setCarpetPlanningSettings(CarpetPlanningSettings value) =>
+      _setCarpetPlanningSettings?.call(value);
 }

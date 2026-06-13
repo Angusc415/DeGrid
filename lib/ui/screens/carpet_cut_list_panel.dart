@@ -5,6 +5,7 @@ import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
+import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
 
 /// Phase 4: Cut list panel. Shows per-room strip cut lengths from current layout.
@@ -23,6 +24,10 @@ class CarpetCutListPanel extends StatelessWidget {
   /// Room index -> layout variant (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
+  final StripSplitStrategy stripSplitStrategy;
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+  /// User-adjustable planning settings (waste %, seam penalties).
+  final CarpetPlanningSettings carpetPlanningSettings;
 
   const CarpetCutListPanel({
     super.key,
@@ -36,6 +41,9 @@ class CarpetCutListPanel extends StatelessWidget {
     this.onResetSeamsForRoom,
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
+    this.stripSplitStrategy = StripSplitStrategy.auto,
+    this.roomCarpetStripPieceLengthsOverrideMm = const {},
+    this.carpetPlanningSettings = const CarpetPlanningSettings(),
   });
 
   @override
@@ -144,23 +152,44 @@ class CarpetCutListPanel extends StatelessWidget {
       final product = carpetProducts[productIndex];
       if (product.rollWidthMm <= 0) continue;
 
-      final seamOverride = roomCarpetSeamOverrides[roomIndex];
       final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-      final layDirectionDeg = roomCarpetSeamLayDirectionDeg[roomIndex] ??
-          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
-      final opts = CarpetLayoutOptions.forRoom(
+      // Selected layout via the shared helper so it always matches the canvas
+      // (seam-locked direction included). Candidates only feed the variant chips.
+      final layout = computeRoomStripLayout(
+        room: room,
         roomIndex: roomIndex,
-        minStripWidthMm: product.minStripWidthMm ?? 100,
-        trimAllowanceMm: product.trimAllowanceMm ?? 75,
-        patternRepeatMm: product.patternRepeatMm ?? 0,
-        wasteAllowancePercent: 5,
+        product: product,
         openings: openings,
-        seamPositionsOverrideMm: seamOverride,
-        layDirectionDeg: layDirectionDeg,
+        seamOverrides: roomCarpetSeamOverrides[roomIndex],
+        layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
+            layDirectionDegFromVariant(variantIndex),
+        stripSplitStrategy: stripSplitStrategy,
+        stripPieceLengthsOverride:
+            roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+        settings: carpetPlanningSettings,
       );
-      final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
-      final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];
-      if (layout.numStrips == 0) continue;
+      if (layout == null || layout.numStrips == 0) continue;
+      final candidates = RollPlanner.computeLayoutCandidates(
+        room,
+        product.rollWidthMm,
+        CarpetLayoutOptions.forRoom(
+          roomIndex: roomIndex,
+          minStripWidthMm: product.minStripWidthMm ?? 100,
+          trimAllowanceMm: product.trimAllowanceMm ?? 75,
+          patternRepeatMm: product.patternRepeatMm ?? 0,
+          wasteAllowancePercent: carpetPlanningSettings.wasteAllowancePercent,
+          openings: openings,
+          seamPositionsOverrideMm: roomCarpetSeamOverrides[roomIndex],
+          seamPenaltyMmNoDoors: carpetPlanningSettings.seamPenaltyMmNoDoors,
+          seamPenaltyMmWithDoors:
+              carpetPlanningSettings.seamPenaltyMmWithDoors,
+          seamPenaltyMmInDoorway:
+              carpetPlanningSettings.seamPenaltyMmInDoorway,
+          stripSplitStrategy: stripSplitStrategy,
+          maxSinglePieceLengthMm:
+              product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
+        ),
+      );
 
       final minStripMm = product.minStripWidthMm ?? 100;
       final hasSeamOverrides = roomCarpetSeamOverrides.containsKey(roomIndex) &&
@@ -196,26 +225,29 @@ class CarpetCutListPanel extends StatelessWidget {
       final product = carpetProducts[productIndex];
       if (product.rollWidthMm <= 0) continue;
 
-      final seamOverride = roomCarpetSeamOverrides[roomIndex];
       final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-      final layDirectionDeg = roomCarpetSeamLayDirectionDeg[roomIndex] ??
-          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
-      final opts = CarpetLayoutOptions.forRoom(
+      final layout = computeRoomStripLayout(
+        room: room,
         roomIndex: roomIndex,
-        minStripWidthMm: product.minStripWidthMm ?? 100,
-        trimAllowanceMm: product.trimAllowanceMm ?? 75,
-        patternRepeatMm: product.patternRepeatMm ?? 0,
-        wasteAllowancePercent: 5,
+        product: product,
         openings: openings,
-        seamPositionsOverrideMm: seamOverride,
-        layDirectionDeg: layDirectionDeg,
+        seamOverrides: roomCarpetSeamOverrides[roomIndex],
+        layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
+            layDirectionDegFromVariant(variantIndex),
+        stripSplitStrategy: stripSplitStrategy,
+        stripPieceLengthsOverride:
+            roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+        settings: carpetPlanningSettings,
       );
-      final candidates = RollPlanner.computeLayoutCandidates(room, product.rollWidthMm, opts);
-      final layout = candidates[variantIndex.clamp(0, candidates.length - 1)];
+      if (layout == null || layout.numStrips == 0) continue;
       final roomName = room.name ?? 'Room ${roomIndex + 1}';
       final productName = product.name.replaceAll(',', ' ');
       for (var i = 0; i < layout.stripLengthsMm.length; i++) {
-        sb.writeln('$roomName,$productName,${i + 1},${layout.stripLengthsMm[i].round()}');
+        final pieces = layout.pieceLengthsForStrip(i);
+        for (var pi = 0; pi < pieces.length; pi++) {
+          final label = pieces.length > 1 ? '${i + 1}-${pi + 1}' : '${i + 1}';
+          sb.writeln('$roomName,$productName,$label,${pieces[pi].round()}');
+        }
       }
     }
     final csv = sb.toString();
@@ -309,7 +341,8 @@ class _RoomCutListCard extends StatelessWidget {
                   ),
             ),
             Text(
-              'Lay: ${layout.layAngleDeg == 0 ? "0° (horizontal)" : "90° (vertical)"} · ${layout.numStrips} strips',
+              'Lay: ${layout.layAngleDeg == 0 ? "0° (horizontal)" : "90° (vertical)"} · ${layout.numStrips} strips'
+              '${layout.totalPieceCount > layout.numStrips ? ' · ${layout.totalPieceCount} pieces' : ''}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(204),
                   ),
@@ -395,44 +428,9 @@ class _RoomCutListCard extends StatelessWidget {
                     _tableHeader(context, 'Note'),
                   ],
                 ),
-                ...List.generate(layout.stripLengthsMm.length, (i) {
-                  final len = layout.stripLengthsMm[i];
-                  final isSliver = layout.isSliverAt(i, minStripWidthMm);
-                  final widthMm = i < layout.stripWidthsMm.length
-                      ? layout.stripWidthsMm[i]
-                      : product.rollWidthMm;
-                  return TableRow(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          '${i + 1}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          UnitConverter.formatDistance(len, useImperial: useImperial),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          isSliver ? 'Sliver ${widthMm.round()} mm' : '—',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                fontSize: 11,
-                                fontStyle: isSliver ? FontStyle.italic : null,
-                                color: isSliver
-                                    ? Theme.of(context).colorScheme.error.withAlpha(230)
-                                    : null,
-                              ),
-                        ),
-                      ),
-                    ],
-                  );
-                }),
+                // One row per cut piece: strips split along the run show as
+                // "1-1", "1-2", ... matching canvas dashed seams and roll board IDs.
+                ..._buildPieceRows(context),
               ],
             ),
             const SizedBox(height: 4),
@@ -453,6 +451,63 @@ class _RoomCutListCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<TableRow> _buildPieceRows(BuildContext context) {
+    final rows = <TableRow>[];
+    final rollLengthMm =
+        product.rollLengthM != null ? product.rollLengthM! * 1000 : null;
+    for (var i = 0; i < layout.stripLengthsMm.length; i++) {
+      final pieces = layout.pieceLengthsForStrip(i);
+      final isSliver = layout.isSliverAt(i, minStripWidthMm);
+      final widthMm = i < layout.stripWidthsMm.length
+          ? layout.stripWidthsMm[i]
+          : product.rollWidthMm;
+      for (var pi = 0; pi < pieces.length; pi++) {
+        final label = pieces.length > 1 ? '${i + 1}-${pi + 1}' : '${i + 1}';
+        final len = pieces[pi];
+        final exceedsRoll = rollLengthMm != null && len > rollLengthMm;
+        final notes = <String>[
+          if (isSliver) 'Sliver ${widthMm.round()} mm',
+          if (exceedsRoll) 'Exceeds roll',
+        ];
+        final isWarning = isSliver || exceedsRoll;
+        rows.add(
+          TableRow(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  UnitConverter.formatDistance(len, useImperial: useImperial),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  notes.isEmpty ? '—' : notes.join(' · '),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        fontStyle: isWarning ? FontStyle.italic : null,
+                        color: isWarning
+                            ? Theme.of(context).colorScheme.error.withAlpha(230)
+                            : null,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+    return rows;
   }
 
   Widget _tableHeader(BuildContext context, String label) {

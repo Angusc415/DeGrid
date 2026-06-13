@@ -280,7 +280,7 @@ Future<void> _showAddDoorDialogImpl(
                   ),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<double>(
-                    value: widthMm,
+                    initialValue: widthMm,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(

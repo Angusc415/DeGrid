@@ -137,6 +137,31 @@ void _deleteRoomAtIndex(PlanCanvasState state, int roomIndex) {
       ..clear()
       ..addAll(newSeamLayDirectionDeg);
 
+    final newLayoutVariantIndex = <int, int>{};
+    for (final entry in state._roomCarpetLayoutVariantIndex.entries) {
+      if (entry.key == roomIndex) continue;
+      newLayoutVariantIndex[entry.key > roomIndex
+              ? entry.key - 1
+              : entry.key] =
+          entry.value;
+    }
+    state._roomCarpetLayoutVariantIndex
+      ..clear()
+      ..addAll(newLayoutVariantIndex);
+
+    final newStripPieceLengths = <int, List<List<double>>>{};
+    for (final entry
+        in state._roomCarpetStripPieceLengthsOverrideMm.entries) {
+      if (entry.key == roomIndex) continue;
+      newStripPieceLengths[entry.key > roomIndex
+              ? entry.key - 1
+              : entry.key] =
+          entry.value;
+    }
+    state._roomCarpetStripPieceLengthsOverrideMm
+      ..clear()
+      ..addAll(newStripPieceLengths);
+
     if (state._selectedRoomIndex == roomIndex) {
       state._selectedRoomIndex = null;
     } else if (state._selectedRoomIndex != null &&

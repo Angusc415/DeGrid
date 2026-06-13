@@ -88,6 +88,9 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
     final costController = TextEditingController(
       text: initial?.costPerSqm?.toString() ?? '',
     );
+    final trimController = TextEditingController(
+      text: initial?.trimAllowanceMm?.round().toString() ?? '',
+    );
 
     return showDialog<CarpetProduct>(
       context: context,
@@ -135,6 +138,16 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: trimController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Trim per cut end (mm) – optional',
+                  hintText: 'e.g. 75',
+                  border: OutlineInputBorder(),
+                ),
+              ),
             ],
           ),
         ),
@@ -151,6 +164,7 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
               if (widthMm == null || widthMm <= 0) return;
               final lengthM = double.tryParse(lengthController.text.trim());
               final costPerSqm = double.tryParse(costController.text.trim());
+              final trimMm = double.tryParse(trimController.text.trim());
               Navigator.pop(
                 context,
                 CarpetProduct(
@@ -158,6 +172,11 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
                   rollWidthMm: widthMm,
                   rollLengthM: lengthM?.isFinite == true ? lengthM : null,
                   costPerSqm: costPerSqm != null && costPerSqm.isFinite ? costPerSqm : null,
+                  trimAllowanceMm:
+                      trimMm != null && trimMm.isFinite && trimMm >= 0 ? trimMm : null,
+                  // Preserve fields not edited in this dialog.
+                  patternRepeatMm: initial?.patternRepeatMm,
+                  minStripWidthMm: initial?.minStripWidthMm,
                 ),
               );
             },

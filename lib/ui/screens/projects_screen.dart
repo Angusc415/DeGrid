@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/export/pdf_export.dart';
@@ -36,6 +35,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   bool _isDraggingOutsideList = false;
   Offset? _lastDragGlobalPosition;
 
+  void _logProjects(String message) {
+    if (kDebugMode) {
+      debugPrint(message);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -44,11 +49,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   Future<void> _initializeDatabase() async {
     try {
-      debugPrint('ProjectsScreen: Initializing database...');
+      _logProjects('ProjectsScreen: Initializing database...');
       
       // Check if we're on web
       if (kIsWeb) {
-        debugPrint('ProjectsScreen: Running on web - database not supported');
+        _logProjects('ProjectsScreen: Running on web - database not supported');
         setState(() {
           _isInitializing = false;
           _isLoading = false;
@@ -69,26 +74,28 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       
       _db = AppDatabase();
       _projectService = ProjectService(_db!);
-      debugPrint('ProjectsScreen: Database and service created');
+      _logProjects('ProjectsScreen: Database and service created');
       
       // Pre-initialize the database connection
       try {
         await _db!.customSelect('SELECT 1', readsFrom: {}).get();
-        debugPrint('ProjectsScreen: Database connection established');
+        _logProjects('ProjectsScreen: Database connection established');
       } catch (e) {
-        debugPrint('ProjectsScreen: Warning - Could not pre-initialize connection: $e');
+        _logProjects(
+          'ProjectsScreen: Warning - Could not pre-initialize connection: $e',
+        );
         // Connection will be established on first real query
       }
       
       setState(() {
         _isInitializing = false;
       });
-      debugPrint('ProjectsScreen: Initialization complete, loading projects...');
+      _logProjects('ProjectsScreen: Initialization complete, loading projects...');
       
       await _loadData();
     } catch (e, stackTrace) {
-      debugPrint('ProjectsScreen: Error initializing database: $e');
-      debugPrint('ProjectsScreen: Stack trace: $stackTrace');
+      _logProjects('ProjectsScreen: Error initializing database: $e');
+      _logProjects('ProjectsScreen: Stack trace: $stackTrace');
       setState(() {
         _isInitializing = false;
         _isLoading = false;
@@ -106,7 +113,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   Future<void> _loadData() async {
     if (_projectService == null) {
-      debugPrint('ProjectsScreen: _loadData called but _projectService is null');
+      _logProjects('ProjectsScreen: _loadData called but _projectService is null');
       // Wait for initialization to complete (max 5 seconds)
       int waitCount = 0;
       const maxWait = 50; // 50 * 100ms = 5 seconds
@@ -116,7 +123,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       }
       
       if (_projectService == null) {
-        debugPrint('ProjectsScreen: _projectService still null after waiting');
+        _logProjects('ProjectsScreen: _projectService still null after waiting');
         setState(() {
           _isLoading = false;
         });
@@ -137,18 +144,20 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     });
 
     try {
-      debugPrint('ProjectsScreen: Loading folders and projects from database...');
+      _logProjects('ProjectsScreen: Loading folders and projects from database...');
       final projects = await _projectService!.getAllProjects();
       final folders = await _projectService!.getFolders();
-      debugPrint('ProjectsScreen: Loaded ${projects.length} projects, ${folders.length} folders');
+      _logProjects(
+        'ProjectsScreen: Loaded ${projects.length} projects, ${folders.length} folders',
+      );
       setState(() {
         _projects = projects;
         _folders = folders;
         _isLoading = false;
       });
     } catch (e, stackTrace) {
-      debugPrint('ProjectsScreen: Error loading data: $e');
-      debugPrint('ProjectsScreen: Stack trace: $stackTrace');
+      _logProjects('ProjectsScreen: Error loading data: $e');
+      _logProjects('ProjectsScreen: Stack trace: $stackTrace');
       setState(() {
         _isLoading = false;
       });
@@ -375,7 +384,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           ).then((_) => _loadData());
         }
       } catch (e) {
-        debugPrint('Error creating project: $e');
+        _logProjects('Error creating project: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error saving project: $e')),
@@ -823,51 +832,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     }
   }
 
-  /// Import a project from PDF (placeholder for future implementation).
-  Future<void> _importProject() async {
-    if (kIsWeb) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Import is not supported on web. Please use a native platform.'),
-            duration: Duration(seconds: 5),
-          ),
-        );
-      }
-      return;
-    }
-
-    try {
-      // Pick PDF file
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
-
-      if (result == null || result.files.isEmpty) {
-        return; // User cancelled
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('PDF import is not yet implemented. This feature will be available in a future update.'),
-            duration: Duration(seconds: 5),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error importing project: $e'),
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    }
-  }
-
   @override
   void dispose() {
     _db?.close();
@@ -884,11 +848,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             icon: const Icon(Icons.create_new_folder),
             tooltip: 'New Folder',
             onPressed: _isInitializing ? null : () => _createFolder(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.upload_file),
-            tooltip: 'Import Project',
-            onPressed: _isInitializing ? null : _importProject,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),

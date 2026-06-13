@@ -1,7 +1,7 @@
-import 'dart:typed_data';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../geometry/room.dart';
@@ -14,6 +14,25 @@ class PdfExportService {
   // 1 point = 1/72 inch = 0.3528 mm
   static const double mmPerPoint = 0.3528;
   static const double pointPerMm = 1.0 / mmPerPoint;
+  static Future<pw.ThemeData>? _pdfThemeFuture;
+
+  static Future<pw.ThemeData> _loadPdfTheme() {
+    return _pdfThemeFuture ??= () async {
+      final regularFont = pw.Font.ttf(
+        await rootBundle.load('assets/fonts/Roboto-Regular.ttf'),
+      );
+      final boldFont = pw.Font.ttf(
+        await rootBundle.load('assets/fonts/Roboto-Bold.ttf'),
+      );
+
+      return pw.ThemeData.withFont(
+        base: regularFont,
+        bold: boldFont,
+        italic: regularFont,
+        boldItalic: boldFont,
+      );
+    }();
+  }
 
   /// Export a floor plan to PDF bytes.
   /// 
@@ -37,7 +56,7 @@ class PdfExportService {
     }
 
     // Create PDF document
-    final pdf = pw.Document();
+    final pdf = pw.Document(theme: await _loadPdfTheme());
 
     // Page 1: Overview floor plan (all rooms fit on one page)
     await _addFloorPlanPage(
@@ -63,7 +82,7 @@ class PdfExportService {
               ),
               pw.SizedBox(height: 8),
               pw.Text(
-                'Room schedule • ${useImperial ? "Imperial" : "Metric"}',
+                'Room schedule - ${useImperial ? "Imperial" : "Metric"}',
                 style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
               ),
               pw.SizedBox(height: 16),
@@ -642,7 +661,7 @@ class PdfExportService {
 
   /// Create an empty PDF for projects with no rooms.
   static Future<Uint8List> _createEmptyPdf(String projectName) async {
-    final pdf = pw.Document();
+    final pdf = pw.Document(theme: await _loadPdfTheme());
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,

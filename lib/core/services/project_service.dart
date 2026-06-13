@@ -6,6 +6,7 @@ import '../geometry/room.dart';
 import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
 import '../models/project.dart';
+import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
 /// Service layer for project database operations.
@@ -173,6 +174,62 @@ class ProjectService {
       } catch (_) {}
     }
 
+    // Parse locked seam lay directions if available
+    Map<int, double> roomCarpetSeamLayDirectionDeg = {};
+    if (project.roomCarpetSeamLayDirectionDegJson != null &&
+        project.roomCarpetSeamLayDirectionDegJson!.isNotEmpty) {
+      try {
+        final map = jsonDecode(project.roomCarpetSeamLayDirectionDegJson!)
+            as Map<String, dynamic>;
+        for (final entry in map.entries) {
+          final roomIndex = int.tryParse(entry.key);
+          final deg = entry.value as num?;
+          if (roomIndex == null || deg == null) continue;
+          roomCarpetSeamLayDirectionDeg[roomIndex] = deg.toDouble();
+        }
+      } catch (_) {}
+    }
+
+    // Parse per-room layout variant indices if available
+    Map<int, int> roomCarpetLayoutVariantIndex = {};
+    if (project.roomCarpetLayoutVariantIndexJson != null &&
+        project.roomCarpetLayoutVariantIndexJson!.isNotEmpty) {
+      try {
+        final map = jsonDecode(project.roomCarpetLayoutVariantIndexJson!)
+            as Map<String, dynamic>;
+        for (final entry in map.entries) {
+          final roomIndex = int.tryParse(entry.key);
+          final variant = entry.value as int?;
+          if (roomIndex == null || variant == null) continue;
+          roomCarpetLayoutVariantIndex[roomIndex] = variant;
+        }
+      } catch (_) {}
+    }
+
+    // Parse per-room piece-length overrides if available
+    Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm = {};
+    if (project.roomCarpetStripPieceLengthsJson != null &&
+        project.roomCarpetStripPieceLengthsJson!.isNotEmpty) {
+      try {
+        final map = jsonDecode(project.roomCarpetStripPieceLengthsJson!)
+            as Map<String, dynamic>;
+        for (final entry in map.entries) {
+          final roomIndex = int.tryParse(entry.key);
+          final strips = entry.value as List<dynamic>?;
+          if (roomIndex == null || strips == null) continue;
+          roomCarpetStripPieceLengthsOverrideMm[roomIndex] = strips
+              .map((s) => (s as List<dynamic>)
+                  .map((e) => (e as num).toDouble())
+                  .toList())
+              .toList();
+        }
+      } catch (_) {}
+    }
+
+    final stripSplitStrategy = StripSplitStrategy.values[
+        project.stripSplitStrategy
+            .clamp(0, StripSplitStrategy.values.length - 1)];
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -184,6 +241,12 @@ class ProjectService {
       carpetProducts: carpetProducts,
       roomCarpetAssignments: roomCarpetAssignments,
       roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+      roomCarpetSeamLayDirectionDeg: roomCarpetSeamLayDirectionDeg,
+      roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
+      roomCarpetStripPieceLengthsOverrideMm:
+          roomCarpetStripPieceLengthsOverrideMm,
+      carpetWasteAllowancePercent: project.carpetWasteAllowancePercent,
+      stripSplitStrategy: stripSplitStrategy,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -246,6 +309,11 @@ class ProjectService {
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    Map<int, double>? roomCarpetSeamLayDirectionDeg,
+    Map<int, int>? roomCarpetLayoutVariantIndex,
+    Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
+    double? carpetWasteAllowancePercent,
+    StripSplitStrategy? stripSplitStrategy,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -278,6 +346,25 @@ class ProjectService {
           : const Value.absent(),
       roomCarpetSeamOverridesJson: roomCarpetSeamOverrides != null
           ? Value(jsonEncode(roomCarpetSeamOverrides.map((k, v) => MapEntry(k.toString(), v))))
+          : const Value.absent(),
+      roomCarpetSeamLayDirectionDegJson: roomCarpetSeamLayDirectionDeg != null
+          ? Value(jsonEncode(roomCarpetSeamLayDirectionDeg
+              .map((k, v) => MapEntry(k.toString(), v))))
+          : const Value.absent(),
+      roomCarpetLayoutVariantIndexJson: roomCarpetLayoutVariantIndex != null
+          ? Value(jsonEncode(roomCarpetLayoutVariantIndex
+              .map((k, v) => MapEntry(k.toString(), v))))
+          : const Value.absent(),
+      roomCarpetStripPieceLengthsJson:
+          roomCarpetStripPieceLengthsOverrideMm != null
+              ? Value(jsonEncode(roomCarpetStripPieceLengthsOverrideMm
+                  .map((k, v) => MapEntry(k.toString(), v))))
+              : const Value.absent(),
+      carpetWasteAllowancePercent: carpetWasteAllowancePercent != null
+          ? Value(carpetWasteAllowancePercent)
+          : const Value.absent(),
+      stripSplitStrategy: stripSplitStrategy != null
+          ? Value(stripSplitStrategy.index)
           : const Value.absent(),
       wallWidthMm: wallWidthMm != null ? Value(wallWidthMm) : const Value.absent(),
       doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
@@ -322,6 +409,11 @@ class ProjectService {
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    Map<int, double>? roomCarpetSeamLayDirectionDeg,
+    Map<int, int>? roomCarpetLayoutVariantIndex,
+    Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
+    double? carpetWasteAllowancePercent,
+    StripSplitStrategy? stripSplitStrategy,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -346,7 +438,12 @@ class ProjectService {
             (openings != null && openings.isNotEmpty) ||
             (carpetProducts != null && carpetProducts.isNotEmpty) ||
             (roomCarpetAssignments != null && roomCarpetAssignments.isNotEmpty) ||
-            (roomCarpetSeamOverrides != null && roomCarpetSeamOverrides.isNotEmpty)) {
+            (roomCarpetSeamOverrides != null && roomCarpetSeamOverrides.isNotEmpty) ||
+            (roomCarpetSeamLayDirectionDeg != null && roomCarpetSeamLayDirectionDeg.isNotEmpty) ||
+            (roomCarpetLayoutVariantIndex != null && roomCarpetLayoutVariantIndex.isNotEmpty) ||
+            (roomCarpetStripPieceLengthsOverrideMm != null && roomCarpetStripPieceLengthsOverrideMm.isNotEmpty) ||
+            carpetWasteAllowancePercent != null ||
+            stripSplitStrategy != null) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
@@ -355,6 +452,12 @@ class ProjectService {
             carpetProducts: carpetProducts,
             roomCarpetAssignments: roomCarpetAssignments,
             roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+            roomCarpetSeamLayDirectionDeg: roomCarpetSeamLayDirectionDeg,
+            roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
+            roomCarpetStripPieceLengthsOverrideMm:
+                roomCarpetStripPieceLengthsOverrideMm,
+            carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+            stripSplitStrategy: stripSplitStrategy,
           wallWidthMm: wallWidthMm,
           doorThicknessMm: doorThicknessMm,
           );
@@ -369,6 +472,12 @@ class ProjectService {
           carpetProducts: carpetProducts,
           roomCarpetAssignments: roomCarpetAssignments,
           roomCarpetSeamOverrides: roomCarpetSeamOverrides,
+          roomCarpetSeamLayDirectionDeg: roomCarpetSeamLayDirectionDeg,
+          roomCarpetLayoutVariantIndex: roomCarpetLayoutVariantIndex,
+          roomCarpetStripPieceLengthsOverrideMm:
+              roomCarpetStripPieceLengthsOverrideMm,
+          carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+          stripSplitStrategy: stripSplitStrategy,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

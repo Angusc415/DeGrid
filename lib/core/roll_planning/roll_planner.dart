@@ -11,6 +11,9 @@ class StripLayout {
   final List<double> stripLengthsMm;
   /// Width of each strip in mm (perpendicular to lay direction). Used to mark slivers.
   final List<double> stripWidthsMm;
+  /// When set, strip [i] is cut into multiple pieces along the run: [pieceLen1, pieceLen2, ...].
+  /// When null, each strip is one piece (stripLengthsMm[i] = one cut). Sum per strip must match stripLengthsMm.
+  final List<List<double>>? stripPieceLengthsMm;
   double get totalLinearMm =>
       stripLengthsMm.fold<double>(0, (s, l) => s + l);
   double get totalLinearM => totalLinearMm / 1000;
@@ -39,6 +42,7 @@ class StripLayout {
     required this.numStrips,
     required this.stripLengthsMm,
     this.stripWidthsMm = const [],
+    this.stripPieceLengthsMm,
     required this.layAngleDeg,
     this.bboxMinX = 0,
     this.bboxMinY = 0,
@@ -56,6 +60,25 @@ class StripLayout {
     this.scoreSliverPenaltyMm = 0,
     this.scoreCostMm = 0,
   });
+
+  /// Piece lengths for strip [stripIndex]. When [stripPieceLengthsMm] is set, returns that strip's pieces; else one piece of length stripLengthsMm[stripIndex].
+  List<double> pieceLengthsForStrip(int stripIndex) {
+    if (stripIndex < 0 || stripIndex >= stripLengthsMm.length) return [];
+    if (stripPieceLengthsMm != null &&
+        stripIndex < stripPieceLengthsMm!.length &&
+        stripPieceLengthsMm![stripIndex].isNotEmpty) {
+      return List<double>.from(stripPieceLengthsMm![stripIndex]);
+    }
+    return [stripLengthsMm[stripIndex]];
+  }
+
+  /// Total number of cut pieces (sum of pieces per strip).
+  int get totalPieceCount {
+    if (stripPieceLengthsMm != null) {
+      return stripPieceLengthsMm!.fold<int>(0, (s, list) => s + list.length);
+    }
+    return stripLengthsMm.length;
+  }
 
   /// True if strip at [index] is narrower than [minWidthMm].
   bool isSliverAt(int index, double minWidthMm) {
@@ -78,6 +101,55 @@ class StripLayout {
   /// Label for the reference edge (for installer text: "from left wall" or "from top wall").
   /// Horizontal strips (layAlongX): reference is top (minY). Vertical: reference is left (minX).
   String get referenceEdgeLabel => layAlongX ? 'top wall' : 'left wall';
+
+  /// Copy with selected fields replaced. Null keeps the current value.
+  StripLayout copyWith({
+    int? numStrips,
+    List<double>? stripLengthsMm,
+    List<double>? stripWidthsMm,
+    List<List<double>>? stripPieceLengthsMm,
+    double? layAngleDeg,
+    double? bboxMinX,
+    double? bboxMinY,
+    double? bboxWidth,
+    double? bboxHeight,
+    bool? layAlongX,
+    double? rollWidthMm,
+    int? seamCount,
+    double? totalLinearWithWasteMm,
+    List<double>? seamPositionsMmOverride,
+    bool? isSinglePiece,
+    List<Offset>? roomShapeVerticesMm,
+    double? scoreMaterialMm,
+    double? scoreSeamPenaltyMm,
+    double? scoreSliverPenaltyMm,
+    double? scoreCostMm,
+  }) {
+    return StripLayout(
+      numStrips: numStrips ?? this.numStrips,
+      stripLengthsMm: stripLengthsMm ?? this.stripLengthsMm,
+      stripWidthsMm: stripWidthsMm ?? this.stripWidthsMm,
+      stripPieceLengthsMm: stripPieceLengthsMm ?? this.stripPieceLengthsMm,
+      layAngleDeg: layAngleDeg ?? this.layAngleDeg,
+      bboxMinX: bboxMinX ?? this.bboxMinX,
+      bboxMinY: bboxMinY ?? this.bboxMinY,
+      bboxWidth: bboxWidth ?? this.bboxWidth,
+      bboxHeight: bboxHeight ?? this.bboxHeight,
+      layAlongX: layAlongX ?? this.layAlongX,
+      rollWidthMm: rollWidthMm ?? this.rollWidthMm,
+      seamCount: seamCount ?? this.seamCount,
+      totalLinearWithWasteMm:
+          totalLinearWithWasteMm ?? this.totalLinearWithWasteMm,
+      seamPositionsMmOverride:
+          seamPositionsMmOverride ?? this.seamPositionsMmOverride,
+      isSinglePiece: isSinglePiece ?? this.isSinglePiece,
+      roomShapeVerticesMm: roomShapeVerticesMm ?? this.roomShapeVerticesMm,
+      scoreMaterialMm: scoreMaterialMm ?? this.scoreMaterialMm,
+      scoreSeamPenaltyMm: scoreSeamPenaltyMm ?? this.scoreSeamPenaltyMm,
+      scoreSliverPenaltyMm: scoreSliverPenaltyMm ?? this.scoreSliverPenaltyMm,
+      scoreCostMm: scoreCostMm ?? this.scoreCostMm,
+    );
+  }
 }
 
 /// Computes carpet strip layout by intersecting strip bands with the room polygon.
@@ -155,7 +227,7 @@ class RollPlanner {
         cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
       }
       final totalWithWaste = cutLen * (1 + wastePercent / 100);
-      return StripLayout(
+      final layout = StripLayout(
         numStrips: 1,
         stripLengthsMm: [cutLen],
         stripWidthsMm: [perpLen],
@@ -176,6 +248,7 @@ class RollPlanner {
         scoreSliverPenaltyMm: 0,
         scoreCostMm: cutLen,
       );
+      return _applyStripSplitting(layout, opts, trimAllowance, wastePercent);
     }
 
     // Strip mode: room wider than roll
@@ -193,7 +266,7 @@ class RollPlanner {
     final seamPenaltyMm = _seamPenaltyTotal(r.seamPositionsUsed, room, opts, layAlongX, minX, minY, r.seamCount, rollWidthMm);
     final sliverPenaltyMm = (r.cost - r.totalLinearMm - seamPenaltyMm).clamp(0.0, double.infinity);
 
-    return StripLayout(
+    final layout = StripLayout(
       numStrips: r.stripLengthsMm.length,
       stripLengthsMm: r.stripLengthsMm,
       stripWidthsMm: r.stripWidthsMm,
@@ -213,6 +286,96 @@ class RollPlanner {
       scoreSeamPenaltyMm: seamPenaltyMm,
       scoreSliverPenaltyMm: sliverPenaltyMm,
       scoreCostMm: r.cost,
+    );
+    return _applyStripSplitting(layout, opts, trimAllowance, wastePercent);
+  }
+
+  /// Default max piece length (mm) when product roll length is not set. Roll length is only a constraint (cap); splitting is still considered for long runs.
+  static const double _defaultMaxPieceLengthMm = 6000.0;
+  /// Min run length (mm) to consider splitting; avoids splitting very short runs.
+  static const double _minRunLengthToConsiderSplittingMm = 2000.0;
+
+  /// Splits strips into pieces along the run depending on [StripSplitStrategy]:
+  ///
+  /// - [StripSplitStrategy.never]: layout returned unchanged (caller may flag
+  ///   pieces that exceed the physical roll length).
+  /// - [StripSplitStrategy.auto]: split only when forced by the physical roll
+  ///   length ([CarpetLayoutOptions.maxSinglePieceLengthMm]). When the roll has
+  ///   no set length it is treated as infinitely long, so a strip is never
+  ///   split — one piece per strip avoids needless seams and trim waste.
+  /// - [StripSplitStrategy.preferStripInPieces]: additionally splits any run
+  ///   of at least [_minRunLengthToConsiderSplittingMm] into >= 2 pieces
+  ///   (e.g. to reuse offcuts). Pieces are sized to the roll length when set,
+  ///   else to [_defaultMaxPieceLengthMm].
+  ///
+  /// Each extra piece adds one cut junction: `2 * trimAllowance` of material
+  /// (trim on both sides of the new cut). Strip lengths, waste total and the
+  /// cost score are updated to include this extra material.
+  static StripLayout _applyStripSplitting(
+    StripLayout layout,
+    CarpetLayoutOptions opts,
+    double trimAllowance,
+    double wastePercent,
+  ) {
+    if (opts.stripSplitStrategy == StripSplitStrategy.never) return layout;
+    if (layout.numStrips == 0) return layout;
+    final prefer = opts.stripSplitStrategy == StripSplitStrategy.preferStripInPieces;
+    // Physical hard cap from the roll length. Null = infinitely long roll, so
+    // a cut is never *forced* to split.
+    final hardCapMm = opts.maxSinglePieceLengthMm;
+    // Length used when actually sizing split pieces. For preferStripInPieces
+    // we still want to split long runs when no roll length is set, so fall back
+    // to a default; for auto with no cap there is nothing to size against.
+    final pieceCapMm =
+        (hardCapMm ?? (prefer ? _defaultMaxPieceLengthMm : double.infinity))
+            .clamp(100.0, double.infinity);
+    final pieceLengthsPerStrip = <List<double>>[];
+    final newStripLengthsMm = <double>[];
+    bool anySplit = false;
+    double extraMaterialMm = 0;
+    for (int i = 0; i < layout.numStrips; i++) {
+      final L = layout.stripLengthsMm[i];
+      final mustSplit = hardCapMm != null && L > hardCapMm;
+      final wantSplit = prefer && L >= _minRunLengthToConsiderSplittingMm;
+      if (!mustSplit && !wantSplit) {
+        pieceLengthsPerStrip.add([L]);
+        newStripLengthsMm.add(L);
+        continue;
+      }
+      int n = math.max(
+        mustSplit ? (L / pieceCapMm).ceil() : 1,
+        wantSplit ? 2 : 1,
+      );
+      double total = L + (n - 1) * 2 * trimAllowance;
+      // Extra trim can push pieces back over the cap; add pieces until they fit.
+      while (total / n > pieceCapMm && n < 1000) {
+        n++;
+        total = L + (n - 1) * 2 * trimAllowance;
+      }
+      if (n <= 1) {
+        pieceLengthsPerStrip.add([L]);
+        newStripLengthsMm.add(L);
+        continue;
+      }
+      anySplit = true;
+      extraMaterialMm += total - L;
+      final step = total / n;
+      final pieces = List<double>.generate(
+        n,
+        (j) => j < n - 1 ? step : total - step * (n - 1),
+      );
+      pieceLengthsPerStrip.add(pieces);
+      newStripLengthsMm.add(total);
+    }
+    if (!anySplit) return layout;
+    final newTotalLinear =
+        newStripLengthsMm.fold<double>(0, (a, b) => a + b);
+    return layout.copyWith(
+      stripLengthsMm: newStripLengthsMm,
+      stripPieceLengthsMm: pieceLengthsPerStrip,
+      totalLinearWithWasteMm: newTotalLinear * (1 + wastePercent / 100),
+      scoreMaterialMm: layout.scoreMaterialMm + extraMaterialMm,
+      scoreCostMm: layout.scoreCostMm + extraMaterialMm,
     );
   }
 

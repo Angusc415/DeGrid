@@ -15,13 +15,19 @@ void _bindEditorController(
     setDoorThicknessMm: state.setDoorThicknessMm,
     setUseImperial: state.setUseImperial,
     setShowGrid: state.setShowGrid,
+    setStripSplitStrategy: state.setStripSplitStrategy,
+    setCarpetPlanningSettings: state.setCarpetPlanningSettings,
   );
 }
 
 void _publishEditorControllerState(PlanCanvasState state) {
   state.widget.controller?.updateState(
     EditorViewState(
-      rooms: List<Room>.from(state._completedRooms),
+      // Deep-copy rooms (vertices are mutated in place during edits) so
+      // listeners can detect changes by comparing old vs new state by value.
+      rooms: state._completedRooms
+          .map((r) => Room(vertices: List<Offset>.from(r.vertices), name: r.name))
+          .toList(),
       useImperial: state._useImperial,
       showGrid: state._showGrid,
       selectedRoomIndex: state._selectedRoomIndex,
@@ -41,6 +47,13 @@ void _publishEditorControllerState(PlanCanvasState state) {
       roomCarpetLayoutVariantIndex: Map<int, int>.from(
         state._roomCarpetLayoutVariantIndex,
       ),
+      stripSplitStrategy: state._stripSplitStrategy,
+      roomCarpetStripPieceLengthsOverrideMm: Map<int, List<List<double>>>.from(
+        state._roomCarpetStripPieceLengthsOverrideMm.map(
+          (k, v) => MapEntry(k, v.map((p) => List<double>.from(p)).toList()),
+        ),
+      ),
+      carpetPlanningSettings: state._carpetPlanningSettings,
     ),
   );
 }
@@ -77,6 +90,24 @@ extension PlanCanvasEditorSettingsAccessors on PlanCanvasState {
   void setShowGrid(bool value) {
     setState(() {
       _showGrid = value;
+    });
+  }
+
+  StripSplitStrategy get stripSplitStrategy => _stripSplitStrategy;
+
+  void setStripSplitStrategy(StripSplitStrategy value) {
+    setState(() {
+      _stripSplitStrategy = value;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  CarpetPlanningSettings get carpetPlanningSettings => _carpetPlanningSettings;
+
+  void setCarpetPlanningSettings(CarpetPlanningSettings value) {
+    setState(() {
+      _carpetPlanningSettings = value;
+      _hasUnsavedChanges = true;
     });
   }
 }

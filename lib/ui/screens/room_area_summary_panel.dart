@@ -398,12 +398,13 @@ class _RoomListItem extends StatelessWidget {
     final carpetLabel = product?.name ?? 'None';
     StripLayout? stripLayout;
     if (product != null && product.rollWidthMm > 0) {
-      final opts = CarpetLayoutOptions(
+      final opts = CarpetLayoutOptions.forRoom(
+        roomIndex: roomIndex,
         minStripWidthMm: product.minStripWidthMm ?? 100,
         trimAllowanceMm: product.trimAllowanceMm ?? 75,
         patternRepeatMm: product.patternRepeatMm ?? 0,
         wasteAllowancePercent: 5,
-        roomIndex: roomIndex,
+        maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
       );
       stripLayout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
     }

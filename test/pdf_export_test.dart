@@ -6,6 +6,8 @@ import 'package:degrid/core/geometry/room.dart';
 /// 
 /// Run with: flutter test test/pdf_export_test.dart
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('PDF export creates valid PDF with sample rooms', () async {
     // Create sample rooms for testing
     final rooms = [

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/material.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
@@ -5,6 +6,7 @@ import '../../core/geometry/opening.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
+import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
 import 'carpet_cut_list_panel.dart';
 
@@ -21,6 +23,13 @@ class CarpetRollCutSheet extends StatefulWidget {
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
+  final StripSplitStrategy stripSplitStrategy;
+  final void Function(StripSplitStrategy)? onStripSplitStrategyChanged;
+
+  /// User-adjustable planning settings (waste %, seam penalties).
+  final CarpetPlanningSettings carpetPlanningSettings;
+  final void Function(CarpetPlanningSettings)? onCarpetPlanningSettingsChanged;
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   final bool useImperial;
   final void Function(int roomIndex)? onResetSeamsForRoom;
 
@@ -44,6 +53,11 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
+    this.stripSplitStrategy = StripSplitStrategy.auto,
+    this.onStripSplitStrategyChanged,
+    this.carpetPlanningSettings = const CarpetPlanningSettings(),
+    this.onCarpetPlanningSettingsChanged,
+    this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.useImperial = false,
     this.onResetSeamsForRoom,
     this.selectedRoomIndex,
@@ -108,19 +122,238 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
   @override
   void didUpdateWidget(covariant CarpetRollCutSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.roomCarpetLayoutVariantIndex !=
-        widget.roomCarpetLayoutVariantIndex) {
+    if (!mapEquals(
+      oldWidget.roomCarpetLayoutVariantIndex,
+      widget.roomCarpetLayoutVariantIndex,
+    )) {
       _layoutVariantIndex = Map<int, int>.from(
         widget.roomCarpetLayoutVariantIndex,
       );
     }
-    if (oldWidget.rooms != widget.rooms ||
-        oldWidget.roomCarpetAssignments != widget.roomCarpetAssignments ||
-        oldWidget.carpetProducts != widget.carpetProducts ||
-        oldWidget.roomCarpetSeamOverrides != widget.roomCarpetSeamOverrides ||
-        oldWidget.roomCarpetSeamLayDirectionDeg !=
-            widget.roomCarpetSeamLayDirectionDeg) {
+    // Compare by value (the editor publishes fresh copies on every canvas
+    // change): rebuild the roll plan only when layout-relevant data actually
+    // changed, so unrelated canvas interactions (pan/zoom) don't reset the
+    // roll board, while seam drags still update the plan live per move.
+    if (_layoutInputsChanged(oldWidget)) {
       _rebuildPlanState();
+    }
+  }
+
+  bool _layoutInputsChanged(CarpetRollCutSheet old) {
+    return !_roomsEquals(old.rooms, widget.rooms) ||
+        !mapEquals(old.roomCarpetAssignments, widget.roomCarpetAssignments) ||
+        !_productsEquals(old.carpetProducts, widget.carpetProducts) ||
+        !_openingsEquals(old.openings, widget.openings) ||
+        !_mapOfListEquals(
+          old.roomCarpetSeamOverrides,
+          widget.roomCarpetSeamOverrides,
+        ) ||
+        !mapEquals(
+          old.roomCarpetSeamLayDirectionDeg,
+          widget.roomCarpetSeamLayDirectionDeg,
+        ) ||
+        !mapEquals(
+          old.roomCarpetLayoutVariantIndex,
+          widget.roomCarpetLayoutVariantIndex,
+        ) ||
+        old.stripSplitStrategy != widget.stripSplitStrategy ||
+        old.carpetPlanningSettings != widget.carpetPlanningSettings ||
+        !_mapOfNestedListEquals(
+          old.roomCarpetStripPieceLengthsOverrideMm,
+          widget.roomCarpetStripPieceLengthsOverrideMm,
+        ) ||
+        old.selectedRoomIndex != widget.selectedRoomIndex;
+  }
+
+  static bool _roomsEquals(List<Room> a, List<Room> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].name != b[i].name) return false;
+      if (!listEquals(a[i].vertices, b[i].vertices)) return false;
+    }
+    return true;
+  }
+
+  static bool _productsEquals(List<CarpetProduct> a, List<CarpetProduct> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final p = a[i];
+      final q = b[i];
+      if (p.name != q.name ||
+          p.rollWidthMm != q.rollWidthMm ||
+          p.rollLengthM != q.rollLengthM ||
+          p.costPerSqm != q.costPerSqm ||
+          p.patternRepeatMm != q.patternRepeatMm ||
+          p.minStripWidthMm != q.minStripWidthMm ||
+          p.trimAllowanceMm != q.trimAllowanceMm) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _openingsEquals(List<Opening> a, List<Opening> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final p = a[i];
+      final q = b[i];
+      if (p.roomIndex != q.roomIndex ||
+          p.edgeIndex != q.edgeIndex ||
+          p.offsetMm != q.offsetMm ||
+          p.widthMm != q.widthMm ||
+          p.isDoor != q.isDoor) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _mapOfListEquals(
+    Map<int, List<double>> a,
+    Map<int, List<double>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      final other = b[e.key];
+      if (other == null || !listEquals(e.value, other)) return false;
+    }
+    return true;
+  }
+
+  static bool _mapOfNestedListEquals(
+    Map<int, List<List<double>>> a,
+    Map<int, List<List<double>>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      final other = b[e.key];
+      if (other == null || other.length != e.value.length) return false;
+      for (var i = 0; i < e.value.length; i++) {
+        if (!listEquals(e.value[i], other[i])) return false;
+      }
+    }
+    return true;
+  }
+
+  static String _formatPercent(double value) {
+    return value == value.roundToDouble()
+        ? value.round().toString()
+        : value.toStringAsFixed(1);
+  }
+
+  /// Dialog for adjustable planning settings: waste allowance plus advanced
+  /// seam penalty tuning (mm-equivalent cost per seam).
+  Future<void> _showPlanningSettingsDialog(BuildContext context) async {
+    final settings = widget.carpetPlanningSettings;
+    final wasteController = TextEditingController(
+      text: _formatPercent(settings.wasteAllowancePercent),
+    );
+    final noDoorsController = TextEditingController(
+      text: settings.seamPenaltyMmNoDoors.round().toString(),
+    );
+    final withDoorsController = TextEditingController(
+      text: settings.seamPenaltyMmWithDoors.round().toString(),
+    );
+    final inDoorwayController = TextEditingController(
+      text: settings.seamPenaltyMmInDoorway.round().toString(),
+    );
+    final updated = await showDialog<CarpetPlanningSettings>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Planning settings'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: wasteController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Waste allowance (%)',
+                  hintText: 'e.g. 5',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ExpansionTile(
+                title: Text(
+                  'Advanced: seam penalties',
+                  style: Theme.of(ctx).textTheme.bodyMedium,
+                ),
+                subtitle: Text(
+                  'Cost per seam (mm-equivalent); higher = fewer seams',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(top: 8),
+                children: [
+                  TextField(
+                    controller: noDoorsController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Per seam — room without doors',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: withDoorsController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Per seam — room with doors',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: inDoorwayController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Per seam crossing a doorway',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final waste = double.tryParse(wasteController.text.trim());
+              final noDoors = double.tryParse(noDoorsController.text.trim());
+              final withDoors =
+                  double.tryParse(withDoorsController.text.trim());
+              final inDoorway =
+                  double.tryParse(inDoorwayController.text.trim());
+              Navigator.pop(
+                ctx,
+                settings.copyWith(
+                  wasteAllowancePercent:
+                      waste != null && waste >= 0 && waste <= 100
+                          ? waste
+                          : null,
+                  seamPenaltyMmNoDoors:
+                      noDoors != null && noDoors >= 0 ? noDoors : null,
+                  seamPenaltyMmWithDoors:
+                      withDoors != null && withDoors >= 0 ? withDoors : null,
+                  seamPenaltyMmInDoorway:
+                      inDoorway != null && inDoorway >= 0 ? inDoorway : null,
+                ),
+              );
+            },
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (updated != null && updated != settings) {
+      widget.onCarpetPlanningSettingsChanged?.call(updated);
     }
   }
 
@@ -178,21 +411,20 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         continue;
       }
       final variantIndex = _layoutVariantIndex[ri] ?? 0;
-      final layDirectionDeg =
-          widget.roomCarpetSeamLayDirectionDeg[ri] ??
-          (variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0));
-      final opts = CarpetLayoutOptions.forRoom(
+      final layout = computeRoomStripLayout(
+        room: room,
         roomIndex: ri,
-        minStripWidthMm: product.minStripWidthMm ?? 100,
-        trimAllowanceMm: product.trimAllowanceMm ?? 75,
-        patternRepeatMm: product.patternRepeatMm ?? 0,
-        wasteAllowancePercent: 5,
+        product: product,
         openings: widget.openings,
-        seamPositionsOverrideMm: widget.roomCarpetSeamOverrides[ri],
-        layDirectionDeg: layDirectionDeg,
+        seamOverrides: widget.roomCarpetSeamOverrides[ri],
+        layDirectionDeg: widget.roomCarpetSeamLayDirectionDeg[ri] ??
+            layDirectionDegFromVariant(variantIndex),
+        stripSplitStrategy: widget.stripSplitStrategy,
+        stripPieceLengthsOverride:
+            widget.roomCarpetStripPieceLengthsOverrideMm[ri],
+        settings: widget.carpetPlanningSettings,
       );
-      final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
-      if (layout.numStrips > 0) {
+      if (layout != null && layout.numStrips > 0) {
         list.add(
           _RoomWithCarpet(
             roomIndex: ri,
@@ -222,9 +454,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       final roomName = r.room.name ?? 'Room ${r.roomIndex + 1}';
       final letter = String.fromCharCode(65 + li);
       for (int si = 0; si < r.layout.stripLengthsMm.length; si++) {
-        final lengthMm = r.layout.stripLengthsMm[si];
-        totalLinear += lengthMm;
-        final cutId = '$letter${si + 1}';
+        final pieceLengths = r.layout.pieceLengthsForStrip(si);
         final breadthMm = si < r.layout.stripWidthsMm.length
             ? r.layout.stripWidthsMm[si]
             : r.product.rollWidthMm;
@@ -232,27 +462,34 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           si,
           r.product.minStripWidthMm ?? 100,
         );
-        allCuts.add(
-          RollCutPiece(
-            cutId: cutId,
-            roomIndex: r.roomIndex,
-            roomName: roomName,
-            rollLaneIndex: 0,
-            product: r.product,
-            stripIndex: si,
-            lengthMm: lengthMm,
-            trimMm: r.product.trimAllowanceMm ?? 75,
-            breadthMm: breadthMm,
-            isSliver: isSliver,
-            patternRepeatMm: r.product.patternRepeatMm,
-            roomShapeVerticesMm: r.layout.isSinglePiece
-                ? r.layout.roomShapeVerticesMm
-                : null,
-            layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
-          ),
-        );
-        placements[cutId] = Offset(alongPos, 0);
-        alongPos += lengthMm;
+        for (int pi = 0; pi < pieceLengths.length; pi++) {
+          final lengthMm = pieceLengths[pi];
+          totalLinear += lengthMm;
+          final cutId = pieceLengths.length > 1
+              ? '$letter${si + 1}-${pi + 1}'
+              : '$letter${si + 1}';
+          allCuts.add(
+            RollCutPiece(
+              cutId: cutId,
+              roomIndex: r.roomIndex,
+              roomName: roomName,
+              rollLaneIndex: 0,
+              product: r.product,
+              stripIndex: si,
+              lengthMm: lengthMm,
+              trimMm: r.product.trimAllowanceMm ?? 75,
+              breadthMm: breadthMm,
+              isSliver: isSliver,
+              patternRepeatMm: r.product.patternRepeatMm,
+              roomShapeVerticesMm: r.layout.isSinglePiece
+                  ? r.layout.roomShapeVerticesMm
+                  : null,
+              layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
+            ),
+          );
+          placements[cutId] = Offset(alongPos, 0);
+          alongPos += lengthMm;
+        }
       }
     }
     final totalScoreCostMm = list.fold<double>(
@@ -265,10 +502,30 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       totalLinearMm: totalLinear,
     );
 
+    // Preserve the user's manual roll-board arrangement: keep the previous
+    // placement for cuts whose ID and length are unchanged; cuts affected by
+    // the layout change (new ID or new length) use the freshly seeded position.
+    final previous = _planState;
+    if (previous != null) {
+      final oldLengthById = {
+        for (final c in previous.allCuts) c.cutId: c.lengthMm,
+      };
+      for (final c in allCuts) {
+        final oldPlacement = previous.placements[c.cutId];
+        final oldLength = oldLengthById[c.cutId];
+        if (oldPlacement != null &&
+            oldLength != null &&
+            (oldLength - c.lengthMm).abs() < 0.01) {
+          placements[c.cutId] = oldPlacement;
+        }
+      }
+    }
+
     // Phase V2-3: simple offcut reuse assignment.
-    // Treat the tail length at the end of the roll as available offcut material,
-    // and greedily assign the longest cuts that fit within this length as
-    // "from offcut". This is a planning hint only; placements remain unchanged.
+    // Treat the tail length at the end of the roll as available offcut material
+    // (roll length minus total cut length), and greedily assign the longest
+    // cuts that fit within this length as "from offcut". This is a planning
+    // hint only (no offcut inventory is tracked); placements remain unchanged.
     final availableOffcutLength = (lane.rollLengthMm - totalLinear).clamp(
       0.0,
       double.infinity,
@@ -295,11 +552,16 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         .toList();
 
     final lanes = [lane];
+    final selectedCutId = previous != null &&
+            annotatedCuts.any((c) => c.cutId == previous.selectedCutId)
+        ? previous.selectedCutId
+        : null;
     setState(() {
       _planState = RollPlanState(
         allCuts: annotatedCuts,
         lanes: lanes,
         placements: placements,
+        selectedCutId: selectedCutId,
         cutListExpanded: true,
         totalScoreCostMm: totalScoreCostMm,
       );
@@ -432,6 +694,57 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                 Tab(text: 'Roll cut'),
               ],
             ),
+            if (widget.onStripSplitStrategyChanged != null ||
+                widget.onCarpetPlanningSettingsChanged != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.onStripSplitStrategyChanged != null) ...[
+                      Text(
+                        'Strip layout:',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(width: 8),
+                      DropdownButton<StripSplitStrategy>(
+                        value: widget.stripSplitStrategy,
+                        isDense: true,
+                        items: const [
+                          DropdownMenuItem(
+                            value: StripSplitStrategy.auto,
+                            child: Text('Auto'),
+                          ),
+                          DropdownMenuItem(
+                            value: StripSplitStrategy.never,
+                            child: Text('One piece per strip'),
+                          ),
+                          DropdownMenuItem(
+                            value: StripSplitStrategy.preferStripInPieces,
+                            child: Text('Prefer split when long'),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) widget.onStripSplitStrategyChanged!(v);
+                        },
+                      ),
+                    ],
+                    if (widget.onCarpetPlanningSettingsChanged != null) ...[
+                      const SizedBox(width: 12),
+                      Text(
+                        'Waste: ${_formatPercent(widget.carpetPlanningSettings.wasteAllowancePercent)}%',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.tune, size: 18),
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Planning settings',
+                        onPressed: () => _showPlanningSettingsDialog(context),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
           ],
         );
 
@@ -493,6 +806,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       roomCarpetLayoutVariantIndex: _layoutVariantIndex,
       onLayoutVariantChanged: _onLayoutVariantChanged,
       onResetSeamsForRoom: widget.onResetSeamsForRoom,
+      stripSplitStrategy: widget.stripSplitStrategy,
+      roomCarpetStripPieceLengthsOverrideMm:
+          widget.roomCarpetStripPieceLengthsOverrideMm,
+      carpetPlanningSettings: widget.carpetPlanningSettings,
     );
   }
 
@@ -748,13 +1065,14 @@ class _OffcutsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final offcuts = plan.offcuts();
     if (offcuts.isEmpty) return const SizedBox.shrink();
+    final fromOffcutCount = plan.allCuts.where((c) => c.fromOffcut).length;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Remaining: ',
+            'Roll tail: ',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontWeight: FontWeight.w600,
               color: Theme.of(
@@ -766,14 +1084,24 @@ class _OffcutsSection extends StatelessWidget {
             child: Wrap(
               spacing: 12,
               runSpacing: 4,
-              children: offcuts.map((o) {
-                return Text(
-                  'Lane ${o.rollIndex}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.secondary,
+              children: [
+                ...offcuts.map((o) {
+                  return Text(
+                    'Lane ${o.rollIndex}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)} available',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.secondary,
+                    ),
+                  );
+                }),
+                if (fromOffcutCount > 0)
+                  Text(
+                    '$fromOffcutCount cut(s) reusable from tail (planning hint)',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.tertiary,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
-                );
-              }).toList(),
+              ],
             ),
           ),
         ],
@@ -910,7 +1238,7 @@ class _RollBoard extends StatelessWidget {
                         isFromOffcut: c.fromOffcut,
                         tooltipMessage: c.fromOffcut
                             ? 'From offcut${c.sourceOffcutRollIndex != null ? ' (lane ${c.sourceOffcutRollIndex})' : ''}'
-                            : '${c.cutId} · ${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)}',
+                            : '${c.cutId} · ${UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(c.breadthMm, useImperial: useImperial)}',
                         onTap: () => onSelectCut(c.cutId),
                         onDragEnd: (double deltaAlongMm, double deltaPerpMm) {
                           if (onPlacementDelta != null) {
@@ -1300,6 +1628,13 @@ class _CutInspector extends StatelessWidget {
               'Length',
               UnitConverter.formatDistance(
                 c.lengthMm,
+                useImperial: useImperial,
+              ),
+            ),
+            _row(
+              'Width',
+              UnitConverter.formatDistance(
+                c.breadthMm,
                 useImperial: useImperial,
               ),
             ),

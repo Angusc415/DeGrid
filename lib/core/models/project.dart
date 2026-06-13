@@ -2,6 +2,7 @@ import 'dart:ui';
 import '../geometry/room.dart';
 import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
+import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
 /// Represents a saved project with its rooms and viewport state.
@@ -18,6 +19,16 @@ class ProjectModel {
   final Map<int, int> roomCarpetAssignments;
   /// Room index -> list of seam positions (mm from reference edge). Overrides auto layout when set.
   final Map<int, List<double>> roomCarpetSeamOverrides;
+  /// Room index -> locked lay direction (0 or 90) used while the room has seam overrides.
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
+  /// Room index -> layout variant index (0 = Auto, 1 = 0°, 2 = 90°).
+  final Map<int, int> roomCarpetLayoutVariantIndex;
+  /// Room index -> piece lengths per strip (user merged/split pieces by dragging along-run seams).
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+  /// Carpet planning: waste allowance percent (user-adjustable).
+  final double carpetWasteAllowancePercent;
+  /// Carpet planning: how strips split into pieces along the run.
+  final StripSplitStrategy stripSplitStrategy;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -37,6 +48,11 @@ class ProjectModel {
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    Map<int, double>? roomCarpetSeamLayDirectionDeg,
+    Map<int, int>? roomCarpetLayoutVariantIndex,
+    Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
+    this.carpetWasteAllowancePercent = 5.0,
+    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
@@ -46,6 +62,11 @@ class ProjectModel {
         carpetProducts = carpetProducts ?? const [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
         roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {},
+        roomCarpetSeamLayDirectionDeg =
+            roomCarpetSeamLayDirectionDeg ?? const {},
+        roomCarpetLayoutVariantIndex = roomCarpetLayoutVariantIndex ?? const {},
+        roomCarpetStripPieceLengthsOverrideMm =
+            roomCarpetStripPieceLengthsOverrideMm ?? const {},
         wallWidthMm = wallWidthMm ?? 70.0;
 
   /// Create a copy with updated fields.
@@ -60,6 +81,11 @@ class ProjectModel {
     List<CarpetProduct>? carpetProducts,
     Map<int, int>? roomCarpetAssignments,
     Map<int, List<double>>? roomCarpetSeamOverrides,
+    Map<int, double>? roomCarpetSeamLayDirectionDeg,
+    Map<int, int>? roomCarpetLayoutVariantIndex,
+    Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
+    double? carpetWasteAllowancePercent,
+    StripSplitStrategy? stripSplitStrategy,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -77,6 +103,16 @@ class ProjectModel {
       carpetProducts: carpetProducts ?? this.carpetProducts,
       roomCarpetAssignments: roomCarpetAssignments ?? this.roomCarpetAssignments,
       roomCarpetSeamOverrides: roomCarpetSeamOverrides ?? this.roomCarpetSeamOverrides,
+      roomCarpetSeamLayDirectionDeg:
+          roomCarpetSeamLayDirectionDeg ?? this.roomCarpetSeamLayDirectionDeg,
+      roomCarpetLayoutVariantIndex:
+          roomCarpetLayoutVariantIndex ?? this.roomCarpetLayoutVariantIndex,
+      roomCarpetStripPieceLengthsOverrideMm:
+          roomCarpetStripPieceLengthsOverrideMm ??
+              this.roomCarpetStripPieceLengthsOverrideMm,
+      carpetWasteAllowancePercent:
+          carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
+      stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,

@@ -4,7 +4,6 @@ import '../../core/config/feature_flags.dart';
 
 import '../canvas/plan_canvas.dart';
 import '../editor/editor_controller.dart';
-import 'carpet_cut_list_panel.dart';
 import 'carpet_products_screen.dart';
 import 'carpet_roll_cut_sheet.dart';
 import 'project_settings_sheet.dart';
@@ -55,47 +54,6 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       _isPanelOpen = true;
     });
-  }
-
-  Map<int, int> _filteredCutListAssignments(EditorViewState state) {
-    var assignments = state.roomCarpetAssignments;
-    final selectedRoomIndex = state.selectedRoomIndex;
-    if (selectedRoomIndex != null) {
-      final selectedProduct = assignments[selectedRoomIndex];
-      if (selectedProduct != null) {
-        return {
-          for (final entry in assignments.entries)
-            if (entry.value == selectedProduct) entry.key: entry.value,
-        };
-      }
-      return assignments;
-    }
-
-    final areaByProduct = <int, double>{};
-    for (final entry in assignments.entries) {
-      final roomIndex = entry.key;
-      final productIndex = entry.value;
-      if (roomIndex < 0 ||
-          roomIndex >= state.rooms.length ||
-          productIndex < 0 ||
-          productIndex >= state.carpetProducts.length) {
-        continue;
-      }
-      final room = state.rooms[roomIndex];
-      areaByProduct[productIndex] =
-          (areaByProduct[productIndex] ?? 0) + room.areaMm2;
-    }
-    if (areaByProduct.isEmpty) {
-      return assignments;
-    }
-
-    final bestProductIndex = areaByProduct.entries
-        .reduce((a, b) => a.value >= b.value ? a : b)
-        .key;
-    return {
-      for (final entry in assignments.entries)
-        if (entry.value == bestProductIndex) entry.key: entry.value,
-    };
   }
 
   void _showProjectSettingsSheet(EditorViewState state) {
@@ -239,6 +197,9 @@ class _EditorScreenState extends State<EditorScreen> {
                     stripSplitStrategy: state.stripSplitStrategy,
                     onStripSplitStrategyChanged:
                         _editorController.setStripSplitStrategy,
+                    carpetPlanningSettings: state.carpetPlanningSettings,
+                    onCarpetPlanningSettingsChanged:
+                        _editorController.setCarpetPlanningSettings,
                     roomCarpetStripPieceLengthsOverrideMm:
                         state.roomCarpetStripPieceLengthsOverrideMm,
                     useImperial: state.useImperial,

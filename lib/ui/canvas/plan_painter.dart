@@ -8,6 +8,7 @@ import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
+import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
 import '../../core/models/project.dart';
 
@@ -51,6 +52,10 @@ class PlanPaintModel {
   final Map<int, int> roomCarpetLayoutVariantIndex;
   /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+  /// When to split a strip into pieces along the run (user-adjustable, matches cut sheet).
+  final StripSplitStrategy stripSplitStrategy;
+  /// User-adjustable planning settings (waste %, seam penalties) shared with the cut sheet.
+  final CarpetPlanningSettings carpetPlanningSettings;
   /// Optional project-level door thickness in millimeters (used when drawing doors).
   final double? doorThicknessMm;
   /// Temporary jamb dimensions while dragging a room into alignment.
@@ -90,6 +95,8 @@ class PlanPaintModel {
     Map<int, double>? roomCarpetSeamLayDirectionDeg,
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
+    this.stripSplitStrategy = StripSplitStrategy.auto,
+    this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.doorThicknessMm,
     List<RoomMoveAlignHint>? roomMoveAlignHints,
   })  : completedRooms = completedRooms ?? [],
@@ -615,11 +622,6 @@ class PlanPainter extends CustomPainter {
     return (p - proj).distance;
   }
 
-  /// Lay direction from variant index: 0 = auto (null), 1 = 0°, 2 = 90°.
-  static double? _layDirectionDegFromVariant(int variantIndex) {
-    return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
-  }
-
   StripLayout? _getStripLayoutForRoom(int roomIndex, Room room) {
     final productIndex = m.roomCarpetAssignments[roomIndex];
     if (productIndex == null ||
@@ -628,53 +630,20 @@ class PlanPainter extends CustomPainter {
       return null;
     }
     final product = m.carpetProducts[productIndex];
-    if (product.rollWidthMm <= 0) return null;
-    final seamOverride = m.roomCarpetSeamOverrides[roomIndex];
     final variantIndex = m.roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-    final layDirectionDeg = m.roomCarpetSeamLayDirectionDeg[roomIndex] ?? _layDirectionDegFromVariant(variantIndex);
-    final opts = CarpetLayoutOptions.forRoom(
+    return computeRoomStripLayout(
+      room: room,
       roomIndex: roomIndex,
-      minStripWidthMm: product.minStripWidthMm ?? 100,
-      trimAllowanceMm: product.trimAllowanceMm ?? 75,
-      patternRepeatMm: product.patternRepeatMm ?? 0,
-      wasteAllowancePercent: 5,
+      product: product,
       openings: m.openings,
-      seamPositionsOverrideMm: seamOverride?.isNotEmpty == true ? seamOverride : null,
-      layDirectionDeg: layDirectionDeg,
-      maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
+      seamOverrides: m.roomCarpetSeamOverrides[roomIndex],
+      layDirectionDeg: m.roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          layDirectionDegFromVariant(variantIndex),
+      stripSplitStrategy: m.stripSplitStrategy,
+      stripPieceLengthsOverride:
+          m.roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+      settings: m.carpetPlanningSettings,
     );
-    final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
-    final override = m.roomCarpetStripPieceLengthsOverrideMm[roomIndex];
-    if (override != null &&
-        override.isNotEmpty &&
-        override.length == layout.numStrips) {
-      final stripLengthsMm = override
-          .map((p) => p.fold<double>(0.0, (a, b) => a + b))
-          .toList();
-      return StripLayout(
-        numStrips: layout.numStrips,
-        stripLengthsMm: stripLengthsMm,
-        stripWidthsMm: layout.stripWidthsMm,
-        stripPieceLengthsMm: override,
-        layAngleDeg: layout.layAngleDeg,
-        bboxMinX: layout.bboxMinX,
-        bboxMinY: layout.bboxMinY,
-        bboxWidth: layout.bboxWidth,
-        bboxHeight: layout.bboxHeight,
-        layAlongX: layout.layAlongX,
-        rollWidthMm: layout.rollWidthMm,
-        seamCount: layout.seamCount,
-        totalLinearWithWasteMm: layout.totalLinearWithWasteMm,
-        seamPositionsMmOverride: layout.seamPositionsMmOverride,
-        isSinglePiece: layout.isSinglePiece,
-        roomShapeVerticesMm: layout.roomShapeVerticesMm,
-        scoreMaterialMm: layout.scoreMaterialMm,
-        scoreSeamPenaltyMm: layout.scoreSeamPenaltyMm,
-        scoreSliverPenaltyMm: layout.scoreSliverPenaltyMm,
-        scoreCostMm: layout.scoreCostMm,
-      );
-    }
-    return layout;
   }
 
   /// Same palette as roll cut sheet so product colors match on canvas and roll board.

@@ -16,6 +16,7 @@ import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
+import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/models/project.dart';
@@ -112,6 +113,10 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// Strip layout: when to split a strip into pieces along the run (user-adjustable).
   StripSplitStrategy _stripSplitStrategy = StripSplitStrategy.auto;
+
+  /// User-adjustable planning settings (waste %, seam penalties). Waste % is persisted per project.
+  CarpetPlanningSettings _carpetPlanningSettings =
+      const CarpetPlanningSettings();
 
   /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
   /// Key = roomIndex. Value = list of piece-length lists per strip; when set, replaces planner's stripPieceLengthsMm.
@@ -953,11 +958,16 @@ class PlanCanvasState extends State<PlanCanvas> {
       Map<int, double>.from(_roomCarpetSeamLayDirectionDeg);
 
   /// Clear seam overrides for one room (reset to auto layout).
+  /// Also drops the along-run piece-length override, which is meaningless without its seams.
   void clearSeamOverridesForRoom(int roomIndex) {
-    if (!_roomCarpetSeamOverrides.containsKey(roomIndex)) return;
+    if (!_roomCarpetSeamOverrides.containsKey(roomIndex) &&
+        !_roomCarpetStripPieceLengthsOverrideMm.containsKey(roomIndex)) {
+      return;
+    }
     setState(() {
       _roomCarpetSeamOverrides.remove(roomIndex);
       _roomCarpetSeamLayDirectionDeg.remove(roomIndex);
+      _roomCarpetStripPieceLengthsOverrideMm.remove(roomIndex);
       _hasUnsavedChanges = true;
     });
   }
@@ -967,13 +977,15 @@ class PlanCanvasState extends State<PlanCanvas> {
       Map<int, int>.from(_roomCarpetLayoutVariantIndex);
 
   /// Set layout variant for a room (0 = Auto, 1 = 0°, 2 = 90°).
-  /// Clears seam overrides and direction lock for this room so the new direction takes effect.
+  /// Clears seam and piece-length overrides and the direction lock for this
+  /// room so the new direction takes effect.
   void setRoomLayoutVariant(int roomIndex, int variantIndex) {
     if (variantIndex < 0 || variantIndex > 2) return;
     setState(() {
       _roomCarpetLayoutVariantIndex[roomIndex] = variantIndex;
       _roomCarpetSeamOverrides.remove(roomIndex);
       _roomCarpetSeamLayDirectionDeg.remove(roomIndex);
+      _roomCarpetStripPieceLengthsOverrideMm.remove(roomIndex);
       _hasUnsavedChanges = true;
     });
   }
@@ -993,11 +1005,39 @@ class PlanCanvasState extends State<PlanCanvas> {
     });
   }
 
-  static double? _layDirectionDegFromVariant(int variantIndex) {
-    return variantIndex == 0 ? null : (variantIndex == 1 ? 0.0 : 90.0);
+  /// Clamp a dragged cross-strip seam so neither adjacent strip can exceed the
+  /// roll width (carpet can't be wider than the roll) while keeping a minimum
+  /// gap between seams/edges. Returns the clamped perpendicular position (mm).
+  double _clampSeamPositionMm({
+    required List<double> positions,
+    required int seamIndex,
+    required double desiredPerpMm,
+    required double perpLen,
+    required double rollWidthMm,
+  }) {
+    const minGap = 50.0;
+    final leftRef = seamIndex > 0 ? positions[seamIndex - 1] : 0.0;
+    final rightRef = seamIndex < positions.length - 1
+        ? positions[seamIndex + 1]
+        : perpLen;
+    double lower = leftRef + minGap;
+    double upper = rightRef - minGap;
+    // A strip can be at most one roll width wide; stop the seam before either
+    // adjacent strip would have to be cut from carpet wider than the roll.
+    if (rollWidthMm > 0) {
+      lower = math.max(lower, rightRef - rollWidthMm);
+      upper = math.min(upper, leftRef + rollWidthMm);
+    }
+    if (lower > upper) {
+      // Degenerate (e.g. roll narrower than min gap): keep the min-gap range.
+      lower = leftRef + minGap;
+      upper = rightRef - minGap;
+    }
+    return desiredPerpMm.clamp(lower, upper);
   }
 
-  /// Compute strip layout for a room (used for hit-test and drag). Same logic as painter.
+  /// Compute strip layout for a room (used for hit-test and drag).
+  /// Shares [computeRoomStripLayout] with the painter and cut sheet so they always match.
   StripLayout? _computeStripLayoutForRoom(int roomIndex, Room room) {
     final productIndex = _roomCarpetAssignments[roomIndex];
     if (productIndex == null ||
@@ -1006,60 +1046,21 @@ class PlanCanvasState extends State<PlanCanvas> {
       return null;
     }
     final product = _carpetProducts[productIndex];
-    if (product.rollWidthMm <= 0) return null;
-    final seamOverride = _roomCarpetSeamOverrides[roomIndex];
     final variantIndex = _roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-    // When room has seam overrides, use locked direction so moving the seam doesn't flip strip direction.
-    final layDirectionDeg =
-        _roomCarpetSeamLayDirectionDeg[roomIndex] ??
-        _layDirectionDegFromVariant(variantIndex);
-    final opts = CarpetLayoutOptions.forRoom(
+    return computeRoomStripLayout(
+      room: room,
       roomIndex: roomIndex,
-      minStripWidthMm: product.minStripWidthMm ?? 100,
-      trimAllowanceMm: product.trimAllowanceMm ?? 75,
-      patternRepeatMm: product.patternRepeatMm ?? 0,
-      wasteAllowancePercent: 5,
+      product: product,
       openings: _openings,
-      seamPositionsOverrideMm: seamOverride?.isNotEmpty == true
-          ? seamOverride
-          : null,
-      layDirectionDeg: layDirectionDeg,
-      maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
+      seamOverrides: _roomCarpetSeamOverrides[roomIndex],
+      // When room has seam overrides, use locked direction so moving the seam doesn't flip strip direction.
+      layDirectionDeg: _roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          layDirectionDegFromVariant(variantIndex),
       stripSplitStrategy: _stripSplitStrategy,
+      stripPieceLengthsOverride:
+          _roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+      settings: _carpetPlanningSettings,
     );
-    final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
-    // Apply user's along-seam merges (dragged seams out) if any.
-    final override = _roomCarpetStripPieceLengthsOverrideMm[roomIndex];
-    if (override != null &&
-        override.isNotEmpty &&
-        override.length == layout.numStrips) {
-      final stripLengthsMm = override
-          .map((p) => p.fold<double>(0.0, (a, b) => a + b))
-          .toList();
-      return StripLayout(
-        numStrips: layout.numStrips,
-        stripLengthsMm: stripLengthsMm,
-        stripWidthsMm: layout.stripWidthsMm,
-        stripPieceLengthsMm: override,
-        layAngleDeg: layout.layAngleDeg,
-        bboxMinX: layout.bboxMinX,
-        bboxMinY: layout.bboxMinY,
-        bboxWidth: layout.bboxWidth,
-        bboxHeight: layout.bboxHeight,
-        layAlongX: layout.layAlongX,
-        rollWidthMm: layout.rollWidthMm,
-        seamCount: layout.seamCount,
-        totalLinearWithWasteMm: layout.totalLinearWithWasteMm,
-        seamPositionsMmOverride: layout.seamPositionsMmOverride,
-        isSinglePiece: layout.isSinglePiece,
-        roomShapeVerticesMm: layout.roomShapeVerticesMm,
-        scoreMaterialMm: layout.scoreMaterialMm,
-        scoreSeamPenaltyMm: layout.scoreSeamPenaltyMm,
-        scoreSliverPenaltyMm: layout.scoreSliverPenaltyMm,
-        scoreCostMm: layout.scoreCostMm,
-      );
-    }
-    return layout;
   }
 
   /// Hit-test: find seam line near [screenPos]. Returns (roomIndex, seamIndex) or null.
@@ -1517,12 +1518,13 @@ class PlanCanvasState extends State<PlanCanvas> {
                 final positions = List<double>.from(
                   _roomCarpetSeamOverrides[ri]!,
                 );
-                const minGap = 50.0;
-                final prev = si > 0 ? positions[si - 1] + minGap : 0.0;
-                final next = si < positions.length - 1
-                    ? positions[si + 1] - minGap
-                    : perpLen - minGap;
-                newPerpMm = newPerpMm.clamp(prev, next);
+                newPerpMm = _clampSeamPositionMm(
+                  positions: positions,
+                  seamIndex: si,
+                  desiredPerpMm: newPerpMm,
+                  perpLen: perpLen,
+                  rollWidthMm: layout.rollWidthMm,
+                );
                 setState(() {
                   positions[si] = newPerpMm;
                   _roomCarpetSeamOverrides[ri] = positions;
@@ -1818,14 +1820,13 @@ class PlanCanvasState extends State<PlanCanvas> {
                               final positions = List<double>.from(
                                 _roomCarpetSeamOverrides[ri]!,
                               );
-                              const minGap = 50.0;
-                              final prev = si > 0
-                                  ? positions[si - 1] + minGap
-                                  : 0.0;
-                              final next = si < positions.length - 1
-                                  ? positions[si + 1] - minGap
-                                  : perpLen - minGap;
-                              newPerpMm = newPerpMm.clamp(prev, next);
+                              newPerpMm = _clampSeamPositionMm(
+                                positions: positions,
+                                seamIndex: si,
+                                desiredPerpMm: newPerpMm,
+                                perpLen: perpLen,
+                                rollWidthMm: layout.rollWidthMm,
+                              );
                               setState(() {
                                 positions[si] = newPerpMm;
                                 _roomCarpetSeamOverrides[ri] = positions;
@@ -2096,6 +2097,12 @@ class PlanCanvasState extends State<PlanCanvas> {
                                   ),
                                 )
                               : const {},
+                          stripSplitStrategy: kEnableCarpetFeatures
+                              ? _stripSplitStrategy
+                              : StripSplitStrategy.auto,
+                          carpetPlanningSettings: kEnableCarpetFeatures
+                              ? _carpetPlanningSettings
+                              : const CarpetPlanningSettings(),
                           pendingDoorEdge: _pendingDoorEdge,
                           draftRoomVertices: _draftRoomVertices != null
                               ? List<Offset>.from(_draftRoomVertices!)

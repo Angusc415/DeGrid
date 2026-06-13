@@ -1,4 +1,4 @@
-package com.example.degrid
+package dev.degrid.app
 
 import io.flutter.embedding.android.FlutterActivity
 

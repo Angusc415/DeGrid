@@ -306,6 +306,76 @@ class _SnapPass {
   Offset apply(Offset delta) => candidate ?? delta;
 }
 
+/// Edge of [movedVerts] closest to [hostWall] (the wall approaching the doorway).
+({int edgeIndex, double score})? findMovingEdgeNearestHostWall(
+  List<Offset> movedVerts,
+  ({Offset a, Offset b}) hostWall, {
+  double maxScore = kOpeningWallSnapTolMm,
+}) {
+  final n = uniquePolygonVertices(movedVerts).length;
+  int? bestEi;
+  double bestScore = maxScore;
+  for (int ei = 0; ei < n; ei++) {
+    final e = edgeSegment(movedVerts, ei);
+    final score = _distancePointToSegment(e.a, hostWall.a, hostWall.b) +
+        _distancePointToSegment(e.b, hostWall.a, hostWall.b);
+    if (score < bestScore) {
+      bestScore = score;
+      bestEi = ei;
+    }
+  }
+  if (bestEi == null) return null;
+  return (edgeIndex: bestEi, score: bestScore);
+}
+
+/// True when the approaching moving edge is close to [hostWall].
+bool movingRoomNearHostWall(
+  List<Offset> movedVerts,
+  ({Offset a, Offset b}) hostWall, {
+  double tolMm = kOpeningWallSnapTolMm,
+}) {
+  final nearest = findMovingEdgeNearestHostWall(
+    movedVerts,
+    hostWall,
+    maxScore: tolMm,
+  );
+  return nearest != null;
+}
+
+/// Mirror of "door wall → host wall": lay [moveWall] on [hostWall] + shared-edge snap.
+void _considerMovingWallOntoHostWall(
+  _SnapPass pass,
+  ({Offset a, Offset b}) moveWall,
+  ({Offset a, Offset b}) hostWall,
+) {
+  if (!_edgesParallel(moveWall, hostWall)) return;
+  final dA = _distancePointToSegment(moveWall.a, hostWall.a, hostWall.b);
+  final dB = _distancePointToSegment(moveWall.b, hostWall.a, hostWall.b);
+  final cA = _snapPointToSegment(moveWall.a, hostWall.a, hostWall.b);
+  final cB = _snapPointToSegment(moveWall.b, hostWall.a, hostWall.b);
+  pass.consider(Offset((cA.dx + cB.dx) / 2, (cA.dy + cB.dy) / 2), dA + dB);
+}
+
+void _considerMovingWallSharedToHost(
+  _SnapPass pass,
+  ({Offset a, Offset b}) moveWall,
+  ({Offset a, Offset b}) hostWall,
+  double tolMm,
+) {
+  if (edgesAreSharedReversed(moveWall, hostWall, tolMm: tolMm)) {
+    final correction = hostWall.b - moveWall.a;
+    pass.consider(correction, correction.distance);
+    return;
+  }
+  final d0 = (moveWall.a - hostWall.b).distance;
+  final d1 = (moveWall.b - hostWall.a).distance;
+  final score = d0 + d1;
+  if (score > tolMm) return;
+  final c0 = hostWall.b - moveWall.a;
+  final c1 = hostWall.a - moveWall.b;
+  pass.consider(Offset((c0.dx + c1.dx) / 2, (c0.dy + c1.dy) / 2), score);
+}
+
 /// Best translation delta when dragging [movingRoomIndex], including edge/opening snap.
 ({Offset delta, List<RoomMoveAlignHint> alignHints}) computeRoomMoveSnap({
   required int movingRoomIndex,
@@ -321,6 +391,37 @@ class _SnapPass {
 
   List<Offset> movedVerts(Offset d) =>
       movingVertsAtStart.map((v) => v + d).toList();
+
+  final movingHasOpening =
+      openings.any((o) => o.roomIndex == movingRoomIndex);
+
+  // --- Plain wall → host wall with opening (mirror of door-wall → wall) ---
+  if (!movingHasOpening) {
+    final passWallToOpening = _SnapPass(delta, openingSnapToleranceMm);
+    for (final o in openings) {
+      if (o.roomIndex == movingRoomIndex) continue;
+      if (o.roomIndex < 0 || o.roomIndex >= rooms.length) continue;
+      final hostWall = edgeSegment(rooms[o.roomIndex].vertices, o.edgeIndex);
+      final nearest = findMovingEdgeNearestHostWall(
+        movedVerts(passWallToOpening.baseDelta),
+        hostWall,
+        maxScore: openingSnapToleranceMm,
+      );
+      if (nearest == null) continue;
+      final moveWall = edgeSegment(
+        movedVerts(passWallToOpening.baseDelta),
+        nearest.edgeIndex,
+      );
+      _considerMovingWallSharedToHost(
+        passWallToOpening,
+        moveWall,
+        hostWall,
+        openingSnapToleranceMm,
+      );
+      _considerMovingWallOntoHostWall(passWallToOpening, moveWall, hostWall);
+    }
+    delta = passWallToOpening.apply(delta);
+  }
 
   // --- Opening-first (90 mm): doorway pulls to walls more strongly ---
 
@@ -486,6 +587,36 @@ class _SnapPass {
     for (int i = 0; i < rooms.length; i++)
       i == movingRoomIndex ? movingRoom : rooms[i],
   ];
+  void addHostHint({
+    required int hostRoomIndex,
+    required int hostEdgeIndex,
+    required Offset gapStartMm,
+    required Offset gapEndMm,
+  }) {
+    final hostWall = edgeSegment(
+      roomsWithMoved[hostRoomIndex].vertices,
+      hostEdgeIndex,
+    );
+    if (!movingRoomNearHostWall(
+      finalVerts,
+      hostWall,
+      tolMm: openingSnapToleranceMm,
+    )) {
+      return;
+    }
+    final hostHint = wallAlignHint(
+      roomIndex: hostRoomIndex,
+      edgeIndex: hostEdgeIndex,
+      cornerStartMm: hostWall.a,
+      cornerEndMm: hostWall.b,
+      gapStartMm: gapStartMm,
+      gapEndMm: gapEndMm,
+      hostWall: true,
+    );
+    if (hostHint != null) hints.add(hostHint);
+  }
+
+  // Moving room has the door: show host wall dims using that opening.
   for (final o in openings) {
     if (o.roomIndex != movingRoomIndex) continue;
     final gap = openingGapWorld(finalVerts, o);
@@ -499,20 +630,26 @@ class _SnapPass {
     );
     if (target == null) continue;
 
-    final targetWall = edgeSegment(
-      roomsWithMoved[target.roomIndex].vertices,
-      target.edgeIndex,
-    );
-    final hostHint = wallAlignHint(
-      roomIndex: target.roomIndex,
-      edgeIndex: target.edgeIndex,
-      cornerStartMm: targetWall.a,
-      cornerEndMm: targetWall.b,
+    addHostHint(
+      hostRoomIndex: target.roomIndex,
+      hostEdgeIndex: target.edgeIndex,
       gapStartMm: gap.start,
       gapEndMm: gap.end,
-      hostWall: true,
     );
-    if (hostHint != null) hints.add(hostHint);
+  }
+
+  // Plain moving room against a neighbour that has the door.
+  for (final o in openings) {
+    if (o.roomIndex == movingRoomIndex) continue;
+    if (o.roomIndex < 0 || o.roomIndex >= roomsWithMoved.length) continue;
+    final gap = openingGapWorld(roomsWithMoved[o.roomIndex].vertices, o);
+    if (gap == null) continue;
+    addHostHint(
+      hostRoomIndex: o.roomIndex,
+      hostEdgeIndex: o.edgeIndex,
+      gapStartMm: gap.start,
+      gapEndMm: gap.end,
+    );
   }
 
   return (delta: delta, alignHints: hints);
