@@ -7,6 +7,7 @@ import '../../core/geometry/opening.dart';
 import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
+import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
 import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
@@ -61,6 +62,19 @@ class PlanPaintModel {
   /// Temporary jamb dimensions while dragging a room into alignment.
   final List<RoomMoveAlignHint> roomMoveAlignHints;
 
+  /// Screen position of the rotate handle for the selected room (null = hidden).
+  final Offset? rotateHandleScreen;
+
+  /// True while the user is dragging the rotate handle.
+  final bool isRotatingRoom;
+
+  /// Snapped rotation applied during the current drag (degrees), for readout.
+  final double rotateAppliedDeg;
+
+  /// Screen point where the rotate-handle stalk attaches to the room (the top
+  /// edge below the knob). Keeps the stalk short on large rooms.
+  final Offset? rotateStalkBaseScreen;
+
   PlanPaintModel({
     required this.vp,
     List<Room>? completedRooms,
@@ -99,6 +113,10 @@ class PlanPaintModel {
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.doorThicknessMm,
     List<RoomMoveAlignHint>? roomMoveAlignHints,
+    this.rotateHandleScreen,
+    this.isRotatingRoom = false,
+    this.rotateAppliedDeg = 0,
+    this.rotateStalkBaseScreen,
   })  : completedRooms = completedRooms ?? [],
         roomMoveAlignHints = roomMoveAlignHints ?? const [],
         measurePointsWorld = measurePointsWorld ?? [],
@@ -252,6 +270,11 @@ class PlanPainter extends CustomPainter {
         textPainter.layout();
         textPainter.paint(canvas, const Offset(12, 12));
       }
+
+      // Rotate handle for the selected room (drawn last so it stays on top).
+      if (m.selectedRoomIndex != null && m.rotateHandleScreen != null) {
+        _drawRotateHandle(canvas);
+      }
     } catch (e, stackTrace) {
       // Last resort: draw error message instead of crashing
       debugPrint('Critical error in paint: $e');
@@ -276,6 +299,116 @@ class PlanPainter extends CustomPainter {
         // Ignore text rendering errors
       }
     }
+  }
+
+  /// Draws the rotate handle (knob on a stalk above the selected room's
+  /// center) and, while rotating, a reference circle and live angle readout.
+  void _drawRotateHandle(Canvas canvas) {
+    final idx = m.selectedRoomIndex!;
+    if (idx < 0 || idx >= m.completedRooms.length) return;
+    final room = m.completedRooms[idx];
+    if (room.vertices.isEmpty) return;
+    final handle = m.rotateHandleScreen!;
+
+    final verts =
+        room.vertices.length > 1 && room.vertices.first == room.vertices.last
+            ? room.vertices.sublist(0, room.vertices.length - 1)
+            : room.vertices;
+    if (verts.isEmpty) return;
+    double cx = 0, cy = 0;
+    for (final v in verts) {
+      cx += v.dx;
+      cy += v.dy;
+    }
+    final centerWorld = Offset(cx / verts.length, cy / verts.length);
+    final centerScreen = m.vp.worldToScreen(centerWorld);
+
+    const accent = Color(0xFF1976D2);
+
+    // Short stalk from the room's top edge up to the knob (falls back to the
+    // center if no explicit base is provided).
+    final stalkBase = m.rotateStalkBaseScreen ?? centerScreen;
+    canvas.drawLine(
+      stalkBase,
+      handle,
+      Paint()
+        ..color = accent.withAlpha(m.isRotatingRoom ? 200 : 140)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+
+    // Reference circle (about the pivot/center) + live angle readout.
+    if (m.isRotatingRoom) {
+      final refRadius = (handle - centerScreen).distance;
+      canvas.drawCircle(
+        centerScreen,
+        refRadius,
+        Paint()
+          ..color = accent.withAlpha(60)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+
+      final deg = m.rotateAppliedDeg;
+      final label = '${deg >= 0 ? '+' : ''}${deg.toStringAsFixed(0)}\u00b0';
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final pillW = tp.width + 12;
+      final pillH = tp.height + 6;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(handle.dx + 16, handle.dy - pillH / 2, pillW, pillH),
+          const Radius.circular(6),
+        ),
+        Paint()..color = accent,
+      );
+      tp.paint(canvas, Offset(handle.dx + 22, handle.dy - tp.height / 2));
+    }
+
+    // Knob.
+    const r = 12.0;
+    canvas.drawCircle(handle, r, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      handle,
+      r,
+      Paint()
+        ..color = accent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+
+    // Curved rotate arrow inside the knob.
+    canvas.drawArc(
+      Rect.fromCircle(center: handle, radius: r - 5),
+      -math.pi / 2,
+      math.pi * 1.5,
+      false,
+      Paint()
+        ..color = accent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..strokeCap = StrokeCap.round,
+    );
+    final headBase = Offset(handle.dx, handle.dy - (r - 5));
+    canvas.drawPath(
+      Path()
+        ..moveTo(headBase.dx - 3, headBase.dy - 1)
+        ..lineTo(headBase.dx + 1, headBase.dy - 4)
+        ..lineTo(headBase.dx + 2, headBase.dy + 2)
+        ..close(),
+      Paint()
+        ..color = accent
+        ..style = PaintingStyle.fill,
+    );
   }
 
   /// When placing a door, highlight the selected wall and show a preview gap (center, 900mm).
@@ -345,7 +478,12 @@ class PlanPainter extends CustomPainter {
     }
   }
 
-  void _drawCarpetRollArrow(Canvas canvas, Room room, StripLayout layout) {
+  void _drawCarpetRollArrow(
+    Canvas canvas,
+    int roomIndex,
+    Room room,
+    StripLayout layout,
+  ) {
     if (layout.numStrips < 1 || layout.rollWidthMm <= 0) return;
 
     // Single arrow per room: compute the segment where the roll direction line
@@ -488,6 +626,27 @@ class PlanPainter extends CustomPainter {
     );
     canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), linePaint);
     canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), linePaint);
+
+    final letterIndex = _roomLetterIndex(roomIndex);
+    if (letterIndex != null) {
+      final pieces = layout.pieceLengthsForStrip(0);
+      final cutId = formatCutId(
+        roomLetterIndex: letterIndex,
+        stripIndex: 0,
+        pieceIndex: 0,
+        pieceCountInStrip: pieces.isEmpty ? 1 : pieces.length,
+      );
+      final midScreen = Offset(
+        (baseScreen.dx + tipScreen.dx) / 2,
+        (baseScreen.dy + tipScreen.dy) / 2,
+      );
+      final dirScreen = tipScreen - baseScreen;
+      final dirLen = dirScreen.distance;
+      if (dirLen > 1e-6) {
+        final perpUnit = Offset(-dirScreen.dy / dirLen, dirScreen.dx / dirLen);
+        _drawCutIdLabel(canvas, cutId, midScreen, perpUnit);
+      }
+    }
   }
 
   void _drawCarpetStrips(Canvas canvas, Room room, StripLayout layout) {
@@ -548,9 +707,6 @@ class PlanPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
-    const headLenMm = 40.0;
-    const headWidthMm = 25.0;
-
     for (int stri = 0; stri < layout.numStrips; stri++) {
       final pieces = layout.pieceLengthsForStrip(stri);
       if (pieces.length < 2) continue;
@@ -568,45 +724,219 @@ class PlanPainter extends CustomPainter {
         cum += pieces[ai];
         Offset p1World;
         Offset p2World;
-        Offset arrowBaseWorld;
-        Offset arrowTipWorld;
         if (layout.layAlongX) {
           final x = layout.bboxMinX + cum;
           final yStart = layout.bboxMinY + stripStartPerp;
           final yEnd = yStart + stripWidth;
           p1World = Offset(x, yStart);
           p2World = Offset(x, yEnd);
-          final midY = (yStart + yEnd) / 2;
-          arrowBaseWorld = Offset(x, midY);
-          arrowTipWorld = Offset(x + headLenMm, midY);
         } else {
           final y = layout.bboxMinY + cum;
           final xStart = layout.bboxMinX + stripStartPerp;
           final xEnd = xStart + stripWidth;
           p1World = Offset(xStart, y);
           p2World = Offset(xEnd, y);
-          final midX = (xStart + xEnd) / 2;
-          arrowBaseWorld = Offset(midX, y);
-          arrowTipWorld = Offset(midX, y + headLenMm);
         }
         final p1Screen = m.vp.worldToScreen(p1World);
         final p2Screen = m.vp.worldToScreen(p2World);
         _drawDashedLine(canvas, p1Screen, p2Screen, seamPaint, dashLength: 4, gapLength: 5);
-        final baseScreen = m.vp.worldToScreen(arrowBaseWorld);
-        final tipScreen = m.vp.worldToScreen(arrowTipWorld);
-        canvas.drawLine(baseScreen, tipScreen, seamPaint);
-        final dir = (arrowTipWorld - arrowBaseWorld).distance > 1e-6
-            ? (arrowTipWorld - arrowBaseWorld) / (arrowTipWorld - arrowBaseWorld).distance
-            : Offset(1, 0);
-        final perp = Offset(-dir.dy, dir.dx);
-        final headBaseWorld = arrowTipWorld - dir * headLenMm * 0.6;
-        final headLWorld = headBaseWorld + perp * headWidthMm;
-        final headRWorld = headBaseWorld - perp * headWidthMm;
-        canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), seamPaint);
-        canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), seamPaint);
       }
     }
     canvas.restore();
+  }
+
+  /// Draw one lay-direction arrow per cut piece. A piece is a strip's
+  /// sub-rectangle: perpendicular band [stripStartPerp, +stripWidth] and one
+  /// along-run interval from [pieceLengthsForStrip]. Each arrow is labeled with
+  /// its cut ID to match the cut sheet.
+  void _drawPerPieceCarpetArrows(
+    Canvas canvas,
+    int roomIndex,
+    Room room,
+    StripLayout layout,
+  ) {
+    final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+        ? room.vertices.sublist(0, room.vertices.length - 1)
+        : room.vertices;
+    if (verts.length < 3) return;
+
+    final roomPath = Path()
+      ..addPolygon(verts.map((v) => m.vp.worldToScreen(v)).toList(), true);
+    canvas.save();
+    canvas.clipPath(roomPath);
+
+    final arrowPaint = Paint()
+      ..color = Colors.brown.shade800.withAlpha(230)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    const headLenMm = 40.0;
+    const headWidthMm = 25.0;
+    const maxShaftLenMm = 160.0;
+    const minOnScreenPx = 28.0; // skip arrows on pieces too small to read
+    const minLabelOnScreenPx = 36.0;
+
+    final letterIndex = _roomLetterIndex(roomIndex);
+    if (letterIndex == null) {
+      canvas.restore();
+      return;
+    }
+
+    final dir = layout.layAlongX ? const Offset(1, 0) : const Offset(0, 1);
+    final perp = Offset(-dir.dy, dir.dx);
+
+    final hasName = room.name != null && room.name!.isNotEmpty;
+    final centroid = _getPolygonAreaCentroid(verts);
+    const nameAvoidMm = 250.0;
+
+    for (int stri = 0; stri < layout.numStrips; stri++) {
+      final pieces = layout.pieceLengthsForStrip(stri);
+      if (pieces.isEmpty) continue;
+      double stripStartPerp = 0.0;
+      for (int i = 0; i < stri; i++) {
+        stripStartPerp += i < layout.stripWidthsMm.length
+            ? layout.stripWidthsMm[i]
+            : layout.rollWidthMm;
+      }
+      final stripWidth = stri < layout.stripWidthsMm.length
+          ? layout.stripWidthsMm[stri]
+          : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth);
+      final perpMid = stripStartPerp + stripWidth / 2;
+
+      double alongStart = 0.0;
+      for (int pi = 0; pi < pieces.length; pi++) {
+        final pieceLen = pieces[pi];
+        final alongMid = alongStart + pieceLen / 2;
+        alongStart += pieceLen;
+        if (pieceLen <= 1e-6) continue;
+
+        // Piece center and its on-screen along-length.
+        Offset pieceCenterWorld;
+        Offset alongStartWorld;
+        Offset alongEndWorld;
+        if (layout.layAlongX) {
+          final y = layout.bboxMinY + perpMid;
+          pieceCenterWorld = Offset(layout.bboxMinX + alongMid, y);
+          alongStartWorld = Offset(layout.bboxMinX + (alongMid - pieceLen / 2), y);
+          alongEndWorld = Offset(layout.bboxMinX + (alongMid + pieceLen / 2), y);
+        } else {
+          final x = layout.bboxMinX + perpMid;
+          pieceCenterWorld = Offset(x, layout.bboxMinY + alongMid);
+          alongStartWorld = Offset(x, layout.bboxMinY + (alongMid - pieceLen / 2));
+          alongEndWorld = Offset(x, layout.bboxMinY + (alongMid + pieceLen / 2));
+        }
+
+        final onScreenLen = (m.vp.worldToScreen(alongEndWorld) -
+                m.vp.worldToScreen(alongStartWorld))
+            .distance;
+        if (onScreenLen < minOnScreenPx) continue;
+
+        // Concave-safe placement: prefer the center; otherwise sample along the
+        // piece centerline and pick the inside point nearest the center.
+        Offset? placeWorld;
+        if (_pointInPolygonWorld(pieceCenterWorld, verts)) {
+          placeWorld = pieceCenterWorld;
+        } else {
+          const samples = 5;
+          double bestDist = double.infinity;
+          for (int s = 0; s < samples; s++) {
+            final f = (s + 0.5) / samples; // 0.1, 0.3, ... 0.9
+            final along = (alongMid - pieceLen / 2) + f * pieceLen;
+            final candidate = layout.layAlongX
+                ? Offset(layout.bboxMinX + along, layout.bboxMinY + perpMid)
+                : Offset(layout.bboxMinX + perpMid, layout.bboxMinY + along);
+            if (!_pointInPolygonWorld(candidate, verts)) continue;
+            final d = (candidate - pieceCenterWorld).distance;
+            if (d < bestDist) {
+              bestDist = d;
+              placeWorld = candidate;
+            }
+          }
+        }
+        if (placeWorld == null) continue;
+
+        // Avoid drawing through the room name.
+        if (hasName && (placeWorld - centroid).distance < nameAvoidMm) continue;
+
+        // Shaft fits inside the piece; centered on the placement point.
+        final shaftLenMm = math.min(pieceLen * 0.5, maxShaftLenMm);
+        final half = shaftLenMm / 2;
+        final baseWorld = placeWorld - dir * half;
+        final tipWorld = placeWorld + dir * half;
+
+        final baseScreen = m.vp.worldToScreen(baseWorld);
+        final tipScreen = m.vp.worldToScreen(tipWorld);
+        canvas.drawLine(baseScreen, tipScreen, arrowPaint);
+
+        final headBaseWorld = tipWorld - dir * headLenMm;
+        final headLWorld = headBaseWorld + perp * headWidthMm;
+        final headRWorld = headBaseWorld - perp * headWidthMm;
+        canvas.drawLine(tipScreen, m.vp.worldToScreen(headLWorld), arrowPaint);
+        canvas.drawLine(tipScreen, m.vp.worldToScreen(headRWorld), arrowPaint);
+
+        if (onScreenLen >= minLabelOnScreenPx) {
+          final cutId = formatCutId(
+            roomLetterIndex: letterIndex,
+            stripIndex: stri,
+            pieceIndex: pi,
+            pieceCountInStrip: pieces.length,
+          );
+          final midScreen = Offset(
+            (baseScreen.dx + tipScreen.dx) / 2,
+            (baseScreen.dy + tipScreen.dy) / 2,
+          );
+          final dirScreen = tipScreen - baseScreen;
+          final dirLen = dirScreen.distance;
+          if (dirLen > 1e-6) {
+            final perpUnit = Offset(-dirScreen.dy / dirLen, dirScreen.dx / dirLen);
+            _drawCutIdLabel(canvas, cutId, midScreen, perpUnit);
+          }
+        }
+      }
+    }
+
+    canvas.restore();
+  }
+
+  int? _roomLetterIndex(int roomIndex) {
+    return roomLetterIndexInProduct(
+      assignments: m.roomCarpetAssignments,
+      roomIndex: roomIndex,
+      hasPlannableLayout: (ri) {
+        if (ri < 0 || ri >= m.completedRooms.length) return false;
+        final layout = _getStripLayoutForRoom(ri, m.completedRooms[ri]);
+        return layout != null && layout.numStrips > 0;
+      },
+    );
+  }
+
+  /// Cut ID text offset perpendicular to the arrow shaft.
+  void _drawCutIdLabel(
+    Canvas canvas,
+    String cutId,
+    Offset anchorScreen,
+    Offset perpScreenUnit,
+  ) {
+    const offsetPx = 24.0;
+    final anchor = anchorScreen + perpScreenUnit * offsetPx;
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: cutId,
+        style: TextStyle(
+          color: Colors.brown.shade900,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    tp.paint(
+      canvas,
+      Offset(anchor.dx - tp.width / 2, anchor.dy - tp.height / 2),
+    );
   }
 
   /// Distance from point [p] to the line segment [a]–[b] in world millimetres.
@@ -703,9 +1033,15 @@ class PlanPainter extends CustomPainter {
       _drawAlongRunSeams(canvas, room, stripLayout);
     }
 
-    // Roll direction arrow - shows which way to roll the carpet
+    // Roll direction arrow(s) - which way to roll the carpet. Single arrow for a
+    // one-piece room; one arrow per cut piece when the room is split into
+    // strips/cross-joins.
     if (stripLayout != null && stripLayout.numStrips > 0 && room.vertices.length >= 3) {
-      _drawCarpetRollArrow(canvas, room, stripLayout);
+      if (stripLayout.totalPieceCount <= 1) {
+        _drawCarpetRollArrow(canvas, roomIndex, room, stripLayout);
+      } else {
+        _drawPerPieceCarpetArrows(canvas, roomIndex, room, stripLayout);
+      }
     }
 
     // Outline - visible stroke. Use project wall width in mm, converted to pixels.
@@ -891,6 +1227,22 @@ class PlanPainter extends CustomPainter {
     cx /= (6 * signedArea);
     cy /= (6 * signedArea);
     return Offset(cx, cy);
+  }
+
+  /// Ray-cast point-in-polygon test in world space. [verts] should be the open
+  /// vertex ring (no duplicate closing vertex).
+  bool _pointInPolygonWorld(Offset p, List<Offset> verts) {
+    if (verts.length < 3) return false;
+    bool inside = false;
+    for (int i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      final vi = verts[i];
+      final vj = verts[j];
+      final intersects = ((vi.dy > p.dy) != (vj.dy > p.dy)) &&
+          (p.dx <
+              (vj.dx - vi.dx) * (p.dy - vi.dy) / (vj.dy - vi.dy) + vi.dx);
+      if (intersects) inside = !inside;
+    }
+    return inside;
   }
 
   /// Draw room name when set, or the name button (tap to add name) when no name. Area only in sidemenu.

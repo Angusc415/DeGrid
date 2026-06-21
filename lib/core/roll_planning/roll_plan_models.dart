@@ -78,6 +78,61 @@ class RollCutPiece {
   }
 }
 
+/// Format a cut ID matching the roll cut sheet: `A1`, `A2`, or `A1-1` when a
+/// strip is split into multiple along-run pieces (cross-join).
+String formatCutId({
+  required int roomLetterIndex,
+  required int stripIndex,
+  required int pieceIndex,
+  required int pieceCountInStrip,
+}) {
+  final letter = String.fromCharCode(65 + roomLetterIndex);
+  final stripNum = stripIndex + 1;
+  if (pieceCountInStrip > 1) {
+    return '$letter$stripNum-${pieceIndex + 1}';
+  }
+  return '$letter$stripNum';
+}
+
+/// Letter index (0 = A) per room among carpet-assigned rooms with the same
+/// product, in [assignments] iteration order. Matches cut sheet ordering when
+/// a single product roll is shown.
+Map<int, int> buildRoomLetterIndicesByProduct(Map<int, int> assignments) {
+  final counters = <int, int>{};
+  final result = <int, int>{};
+  for (final e in assignments.entries) {
+    final pi = e.value;
+    final li = counters[pi] ?? 0;
+    result[e.key] = li;
+    counters[pi] = li + 1;
+  }
+  return result;
+}
+
+/// Letter index for [roomIndex] among same-product rooms that have a plannable
+/// layout, in [assignments] iteration order. Matches `_roomsWithCarpet` in the
+/// cut sheet. Returns null when the room has no assignment or no layout.
+int? roomLetterIndexInProduct({
+  required Map<int, int> assignments,
+  required int roomIndex,
+  required bool Function(int roomIndex) hasPlannableLayout,
+}) {
+  final productIndex = assignments[roomIndex];
+  if (productIndex == null) return null;
+  var li = 0;
+  for (final e in assignments.entries) {
+    if (e.value != productIndex) continue;
+    final ri = e.key;
+    if (!hasPlannableLayout(ri)) {
+      if (ri == roomIndex) return null;
+      continue;
+    }
+    if (ri == roomIndex) return li;
+    li++;
+  }
+  return null;
+}
+
 /// One roll lane on the board.
 class RollLaneData {
   final int rollIndex;

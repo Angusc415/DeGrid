@@ -14,6 +14,7 @@ import '../../core/geometry/room.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
+import '../../core/geometry/room_transform.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
 import '../../core/roll_planning/room_strip_layout.dart';
@@ -36,6 +37,7 @@ part 'plan_canvas_room_management.dart';
 part 'plan_canvas_room_editing.dart';
 part 'plan_canvas_tap.dart';
 part 'plan_canvas_room_move.dart';
+part 'plan_canvas_room_rotate.dart';
 
 /// Angle lock for draw mode: none (free), snap to 90°, or snap to 45°.
 enum DrawAngleLock { none, snap90, snap45 }
@@ -196,6 +198,25 @@ class PlanCanvasState extends State<PlanCanvas> {
   Offset? _roomMoveAnchorWorld;
   List<Offset>? _roomMoveVerticesAtStart;
   List<RoomMoveAlignHint> _roomMoveAlignHints = const [];
+
+  /// Rotate handle: drag the knob above a selected room to rotate it about its
+  /// center. Captured at gesture start, transformed on move, synced on end.
+  static const double _rotateHandleOffsetPx = 56;
+  static const double _rotateHandleHitRadiusPx = 22;
+
+  /// Spacing for selected-room controls anchored to the room's screen bounds.
+  /// [_roomControlGapPx] is the offset outside the room edge; the min-offset
+  /// clamps keep controls separated from the center when the room is small.
+  static const double _roomControlGapPx = 16;
+  static const double _roomControlMinOffsetPx = 48;
+  bool _isRotatingRoom = false;
+  int? _roomRotateRoomIndex;
+  Offset? _roomRotatePivotWorld;
+  List<Offset>? _roomRotateVerticesAtStart;
+  double? _roomRotateStartPointerAngleRad;
+
+  /// Snapped rotation applied during the current drag (degrees), for readout.
+  double _roomRotateAppliedDeg = 0;
 
   // Undo/Redo history
   // Each history entry contains both completed rooms and draft room vertices
@@ -636,6 +657,68 @@ class PlanCanvasState extends State<PlanCanvas> {
     _showMoveRoomPromptImpl(this);
   }
 
+  /// A single tappable row in the room actions menu.
+  Widget _buildRoomActionItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 8),
+            Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Prompts for a rotation amount in degrees and rotates the selected room.
+  Future<void> _showRotateByAngleDialog() async {
+    final controller = TextEditingController();
+    final degrees = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rotate by angle'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(
+            decimal: true,
+            signed: true,
+          ),
+          decoration: const InputDecoration(
+            labelText: 'Degrees (clockwise)',
+            hintText: 'e.g. 45 or -30',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (_) =>
+              Navigator.pop(ctx, double.tryParse(controller.text.trim())),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
+            child: const Text('Rotate'),
+          ),
+        ],
+      ),
+    );
+    if (degrees != null && degrees != 0) {
+      _rotateSelectedRoomBy(this, degrees);
+    }
+  }
+
   /// Convert a screen point to image pixel coordinates using current background image state.
   Offset? _screenToBackgroundImagePixel(Offset screenPx) {
     return _screenToBackgroundImagePixelImpl(this, screenPx);
@@ -992,6 +1075,8 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   /// Screen-space center of the currently selected room, or null if none.
   Offset? get _selectedRoomCenterScreen => _selectedRoomCenterScreenFor(this);
+  Rect? get _selectedRoomBoundsScreen => _selectedRoomBoundsScreenFor(this);
+  Offset? get _roomDotsScreenPos => _roomDotsScreenPosFor(this);
 
   void _applyCarpetDirectionForSelectedRoom(int variantIndex) {
     if (!kEnableCarpetFeatures) return;
@@ -1306,6 +1391,16 @@ class PlanCanvasState extends State<PlanCanvas> {
                 });
                 return;
               }
+              // Rotate handle: if the press lands on the selected room's rotate
+              // knob, start rotating immediately (before move/draw handling so
+              // the handle never starts a new room or move).
+              if ((e.buttons == 1 || e.buttons == 0) &&
+                  _selectedRoomIndex != null &&
+                  _draftRoomVertices == null &&
+                  _findRotateHandleAtPosition(this, e.localPosition)) {
+                _startRoomRotate(this, e.localPosition);
+                return;
+              }
               // Start long-press timer for "move room" (all platforms: web mouse/touch, desktop, mobile)
               // Accept buttons == 1 (mouse) or 0 (touch on web often sends 0)
               if ((e.buttons == 1 || e.buttons == 0) &&
@@ -1408,6 +1503,9 @@ class PlanCanvasState extends State<PlanCanvas> {
             onPointerUp: (e) {
               _longPressRoomMoveTimer?.cancel();
               _longPressRoomMoveTimer = null;
+              if (_isRotatingRoom) {
+                _finishRoomRotate(this);
+              }
               if (_isMovingRoom) {
                 _finishRoomMove(this);
               }
@@ -1438,6 +1536,11 @@ class PlanCanvasState extends State<PlanCanvas> {
             // PAN (web): Shift + left-drag OR right-click drag
             // Also track hover position for preview line (when not actively dragging to draw)
             onPointerMove: (e) {
+              // Rotate whole room about its center while dragging the handle.
+              if (_isRotatingRoom) {
+                _applyRoomRotatePointerMove(this, e.localPosition);
+                return;
+              }
               // Move whole room (works on web and supports mobile if scale doesn't deliver updates)
               if (_isMovingRoom) {
                 _applyRoomMovePointerMove(this, e.localPosition);
@@ -1627,6 +1730,9 @@ class PlanCanvasState extends State<PlanCanvas> {
               onScaleStart: kIsWeb
                   ? null
                   : (details) {
+                      // Rotate handle already grabbed in Listener.onPointerDown;
+                      // don't start drawing/panning/vertex-edit.
+                      if (_isRotatingRoom) return;
                       // Check pointer count: 1 = drawing/panning/vertex-edit/measure, 2+ = pan/zoom
                       if (details.pointerCount == 1) {
                         if (_isMoveFloorplanMode &&
@@ -1836,7 +1942,8 @@ class PlanCanvasState extends State<PlanCanvas> {
                           }
                           return;
                         }
-                        // Don't pan the viewport while moving a room
+                        // Don't pan the viewport while moving or rotating a room
+                        if (_isRotatingRoom) return;
                         if (_isMovingRoom) return;
                         if (_isMoveFloorplanMode &&
                             _backgroundImageState != null) {
@@ -1942,6 +2049,12 @@ class PlanCanvasState extends State<PlanCanvas> {
                   : (_) {
                       _longPressRoomMoveTimer?.cancel();
                       _longPressRoomMoveTimer = null;
+                      // End room rotation; skip tap so release doesn't deselect
+                      if (_isRotatingRoom) {
+                        _finishRoomRotate(this);
+                        setState(() => _panStartScreen = null);
+                        return;
+                      }
                       // End seam drag (non-web); skip tap so release-after-drag doesn't select room
                       if (_draggingSeamRoomIndex != null) {
                         setState(() {
@@ -2132,6 +2245,19 @@ class PlanCanvasState extends State<PlanCanvas> {
                           backgroundImageState: _backgroundImageState,
                           doorThicknessMm: _doorThicknessMm,
                           roomMoveAlignHints: _roomMoveAlignHints,
+                          rotateHandleScreen: _selectedRoomIndex != null
+                              ? _rotateHandleScreenPos(this)
+                              : null,
+                          isRotatingRoom: _isRotatingRoom,
+                          rotateAppliedDeg: _roomRotateAppliedDeg,
+                          rotateStalkBaseScreen: _selectedRoomIndex != null &&
+                                  _selectedRoomCenterScreen != null &&
+                                  _selectedRoomBoundsScreen != null
+                              ? Offset(
+                                  _selectedRoomCenterScreen!.dx,
+                                  _selectedRoomBoundsScreen!.top,
+                                )
+                              : null,
                         ),
                       ),
                     ),
@@ -2151,8 +2277,8 @@ class PlanCanvasState extends State<PlanCanvas> {
         // Room actions (three-dots) button + menu near selected room
         if (kEnableCarpetFeatures && _selectedRoomCenterScreen != null) ...[
           Positioned(
-            left: _selectedRoomCenterScreen!.dx - 16,
-            top: _selectedRoomCenterScreen!.dy - 44,
+            left: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dx - 16,
+            top: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dy - 16,
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTap: () {
@@ -2180,8 +2306,8 @@ class PlanCanvasState extends State<PlanCanvas> {
           ),
           if (_showRoomActionsMenu)
             Positioned(
-              left: _selectedRoomCenterScreen!.dx + 20,
-              top: _selectedRoomCenterScreen!.dy - 80,
+              left: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dx - 16,
+              top: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dy + 24,
               child: Material(
                 elevation: 6,
                 borderRadius: BorderRadius.circular(8),
@@ -2218,6 +2344,31 @@ class PlanCanvasState extends State<PlanCanvas> {
                             ),
                           ),
                         ),
+                        const Divider(height: 1),
+                        _buildRoomActionItem(
+                          icon: Icons.rotate_left,
+                          label: 'Rotate 90° CCW',
+                          onTap: () {
+                            setState(() => _showRoomActionsMenu = false);
+                            _rotateSelectedRoomBy(this, -90);
+                          },
+                        ),
+                        _buildRoomActionItem(
+                          icon: Icons.rotate_right,
+                          label: 'Rotate 90° CW',
+                          onTap: () {
+                            setState(() => _showRoomActionsMenu = false);
+                            _rotateSelectedRoomBy(this, 90);
+                          },
+                        ),
+                        _buildRoomActionItem(
+                          icon: Icons.straighten,
+                          label: 'Rotate by angle…',
+                          onTap: () {
+                            setState(() => _showRoomActionsMenu = false);
+                            _showRotateByAngleDialog();
+                          },
+                        ),
                       ],
                     ),
                   ),
@@ -2229,8 +2380,8 @@ class PlanCanvasState extends State<PlanCanvas> {
             _selectedRoomCenterScreen != null &&
             _showCarpetDirectionPicker)
           Positioned(
-            left: _selectedRoomCenterScreen!.dx - 80,
-            top: _selectedRoomCenterScreen!.dy - 140,
+            left: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dx - 120,
+            top: (_roomDotsScreenPos ?? _selectedRoomCenterScreen!).dy + 24,
             child: Material(
               elevation: 8,
               borderRadius: BorderRadius.circular(10),

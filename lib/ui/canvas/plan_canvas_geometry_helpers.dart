@@ -274,6 +274,26 @@ extension PlanCanvasGeometryHelpers on PlanCanvasState {
     return room.vertices[vertexIndex];
   }
 
+  /// Polygon area centroid in world space. Matches where the room name "+"
+  /// button is drawn by the painter, so hit-tests align with the visual.
+  Offset _getRoomAreaCentroid(List<Offset> vertices) {
+    final pts = vertices.length > 1 && vertices.first == vertices.last
+        ? vertices.sublist(0, vertices.length - 1)
+        : vertices;
+    if (pts.length < 3) return _getRoomCenter(vertices);
+    double signedArea = 0, cx = 0, cy = 0;
+    for (int i = 0; i < pts.length; i++) {
+      final j = (i + 1) % pts.length;
+      final cross = pts[i].dx * pts[j].dy - pts[j].dx * pts[i].dy;
+      signedArea += cross;
+      cx += (pts[i].dx + pts[j].dx) * cross;
+      cy += (pts[i].dy + pts[j].dy) * cross;
+    }
+    signedArea *= 0.5;
+    if (signedArea.abs() < 1e-9) return _getRoomCenter(vertices);
+    return Offset(cx / (6 * signedArea), cy / (6 * signedArea));
+  }
+
   Offset? _findDoorEdgePointAtPosition(Offset screenPosition) {
     final tolerancePx = PlanCanvasState._vertexSelectTolerancePx;
     double closestDist = tolerancePx;

@@ -452,7 +452,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     for (int li = 0; li < list.length; li++) {
       final r = list[li];
       final roomName = r.room.name ?? 'Room ${r.roomIndex + 1}';
-      final letter = String.fromCharCode(65 + li);
       for (int si = 0; si < r.layout.stripLengthsMm.length; si++) {
         final pieceLengths = r.layout.pieceLengthsForStrip(si);
         final breadthMm = si < r.layout.stripWidthsMm.length
@@ -465,9 +464,12 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         for (int pi = 0; pi < pieceLengths.length; pi++) {
           final lengthMm = pieceLengths[pi];
           totalLinear += lengthMm;
-          final cutId = pieceLengths.length > 1
-              ? '$letter${si + 1}-${pi + 1}'
-              : '$letter${si + 1}';
+          final cutId = formatCutId(
+            roomLetterIndex: li,
+            stripIndex: si,
+            pieceIndex: pi,
+            pieceCountInStrip: pieceLengths.length,
+          );
           allCuts.add(
             RollCutPiece(
               cutId: cutId,

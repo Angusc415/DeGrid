@@ -41,6 +41,40 @@ Offset? _selectedRoomCenterScreenFor(PlanCanvasState state) {
   return state._vp.worldToScreen(centerWorld);
 }
 
+/// Screen-space bounding box of the selected room (null when none selected).
+Rect? _selectedRoomBoundsScreenFor(PlanCanvasState state) {
+  final idx = state._selectedRoomIndex;
+  if (idx == null || idx < 0 || idx >= state._completedRooms.length) {
+    return null;
+  }
+  final verts = state._completedRooms[idx].vertices;
+  if (verts.isEmpty) return null;
+  double minX = double.infinity, minY = double.infinity;
+  double maxX = -double.infinity, maxY = -double.infinity;
+  for (final v in verts) {
+    final s = state._vp.worldToScreen(v);
+    if (s.dx < minX) minX = s.dx;
+    if (s.dy < minY) minY = s.dy;
+    if (s.dx > maxX) maxX = s.dx;
+    if (s.dy > maxY) maxY = s.dy;
+  }
+  return Rect.fromLTRB(minX, minY, maxX, maxY);
+}
+
+/// Top-right anchor (screen space) for the three-dots room actions button.
+/// Sits just outside the room's top-right corner, clamped so it stays clear of
+/// the center on small/zoomed-out rooms.
+Offset? _roomDotsScreenPosFor(PlanCanvasState state) {
+  final center = state._selectedRoomCenterScreen;
+  final bounds = _selectedRoomBoundsScreenFor(state);
+  if (center == null || bounds == null) return null;
+  const gap = PlanCanvasState._roomControlGapPx;
+  const minOffset = PlanCanvasState._roomControlMinOffsetPx;
+  final dx = math.max(bounds.right + gap, center.dx + minOffset);
+  final dy = math.min(bounds.top - gap, center.dy - minOffset);
+  return Offset(dx, dy);
+}
+
 ({int roomIndex, int vertexIndex})? _findVertexAtPositionImpl(
   PlanCanvasState state,
   Offset screenPosition,

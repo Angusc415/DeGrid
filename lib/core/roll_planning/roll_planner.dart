@@ -215,11 +215,19 @@ class RollPlanner {
     final fits0 = perpLen0 <= rollWidthMm;
     final fits90 = perpLen90 <= rollWidthMm;
 
-    // Phase 1: single-piece mode when room fits within roll width (template cut, no seams)
-    if (fits0 || fits90) {
-      final layAlongX = (fits0 && fits90)
-          ? (opts.layDirectionDeg != null ? opts.layDirectionDeg! == 0 : (bboxW <= bboxH))
-          : fits0;
+    // Phase 1: single-piece mode when room fits within roll width (template cut, no seams).
+    // Honor an explicit lay direction: only take the no-seam path when the
+    // requested direction actually fits within the roll width. Otherwise fall
+    // through to strip mode so the user's chosen direction is respected (it just
+    // needs seams), instead of silently snapping to the fitting orientation.
+    final bool? requestedAlongX =
+        opts.layDirectionDeg != null ? opts.layDirectionDeg! == 0 : null;
+    final bool canSinglePiece = requestedAlongX == null
+        ? (fits0 || fits90)
+        : (requestedAlongX ? fits0 : fits90);
+    if (canSinglePiece) {
+      final layAlongX = requestedAlongX ??
+          ((fits0 && fits90) ? (bboxW <= bboxH) : fits0);
       final perpLen = layAlongX ? perpLen0 : perpLen90;
       final alongLen = layAlongX ? bboxW : bboxH;
       double cutLen = alongLen + trimAllowance * 2;

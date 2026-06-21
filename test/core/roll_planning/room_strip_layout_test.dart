@@ -352,6 +352,45 @@ void main() {
     });
   });
 
+  group('narrow room honors lay direction (2352 x 5755, roll 3600 wide)', () {
+    // Room fits within the roll width when laid up-down (2352 <= 3600) but not
+    // left-right (5755 > 3600). Choosing left-right must still take effect.
+    final product = CarpetProduct(name: 'Roll', rollWidthMm: 3600);
+    Room room() => Room(
+          vertices: const [
+            Offset(0, 0),
+            Offset(2352, 0),
+            Offset(2352, 5755),
+            Offset(0, 5755),
+          ],
+        );
+
+    test('up-down fits as a single full-width piece', () {
+      final layout = computeRoomStripLayout(
+        room: room(),
+        roomIndex: 0,
+        product: product,
+        openings: const [],
+        layDirectionDeg: 90,
+      )!;
+      expect(layout.numStrips, 1);
+      expect(layout.layAlongX, isFalse);
+    });
+
+    test('left-right is honored and produces 2 strips with a seam', () {
+      final layout = computeRoomStripLayout(
+        room: room(),
+        roomIndex: 0,
+        product: product,
+        openings: const [],
+        layDirectionDeg: 0,
+      )!;
+      expect(layout.layAlongX, isTrue);
+      expect(layout.numStrips, 2);
+      expect(layout.seamCount, 1);
+    });
+  });
+
   group('applyStripPieceLengthsOverride', () {
     StripLayout baseLayout() => RollPlanner.computeLayout(
           rect(3000, 1500),

@@ -1,6 +1,13 @@
 part of 'plan_canvas.dart';
 
 void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
+  // Ignore taps on the rotate handle (or while rotating) so grabbing the knob
+  // never deselects the room or starts a draft.
+  if (state._isRotatingRoom ||
+      _findRotateHandleAtPosition(state, localPosition)) {
+    return;
+  }
+
   if (state._isCalibrating) {
     state._handleCalibrationTap(localPosition);
     return;
@@ -226,9 +233,12 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
       }
 
       final room = state._completedRooms[clickedRoomIndex];
-      final center = state._getRoomCenter(room.vertices);
-      final centerScreen = state._vp.worldToScreen(center);
-      final distance = (localPosition - centerScreen).distance;
+      // Name "+" button hit-test: use the area centroid (where it is drawn)
+      // and a radius matching the ~20px circle, so it no longer swallows taps
+      // meant for nearby controls.
+      final nameButtonScreen =
+          state._vp.worldToScreen(state._getRoomAreaCentroid(room.vertices));
+      final distance = (localPosition - nameButtonScreen).distance;
       state._pendingSelectedVertex = null;
       state.setState(() {
         state._selectedVertex = null;
@@ -240,7 +250,7 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
         state._useImperial,
         state._selectedRoomIndex,
       );
-      if (distance < 40) {
+      if (distance < 22) {
         state._editRoomName(clickedRoomIndex);
       }
       return;
