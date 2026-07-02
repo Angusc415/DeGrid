@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:share_plus/share_plus.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
@@ -902,7 +907,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     );
   }
 
-  void _exportCutSheet(BuildContext context, RollPlanState plan) {
+  Future<void> _exportCutSheet(BuildContext context, RollPlanState plan) async {
     // CSV: cuts then offcuts
     final sb = StringBuffer();
     sb.writeln(
@@ -931,14 +936,26 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         );
       }
     }
-    // TODO: share or copy to clipboard
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Export: ${plan.allCuts.length} cuts${offcuts.isNotEmpty ? ', ${offcuts.length} offcut(s)' : ''}. Copy from console or add share.',
-        ),
+    final csv = sb.toString();
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await SharePlus.instance.share(
+      ShareParams(
+        files: [
+          XFile.fromData(
+            Uint8List.fromList(utf8.encode(csv)),
+            name: 'cut_sheet.csv',
+            mimeType: 'text/csv',
+          ),
+        ],
+        subject: 'Cut sheet',
       ),
     );
+    if (result.status == ShareResultStatus.unavailable) {
+      await Clipboard.setData(ClipboardData(text: csv));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Sharing unavailable — copied CSV to clipboard.')),
+      );
+    }
   }
 
   Widget _buildHandle(BuildContext context) {
