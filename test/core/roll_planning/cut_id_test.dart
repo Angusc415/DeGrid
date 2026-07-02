@@ -1,4 +1,7 @@
+import 'package:degrid/core/geometry/carpet_product.dart';
+import 'package:degrid/core/geometry/room.dart';
 import 'package:degrid/core/roll_planning/roll_plan_models.dart';
+import 'package:degrid/core/roll_planning/room_strip_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -97,6 +100,42 @@ void main() {
         ),
         isNull,
       );
+    });
+  });
+
+  group('enumerateCutPieceAnchors', () {
+    final product = CarpetProduct(name: 'Test', rollWidthMm: 2000);
+
+    test('returns one anchor per piece with cut IDs', () {
+      final room = Room(
+        vertices: [
+          const Offset(0, 0),
+          const Offset(5000, 0),
+          const Offset(5000, 4000),
+          const Offset(0, 4000),
+        ],
+      );
+      final layout = computeRoomStripLayout(
+        room: room,
+        roomIndex: 0,
+        product: product,
+        openings: const [],
+      )!;
+      final anchors = enumerateCutPieceAnchors(
+        roomIndex: 0,
+        room: room,
+        layout: layout,
+        roomLetterIndex: 0,
+      );
+      expect(anchors.length, layout.totalPieceCount);
+      expect(anchors.map((a) => a.cutId), contains('A1'));
+      if (layout.numStrips > 1) {
+        expect(anchors.map((a) => a.cutId), contains('A2'));
+      }
+      for (final a in anchors) {
+        expect(a.roomIndex, 0);
+        expect(pointInPolygonWorld(a.centerWorld, room.vertices), isTrue);
+      }
     });
   });
 }

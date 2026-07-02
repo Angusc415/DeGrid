@@ -22,12 +22,14 @@ class EditorViewState {
   final StripSplitStrategy stripSplitStrategy;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   final CarpetPlanningSettings carpetPlanningSettings;
+  final String? selectedCutId;
 
   const EditorViewState({
     this.rooms = const [],
     this.useImperial = false,
     this.showGrid = true,
     this.selectedRoomIndex,
+    this.selectedCutId,
     this.wallWidthMm = 70.0,
     this.doorThicknessMm,
     this.carpetProducts = const [],
@@ -58,6 +60,7 @@ class EditorController extends ChangeNotifier {
   void Function(bool value)? _setShowGrid;
   void Function(StripSplitStrategy value)? _setStripSplitStrategy;
   void Function(CarpetPlanningSettings value)? _setCarpetPlanningSettings;
+  void Function(String? cutId, {int? roomIndex})? _selectCut;
 
   EditorViewState get state => _state;
 
@@ -75,6 +78,7 @@ class EditorController extends ChangeNotifier {
     required void Function(bool value) setShowGrid,
     void Function(StripSplitStrategy value)? setStripSplitStrategy,
     void Function(CarpetPlanningSettings value)? setCarpetPlanningSettings,
+    void Function(String? cutId, {int? roomIndex})? selectCut,
   }) {
     _selectRoom = selectRoom;
     _deleteRoom = deleteRoom;
@@ -88,6 +92,7 @@ class EditorController extends ChangeNotifier {
     _setShowGrid = setShowGrid;
     _setStripSplitStrategy = setStripSplitStrategy;
     _setCarpetPlanningSettings = setCarpetPlanningSettings;
+    _selectCut = selectCut;
   }
 
   void unbind() {
@@ -103,6 +108,7 @@ class EditorController extends ChangeNotifier {
     _setShowGrid = null;
     _setStripSplitStrategy = null;
     _setCarpetPlanningSettings = null;
+    _selectCut = null;
   }
 
   void updateState(EditorViewState state) {
@@ -139,4 +145,7 @@ class EditorController extends ChangeNotifier {
 
   void setCarpetPlanningSettings(CarpetPlanningSettings value) =>
       _setCarpetPlanningSettings?.call(value);
+
+  void selectCut(String? cutId, {int? roomIndex}) =>
+      _selectCut?.call(cutId, roomIndex: roomIndex);
 }

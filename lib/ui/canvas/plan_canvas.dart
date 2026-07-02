@@ -16,6 +16,7 @@ import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/room_transform.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
+import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
 import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/database/database.dart';
@@ -38,6 +39,7 @@ part 'plan_canvas_room_editing.dart';
 part 'plan_canvas_tap.dart';
 part 'plan_canvas_room_move.dart';
 part 'plan_canvas_room_rotate.dart';
+part 'plan_canvas_cut_selection.dart';
 
 /// Angle lock for draw mode: none (free), snap to 90°, or snap to 45°.
 enum DrawAngleLock { none, snap90, snap45 }
@@ -227,6 +229,9 @@ class PlanCanvasState extends State<PlanCanvas> {
 
   // Selected room index for editing (null = no selection)
   int? _selectedRoomIndex;
+
+  /// Selected cut ID on the floor plan / roll board (null = none).
+  String? _selectedCutId;
 
   // Selected vertex for editing: (roomIndex, vertexIndex)
   // null = no vertex selected
@@ -996,6 +1001,25 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// This is called from external code (e.g., room summary panel).
   void selectRoom(int roomIndex) {
     _selectRoomImpl(this, roomIndex);
+  }
+
+  /// Select or clear a cut piece. Optionally selects [roomIndex] without panning.
+  void selectCut(String? cutId, {int? roomIndex}) {
+    if (!mounted) return;
+    setState(() {
+      _selectedCutId = cutId;
+      if (roomIndex != null &&
+          roomIndex >= 0 &&
+          roomIndex < _completedRooms.length) {
+        _selectedRoomIndex = roomIndex;
+      }
+    });
+    widget.onRoomsChanged?.call(
+      _completedRooms,
+      _useImperial,
+      _selectedRoomIndex,
+    );
+    _publishEditorControllerState(this);
   }
 
   /// Delete a room by index (called from external code).
@@ -2258,6 +2282,7 @@ class PlanCanvasState extends State<PlanCanvas> {
                                   _selectedRoomBoundsScreen!.top,
                                 )
                               : null,
+                          selectedCutId: _selectedCutId,
                         ),
                       ),
                     ),

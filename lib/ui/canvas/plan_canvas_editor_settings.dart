@@ -17,6 +17,7 @@ void _bindEditorController(
     setShowGrid: state.setShowGrid,
     setStripSplitStrategy: state.setStripSplitStrategy,
     setCarpetPlanningSettings: state.setCarpetPlanningSettings,
+    selectCut: state.selectCut,
   );
 }
 
@@ -31,6 +32,7 @@ void _publishEditorControllerState(PlanCanvasState state) {
       useImperial: state._useImperial,
       showGrid: state._showGrid,
       selectedRoomIndex: state._selectedRoomIndex,
+      selectedCutId: state._selectedCutId,
       wallWidthMm: state._wallWidthMm,
       doorThicknessMm: state._doorThicknessMm,
       carpetProducts: List<CarpetProduct>.from(state._carpetProducts),

@@ -13,6 +13,14 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
     return;
   }
 
+  if (state._draftRoomVertices == null) {
+    final cutHit = _findCutAtPosition(state, localPosition);
+    if (cutHit != null) {
+      state.selectCut(cutHit.cutId, roomIndex: cutHit.roomIndex);
+      return;
+    }
+  }
+
   if (state._isAddDoorMode) {
     final worldPos = state._vp.screenToWorld(localPosition);
     const maxDistanceMm = 250.0;
@@ -217,6 +225,7 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
         state._pendingSelectedVertex = null;
         if (state.mounted) {
           state.setState(() {
+            state._selectedCutId = null;
             state._selectedVertex = null;
             state._selectedRoomIndex = null;
             state._isEditingVertex = false;
@@ -241,6 +250,7 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
       final distance = (localPosition - nameButtonScreen).distance;
       state._pendingSelectedVertex = null;
       state.setState(() {
+        state._selectedCutId = null;
         state._selectedVertex = null;
         state._selectedRoomIndex = clickedRoomIndex;
         state._isEditingVertex = false;
@@ -259,6 +269,7 @@ void _handleCanvasTapImpl(PlanCanvasState state, Offset localPosition) {
     state._pendingSelectedVertex = null;
     if (state.mounted) {
       state.setState(() {
+        state._selectedCutId = null;
         state._selectedRoomIndex = null;
         state._selectedVertex = null;
         state._isEditingVertex = false;

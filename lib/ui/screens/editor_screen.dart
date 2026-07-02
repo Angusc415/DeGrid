@@ -206,6 +206,10 @@ class _EditorScreenState extends State<EditorScreen> {
                     onResetSeamsForRoom:
                         _editorController.clearSeamOverridesForRoom,
                     selectedRoomIndex: state.selectedRoomIndex,
+                    selectedCutId: state.selectedCutId,
+                    onSelectedCutChanged: (cutId, roomIndex) {
+                      _editorController.selectCut(cutId, roomIndex: roomIndex);
+                    },
                     onResizeDrag: (deltaDy) {
                       final height = MediaQuery.of(context).size.height;
                       final delta = -deltaDy / height;

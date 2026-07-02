@@ -133,6 +133,186 @@ int? roomLetterIndexInProduct({
   return null;
 }
 
+/// World-space anchor for one cut piece (floor plan arrow + hit test).
+class CutPieceAnchor {
+  final String cutId;
+  final int roomIndex;
+  final int stripIndex;
+  final int pieceIndex;
+  final Offset centerWorld;
+  final Offset baseWorld;
+  final Offset tipWorld;
+  final double pieceLenMm;
+
+  const CutPieceAnchor({
+    required this.cutId,
+    required this.roomIndex,
+    required this.stripIndex,
+    required this.pieceIndex,
+    required this.centerWorld,
+    required this.baseWorld,
+    required this.tipWorld,
+    required this.pieceLenMm,
+  });
+}
+
+/// Ray-cast point-in-polygon test. [verts] should be the open vertex ring.
+bool pointInPolygonWorld(Offset p, List<Offset> verts) {
+  if (verts.length < 3) return false;
+  var inside = false;
+  for (var i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    final vi = verts[i];
+    final vj = verts[j];
+    final intersects = ((vi.dy > p.dy) != (vj.dy > p.dy)) &&
+        (p.dx < (vj.dx - vi.dx) * (p.dy - vi.dy) / (vj.dy - vi.dy) + vi.dx);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+/// Polygon area centroid in world mm (open vertex ring).
+Offset polygonAreaCentroidWorld(List<Offset> verts) {
+  if (verts.length < 3) return verts.isNotEmpty ? verts.first : Offset.zero;
+  var signedArea = 0.0;
+  var cx = 0.0;
+  var cy = 0.0;
+  for (var i = 0; i < verts.length; i++) {
+    final j = (i + 1) % verts.length;
+    final cross = verts[i].dx * verts[j].dy - verts[j].dx * verts[i].dy;
+    signedArea += cross;
+    cx += (verts[i].dx + verts[j].dx) * cross;
+    cy += (verts[i].dy + verts[j].dy) * cross;
+  }
+  signedArea *= 0.5;
+  if (signedArea.abs() < 1e-9) {
+    var sx = 0.0, sy = 0.0;
+    for (final v in verts) {
+      sx += v.dx;
+      sy += v.dy;
+    }
+    return Offset(sx / verts.length, sy / verts.length);
+  }
+  return Offset(cx / (6 * signedArea), cy / (6 * signedArea));
+}
+
+/// Concave-safe placement for a piece bbox center (samples along centerline).
+Offset? piecePlacementWorld({
+  required StripLayout layout,
+  required List<Offset> verts,
+  required double alongMid,
+  required double perpMid,
+  required double pieceLen,
+}) {
+  Offset pieceCenterWorld;
+  if (layout.layAlongX) {
+    final y = layout.bboxMinY + perpMid;
+    pieceCenterWorld = Offset(layout.bboxMinX + alongMid, y);
+  } else {
+    final x = layout.bboxMinX + perpMid;
+    pieceCenterWorld = Offset(x, layout.bboxMinY + alongMid);
+  }
+  if (pointInPolygonWorld(pieceCenterWorld, verts)) return pieceCenterWorld;
+
+  const samples = 5;
+  var bestDist = double.infinity;
+  Offset? best;
+  for (var s = 0; s < samples; s++) {
+    final f = (s + 0.5) / samples;
+    final along = (alongMid - pieceLen / 2) + f * pieceLen;
+    final candidate = layout.layAlongX
+        ? Offset(layout.bboxMinX + along, layout.bboxMinY + perpMid)
+        : Offset(layout.bboxMinX + perpMid, layout.bboxMinY + along);
+    if (!pointInPolygonWorld(candidate, verts)) continue;
+    final d = (candidate - pieceCenterWorld).distance;
+    if (d < bestDist) {
+      bestDist = d;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+/// Enumerate cut-piece anchors for a room layout. Skips pieces with no valid
+/// inside placement or within [nameAvoidMm] of [nameCentroidWorld] when set.
+List<CutPieceAnchor> enumerateCutPieceAnchors({
+  required int roomIndex,
+  required Room room,
+  required StripLayout layout,
+  required int roomLetterIndex,
+  Offset? nameCentroidWorld,
+  double nameAvoidMm = 250.0,
+  double maxShaftLenMm = 160.0,
+}) {
+  final verts = room.vertices.length > 1 && room.vertices.first == room.vertices.last
+      ? room.vertices.sublist(0, room.vertices.length - 1)
+      : room.vertices;
+  if (verts.length < 3 || layout.numStrips < 1) return [];
+
+  final dir = layout.layAlongX ? const Offset(1, 0) : const Offset(0, 1);
+  final anchors = <CutPieceAnchor>[];
+
+  for (var stri = 0; stri < layout.numStrips; stri++) {
+    final pieces = layout.pieceLengthsForStrip(stri);
+    if (pieces.isEmpty) continue;
+    var stripStartPerp = 0.0;
+    for (var i = 0; i < stri; i++) {
+      stripStartPerp += i < layout.stripWidthsMm.length
+          ? layout.stripWidthsMm[i]
+          : layout.rollWidthMm;
+    }
+    final stripWidth = stri < layout.stripWidthsMm.length
+        ? layout.stripWidthsMm[stri]
+        : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth);
+    final perpMid = stripStartPerp + stripWidth / 2;
+
+    var alongStart = 0.0;
+    for (var pi = 0; pi < pieces.length; pi++) {
+      final pieceLen = pieces[pi];
+      final alongMid = alongStart + pieceLen / 2;
+      alongStart += pieceLen;
+      if (pieceLen <= 1e-6) continue;
+
+      final placeWorld = piecePlacementWorld(
+        layout: layout,
+        verts: verts,
+        alongMid: alongMid,
+        perpMid: perpMid,
+        pieceLen: pieceLen,
+      );
+      if (placeWorld == null) continue;
+
+      if (nameCentroidWorld != null &&
+          (placeWorld - nameCentroidWorld).distance < nameAvoidMm) {
+        continue;
+      }
+
+      final shaftLenMm = pieceLen * 0.5 < maxShaftLenMm
+          ? pieceLen * 0.5
+          : maxShaftLenMm;
+      final half = shaftLenMm / 2;
+      final cutId = formatCutId(
+        roomLetterIndex: roomLetterIndex,
+        stripIndex: stri,
+        pieceIndex: pi,
+        pieceCountInStrip: pieces.length,
+      );
+      anchors.add(
+        CutPieceAnchor(
+          cutId: cutId,
+          roomIndex: roomIndex,
+          stripIndex: stri,
+          pieceIndex: pi,
+          centerWorld: placeWorld,
+          baseWorld: placeWorld - dir * half,
+          tipWorld: placeWorld + dir * half,
+          pieceLenMm: pieceLen,
+        ),
+      );
+    }
+  }
+  return anchors;
+}
+
 /// One roll lane on the board.
 class RollLaneData {
   final int rollIndex;

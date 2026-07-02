@@ -1,6 +1,6 @@
 part of 'plan_canvas.dart';
 
-void _selectRoomImpl(PlanCanvasState state, int roomIndex) {
+void _selectRoomImpl(PlanCanvasState state, int roomIndex, {bool pan = true}) {
   if (roomIndex < 0 || roomIndex >= state._completedRooms.length) return;
 
   final room = state._completedRooms[roomIndex];
@@ -18,9 +18,11 @@ void _selectRoomImpl(PlanCanvasState state, int roomIndex) {
 
   state.setState(() {
     state._selectedRoomIndex = roomIndex;
-    state._vp.worldOriginMm =
-        Offset(centerX, centerY) -
-        Offset(screenSize.width / 2, screenSize.height / 2) * state._vp.mmPerPx;
+    if (pan) {
+      state._vp.worldOriginMm =
+          Offset(centerX, centerY) -
+          Offset(screenSize.width / 2, screenSize.height / 2) * state._vp.mmPerPx;
+    }
   });
 
   state.widget.onRoomsChanged?.call(

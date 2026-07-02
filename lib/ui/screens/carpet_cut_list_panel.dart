@@ -4,6 +4,7 @@ import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
+import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
 import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
@@ -28,6 +29,8 @@ class CarpetCutListPanel extends StatelessWidget {
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   /// User-adjustable planning settings (waste %, seam penalties).
   final CarpetPlanningSettings carpetPlanningSettings;
+  final String? selectedCutId;
+  final void Function(String? cutId, int? roomIndex)? onSelectCut;
 
   const CarpetCutListPanel({
     super.key,
@@ -44,6 +47,8 @@ class CarpetCutListPanel extends StatelessWidget {
     this.stripSplitStrategy = StripSplitStrategy.auto,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
+    this.selectedCutId,
+    this.onSelectCut,
   });
 
   @override
@@ -194,9 +199,16 @@ class CarpetCutListPanel extends StatelessWidget {
       final minStripMm = product.minStripWidthMm ?? 100;
       final hasSeamOverrides = roomCarpetSeamOverrides.containsKey(roomIndex) &&
           roomCarpetSeamOverrides[roomIndex]!.isNotEmpty;
+      final roomLetterIndex = roomLetterIndexInProduct(
+        assignments: roomCarpetAssignments,
+        roomIndex: roomIndex,
+        hasPlannableLayout: _hasPlannableLayout,
+      );
+      if (roomLetterIndex == null) continue;
       list.add(
         _RoomCutListCard(
           roomIndex: roomIndex,
+          roomLetterIndex: roomLetterIndex,
           roomName: room.name ?? 'Room ${roomIndex + 1}',
           product: product,
           layout: layout,
@@ -207,10 +219,34 @@ class CarpetCutListPanel extends StatelessWidget {
           minStripWidthMm: minStripMm,
           hasSeamOverrides: hasSeamOverrides,
           onResetSeams: onResetSeamsForRoom != null ? () => onResetSeamsForRoom!(roomIndex) : null,
+          selectedCutId: selectedCutId,
+          onSelectCut: onSelectCut,
         ),
       );
     }
     return list;
+  }
+
+  bool _hasPlannableLayout(int ri) {
+    if (ri < 0 || ri >= rooms.length) return false;
+    final pi = roomCarpetAssignments[ri];
+    if (pi == null || pi < 0 || pi >= carpetProducts.length) return false;
+    final product = carpetProducts[pi];
+    if (product.rollWidthMm <= 0) return false;
+    final variantIndex = roomCarpetLayoutVariantIndex[ri] ?? 0;
+    final layout = computeRoomStripLayout(
+      room: rooms[ri],
+      roomIndex: ri,
+      product: product,
+      openings: openings,
+      seamOverrides: roomCarpetSeamOverrides[ri],
+      layDirectionDeg: roomCarpetSeamLayDirectionDeg[ri] ??
+          layDirectionDegFromVariant(variantIndex),
+      stripSplitStrategy: stripSplitStrategy,
+      stripPieceLengthsOverride: roomCarpetStripPieceLengthsOverrideMm[ri],
+      settings: carpetPlanningSettings,
+    );
+    return layout != null && layout.numStrips > 0;
   }
 
   void _exportAndCopy(BuildContext context) {
@@ -280,6 +316,7 @@ class CarpetCutListPanel extends StatelessWidget {
 
 class _RoomCutListCard extends StatelessWidget {
   final int roomIndex;
+  final int roomLetterIndex;
   final String roomName;
   final CarpetProduct product;
   final StripLayout layout;
@@ -290,9 +327,12 @@ class _RoomCutListCard extends StatelessWidget {
   final double minStripWidthMm;
   final bool hasSeamOverrides;
   final VoidCallback? onResetSeams;
+  final String? selectedCutId;
+  final void Function(String? cutId, int? roomIndex)? onSelectCut;
 
   const _RoomCutListCard({
     required this.roomIndex,
+    required this.roomLetterIndex,
     required this.roomName,
     required this.product,
     required this.layout,
@@ -303,6 +343,8 @@ class _RoomCutListCard extends StatelessWidget {
     required this.minStripWidthMm,
     this.hasSeamOverrides = false,
     this.onResetSeams,
+    this.selectedCutId,
+    this.onSelectCut,
   });
 
   static const List<String> _variantLabels = ['Auto', '0°', '90°'];
@@ -457,6 +499,7 @@ class _RoomCutListCard extends StatelessWidget {
     final rows = <TableRow>[];
     final rollLengthMm =
         product.rollLengthM != null ? product.rollLengthM! * 1000 : null;
+    final accent = Theme.of(context).colorScheme.primary;
     for (var i = 0; i < layout.stripLengthsMm.length; i++) {
       final pieces = layout.pieceLengthsForStrip(i);
       final isSliver = layout.isSliverAt(i, minStripWidthMm);
@@ -464,7 +507,12 @@ class _RoomCutListCard extends StatelessWidget {
           ? layout.stripWidthsMm[i]
           : product.rollWidthMm;
       for (var pi = 0; pi < pieces.length; pi++) {
-        final label = pieces.length > 1 ? '${i + 1}-${pi + 1}' : '${i + 1}';
+        final cutId = formatCutId(
+          roomLetterIndex: roomLetterIndex,
+          stripIndex: i,
+          pieceIndex: pi,
+          pieceCountInStrip: pieces.length,
+        );
         final len = pieces[pi];
         final exceedsRoll = rollLengthMm != null && len > rollLengthMm;
         final notes = <String>[
@@ -472,35 +520,32 @@ class _RoomCutListCard extends StatelessWidget {
           if (exceedsRoll) 'Exceeds roll',
         ];
         final isWarning = isSliver || exceedsRoll;
+        final isSelected = cutId == selectedCutId;
+        void onTap() => onSelectCut?.call(cutId, roomIndex);
         rows.add(
           TableRow(
+            decoration: isSelected
+                ? BoxDecoration(color: accent.withAlpha(38))
+                : null,
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+              _pieceCell(
+                context,
+                cutId,
+                onTap: onSelectCut != null ? onTap : null,
+                isSelected: isSelected,
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  UnitConverter.formatDistance(len, useImperial: useImperial),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+              _pieceCell(
+                context,
+                UnitConverter.formatDistance(len, useImperial: useImperial),
+                onTap: onSelectCut != null ? onTap : null,
+                isSelected: isSelected,
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  notes.isEmpty ? '—' : notes.join(' · '),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 11,
-                        fontStyle: isWarning ? FontStyle.italic : null,
-                        color: isWarning
-                            ? Theme.of(context).colorScheme.error.withAlpha(230)
-                            : null,
-                      ),
-                ),
+              _pieceCell(
+                context,
+                notes.isEmpty ? '—' : notes.join(' · '),
+                onTap: onSelectCut != null ? onTap : null,
+                isSelected: isSelected,
+                isWarning: isWarning,
               ),
             ],
           ),
@@ -508,6 +553,34 @@ class _RoomCutListCard extends StatelessWidget {
       }
     }
     return rows;
+  }
+
+  Widget _pieceCell(
+    BuildContext context,
+    String text, {
+    VoidCallback? onTap,
+    bool isSelected = false,
+    bool isWarning = false,
+  }) {
+    final child = Text(
+      text,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontSize: isSelected ? 12 : null,
+            fontWeight: isSelected ? FontWeight.w700 : null,
+            fontStyle: isWarning ? FontStyle.italic : null,
+            color: isSelected
+                ? Theme.of(context).colorScheme.primary
+                : (isWarning
+                    ? Theme.of(context).colorScheme.error.withAlpha(230)
+                    : null),
+          ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: onTap != null
+          ? InkWell(onTap: onTap, child: child)
+          : child,
+    );
   }
 
   Widget _tableHeader(BuildContext context, String label) {

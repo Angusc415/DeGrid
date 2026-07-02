@@ -37,6 +37,12 @@ class CarpetRollCutSheet extends StatefulWidget {
   /// that share the same carpet product as this room.
   final int? selectedRoomIndex;
 
+  /// Cut highlighted on roll board, cut list, and floor plan.
+  final String? selectedCutId;
+
+  /// Called when the user selects or clears a cut.
+  final void Function(String? cutId, int? roomIndex)? onSelectedCutChanged;
+
   /// Called when the user drags the top handle; [deltaDy] is the pointer delta in pixels.
   final void Function(double deltaDy)? onResizeDrag;
 
@@ -61,6 +67,8 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.useImperial = false,
     this.onResetSeamsForRoom,
     this.selectedRoomIndex,
+    this.selectedCutId,
+    this.onSelectedCutChanged,
     this.onResizeDrag,
     this.onToggleHeight,
   });
@@ -136,7 +144,22 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     // roll board, while seam drags still update the plan live per move.
     if (_layoutInputsChanged(oldWidget)) {
       _rebuildPlanState();
+    } else if (oldWidget.selectedCutId != widget.selectedCutId &&
+        _planState != null) {
+      _syncSelectedCutFromWidget();
     }
+  }
+
+  void _syncSelectedCutFromWidget() {
+    final id = widget.selectedCutId;
+    setState(() {
+      if (_planState == null) return;
+      if (id == null) {
+        _planState = _planState!.copyWith(clearSelection: true);
+      } else if (_planState!.allCuts.any((c) => c.cutId == id)) {
+        _planState = _planState!.copyWith(selectedCutId: id);
+      }
+    });
   }
 
   bool _layoutInputsChanged(CarpetRollCutSheet old) {
@@ -554,9 +577,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         .toList();
 
     final lanes = [lane];
-    final selectedCutId = previous != null &&
-            annotatedCuts.any((c) => c.cutId == previous.selectedCutId)
-        ? previous.selectedCutId
+    final candidateId = widget.selectedCutId ?? previous?.selectedCutId;
+    final selectedCutId = candidateId != null &&
+            annotatedCuts.any((c) => c.cutId == candidateId)
+        ? candidateId
         : null;
     setState(() {
       _planState = RollPlanState(
@@ -656,6 +680,16 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           ? _planState!.copyWith(clearSelection: true)
           : _planState!.copyWith(selectedCutId: cutId);
     });
+    int? roomIndex;
+    if (cutId != null && _planState != null) {
+      for (final c in _planState!.allCuts) {
+        if (c.cutId == cutId) {
+          roomIndex = c.roomIndex;
+          break;
+        }
+      }
+    }
+    widget.onSelectedCutChanged?.call(cutId, roomIndex);
   }
 
   @override
@@ -812,6 +846,8 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       roomCarpetStripPieceLengthsOverrideMm:
           widget.roomCarpetStripPieceLengthsOverrideMm,
       carpetPlanningSettings: widget.carpetPlanningSettings,
+      selectedCutId: widget.selectedCutId,
+      onSelectCut: widget.onSelectedCutChanged,
     );
   }
 
