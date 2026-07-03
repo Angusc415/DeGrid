@@ -1,0 +1,257 @@
+{
+  "app.dart": {
+    "mtime": 1769738166.362113,
+    "ast_hash": "c8d7136f043a283ba62db2eebe2e17e9",
+    "semantic_hash": "c8d7136f043a283ba62db2eebe2e17e9"
+  },
+  "core/background_image_io.dart": {
+    "mtime": 1771480277.647703,
+    "ast_hash": "1cc9068f7b1b241f17bd79227482bb17",
+    "semantic_hash": "1cc9068f7b1b241f17bd79227482bb17"
+  },
+  "core/background_image_io_native.dart": {
+    "mtime": 1772102605.7759933,
+    "ast_hash": "d5990437902593007c7574ab5acd2377",
+    "semantic_hash": "d5990437902593007c7574ab5acd2377"
+  },
+  "core/background_image_io_stub.dart": {
+    "mtime": 1771479332.8839004,
+    "ast_hash": "275982a94ad5b78811655916b085852d",
+    "semantic_hash": "275982a94ad5b78811655916b085852d"
+  },
+  "core/config/feature_flags.dart": {
+    "mtime": 1781317961.8810847,
+    "ast_hash": "257841db9d25f1aceeb77fac4a0038d2",
+    "semantic_hash": "257841db9d25f1aceeb77fac4a0038d2"
+  },
+  "core/database/database.dart": {
+    "mtime": 1781317849.9278214,
+    "ast_hash": "af72183f475bc0378e61961aa48e72aa",
+    "semantic_hash": "af72183f475bc0378e61961aa48e72aa"
+  },
+  "core/database/database.g.dart": {
+    "mtime": 1781095440.4763534,
+    "ast_hash": "bf9149e90f774c748f759a753b309787",
+    "semantic_hash": "bf9149e90f774c748f759a753b309787"
+  },
+  "core/database/database_native.dart": {
+    "mtime": 1769738512.2661128,
+    "ast_hash": "7f01d3c6a854975bc704319781c33076",
+    "semantic_hash": "7f01d3c6a854975bc704319781c33076"
+  },
+  "core/database/database_stub.dart": {
+    "mtime": 1769738512.2661068,
+    "ast_hash": "f265847795e288610182980c998d5d82",
+    "semantic_hash": "f265847795e288610182980c998d5d82"
+  },
+  "core/database/database_web.dart": {
+    "mtime": 1769758468.5400908,
+    "ast_hash": "27471eabe6d0feb9adbca4e31b2347bd",
+    "semantic_hash": "27471eabe6d0feb9adbca4e31b2347bd"
+  },
+  "core/export/pdf_export.dart": {
+    "mtime": 1778553496.1135159,
+    "ast_hash": "59ce0eae18ee91faa40058bd68d63210",
+    "semantic_hash": "59ce0eae18ee91faa40058bd68d63210"
+  },
+  "core/geometry/carpet_product.dart": {
+    "mtime": 1771479335.4011264,
+    "ast_hash": "b4b7e710d62bd0af79242f289273f2f8",
+    "semantic_hash": "b4b7e710d62bd0af79242f289273f2f8"
+  },
+  "core/geometry/opening.dart": {
+    "mtime": 1779300039.9855163,
+    "ast_hash": "69d5279ad97d2b777c0d6fd345b0eedb",
+    "semantic_hash": "69d5279ad97d2b777c0d6fd345b0eedb"
+  },
+  "core/geometry/opening_geometry.dart": {
+    "mtime": 1781317849.9242964,
+    "ast_hash": "ccfc1220ee289d6e553db519c13e31b2",
+    "semantic_hash": "ccfc1220ee289d6e553db519c13e31b2"
+  },
+  "core/geometry/room.dart": {
+    "mtime": 1769737752.8581796,
+    "ast_hash": "9aff8b3f1638c75407e91dcc252edeb3",
+    "semantic_hash": "9aff8b3f1638c75407e91dcc252edeb3"
+  },
+  "core/geometry/room_transform.dart": {
+    "mtime": 1781936443.447065,
+    "ast_hash": "deba7313ef341a0c9b000aedec5ad02b",
+    "semantic_hash": "deba7313ef341a0c9b000aedec5ad02b"
+  },
+  "core/models/project.dart": {
+    "mtime": 1781317849.9242446,
+    "ast_hash": "c0d9c120ea55d68199a597e006e46c8b",
+    "semantic_hash": "c0d9c120ea55d68199a597e006e46c8b"
+  },
+  "core/roll_planning/carpet_layout_options.dart": {
+    "mtime": 1781317849.9117174,
+    "ast_hash": "e47543cc411261e85318e24f3f20eb5a",
+    "semantic_hash": "e47543cc411261e85318e24f3f20eb5a"
+  },
+  "core/roll_planning/polygon_clip.dart": {
+    "mtime": 1772510810.5395105,
+    "ast_hash": "112b826f68c0300692cd885b2f4360d5",
+    "semantic_hash": "112b826f68c0300692cd885b2f4360d5"
+  },
+  "core/roll_planning/roll_plan_models.dart": {
+    "mtime": 1783005712.3347301,
+    "ast_hash": "4162535206cc43066ed137f77d641dcb",
+    "semantic_hash": "4162535206cc43066ed137f77d641dcb"
+  },
+  "core/roll_planning/roll_planner.dart": {
+    "mtime": 1781936443.4469306,
+    "ast_hash": "22513aa44c237df687f0cf73a9ec5853",
+    "semantic_hash": "22513aa44c237df687f0cf73a9ec5853"
+  },
+  "core/roll_planning/room_strip_layout.dart": {
+    "mtime": 1781317849.9077194,
+    "ast_hash": "2e94a5d8c73411e2d44c3d0212581da9",
+    "semantic_hash": "2e94a5d8c73411e2d44c3d0212581da9"
+  },
+  "core/services/project_service.dart": {
+    "mtime": 1781317849.9125059,
+    "ast_hash": "52fabea30a785b2b20f2079b6ce57b57",
+    "semantic_hash": "52fabea30a785b2b20f2079b6ce57b57"
+  },
+  "core/units/unit_converter.dart": {
+    "mtime": 1770815569.3695512,
+    "ast_hash": "7523badff5ed58fbbf8bb8ac61d2ee91",
+    "semantic_hash": "7523badff5ed58fbbf8bb8ac61d2ee91"
+  },
+  "main.dart": {
+    "mtime": 1769664717.1185322,
+    "ast_hash": "e8f5c0f07c2a918dce6172b73dde7dcf",
+    "semantic_hash": "e8f5c0f07c2a918dce6172b73dde7dcf"
+  },
+  "ui/canvas/plan_canvas.dart": {
+    "mtime": 1783005766.6574006,
+    "ast_hash": "3657a80def9bbd30651e0ac40c91877d",
+    "semantic_hash": "3657a80def9bbd30651e0ac40c91877d"
+  },
+  "ui/canvas/plan_canvas_cut_selection.dart": {
+    "mtime": 1783005771.7582595,
+    "ast_hash": "6e1d0c864e1796e4ba107c953f4914be",
+    "semantic_hash": "6e1d0c864e1796e4ba107c953f4914be"
+  },
+  "ui/canvas/plan_canvas_editor_settings.dart": {
+    "mtime": 1783005777.3553634,
+    "ast_hash": "07ef8276318b8ba7e6cff11e15188fac",
+    "semantic_hash": "07ef8276318b8ba7e6cff11e15188fac"
+  },
+  "ui/canvas/plan_canvas_floorplan.dart": {
+    "mtime": 1773297288.959651,
+    "ast_hash": "f59bdb0ca854e3d7bb98c8ea72ecdf11",
+    "semantic_hash": "f59bdb0ca854e3d7bb98c8ea72ecdf11"
+  },
+  "ui/canvas/plan_canvas_geometry_helpers.dart": {
+    "mtime": 1781936443.4469292,
+    "ast_hash": "f2417ba31e52d30ba6c69c1642e5795d",
+    "semantic_hash": "f2417ba31e52d30ba6c69c1642e5795d"
+  },
+  "ui/canvas/plan_canvas_gestures.dart": {
+    "mtime": 1773298446.2078016,
+    "ast_hash": "18208942ab75fdc1ae586c452bd2e2b4",
+    "semantic_hash": "18208942ab75fdc1ae586c452bd2e2b4"
+  },
+  "ui/canvas/plan_canvas_persistence.dart": {
+    "mtime": 1781317849.9277778,
+    "ast_hash": "8604d1bba4f5e6fa9f4c0e00c9e5ddfa",
+    "semantic_hash": "8604d1bba4f5e6fa9f4c0e00c9e5ddfa"
+  },
+  "ui/canvas/plan_canvas_room_editing.dart": {
+    "mtime": 1778421068.0065913,
+    "ast_hash": "b0f3e5ff7eef4e01b958497e1e1a4133",
+    "semantic_hash": "b0f3e5ff7eef4e01b958497e1e1a4133"
+  },
+  "ui/canvas/plan_canvas_room_management.dart": {
+    "mtime": 1783005760.8095636,
+    "ast_hash": "46351ec801e7faaca9f65d6bd886f453",
+    "semantic_hash": "46351ec801e7faaca9f65d6bd886f453"
+  },
+  "ui/canvas/plan_canvas_room_move.dart": {
+    "mtime": 1779300295.2013397,
+    "ast_hash": "2d0ea1cd8c26d6948933cbb3a8439738",
+    "semantic_hash": "2d0ea1cd8c26d6948933cbb3a8439738"
+  },
+  "ui/canvas/plan_canvas_room_rotate.dart": {
+    "mtime": 1781437746.2970872,
+    "ast_hash": "b0cef3fb249ccf2d02a44d35f565767d",
+    "semantic_hash": "b0cef3fb249ccf2d02a44d35f565767d"
+  },
+  "ui/canvas/plan_canvas_tap.dart": {
+    "mtime": 1783005836.7781498,
+    "ast_hash": "6c2cfe343208aad4fb56df0863d3c452",
+    "semantic_hash": "6c2cfe343208aad4fb56df0863d3c452"
+  },
+  "ui/canvas/plan_floorplan_menu.dart": {
+    "mtime": 1772029114.5083184,
+    "ast_hash": "9c4a28c565cdef9b7752a80ce08881ca",
+    "semantic_hash": "9c4a28c565cdef9b7752a80ce08881ca"
+  },
+  "ui/canvas/plan_history_manager.dart": {
+    "mtime": 1772029114.4410903,
+    "ast_hash": "a234dde5b8b62e1c7d13507e33e4ba6f",
+    "semantic_hash": "a234dde5b8b62e1c7d13507e33e4ba6f"
+  },
+  "ui/canvas/plan_length_input_pad.dart": {
+    "mtime": 1772782899.4984028,
+    "ast_hash": "a78e21e1936972e9daa2b3b08ad48fa2",
+    "semantic_hash": "a78e21e1936972e9daa2b3b08ad48fa2"
+  },
+  "ui/canvas/plan_painter.dart": {
+    "mtime": 1783005915.5613678,
+    "ast_hash": "41352f843e00b7e9addd1bbe89ecec86",
+    "semantic_hash": "41352f843e00b7e9addd1bbe89ecec86"
+  },
+  "ui/canvas/plan_toolbar.dart": {
+    "mtime": 1772804254.1899533,
+    "ast_hash": "77ab1ec3fb855624a18b16996a8965fa",
+    "semantic_hash": "77ab1ec3fb855624a18b16996a8965fa"
+  },
+  "ui/canvas/viewport.dart": {
+    "mtime": 1769674788.5871596,
+    "ast_hash": "5f737c8e16805e76f4c910eb9c858936",
+    "semantic_hash": "5f737c8e16805e76f4c910eb9c858936"
+  },
+  "ui/editor/editor_controller.dart": {
+    "mtime": 1783005961.4928107,
+    "ast_hash": "96a92f6b0acc02bb4812f12d7637f5d5",
+    "semantic_hash": "96a92f6b0acc02bb4812f12d7637f5d5"
+  },
+  "ui/screens/carpet_cut_list_panel.dart": {
+    "mtime": 1783005902.8534448,
+    "ast_hash": "125fbc1f3d1d0a966dcf81736cf4d6d2",
+    "semantic_hash": "125fbc1f3d1d0a966dcf81736cf4d6d2"
+  },
+  "ui/screens/carpet_products_screen.dart": {
+    "mtime": 1781317849.9200342,
+    "ast_hash": "0d1bd93e0f3cf0ae03f0a9262e836896",
+    "semantic_hash": "0d1bd93e0f3cf0ae03f0a9262e836896"
+  },
+  "ui/screens/carpet_roll_cut_sheet.dart": {
+    "mtime": 1783008546.1248493,
+    "ast_hash": "1f9f9979d8e919e63466802d658526ef",
+    "semantic_hash": "1f9f9979d8e919e63466802d658526ef"
+  },
+  "ui/screens/editor_screen.dart": {
+    "mtime": 1783005847.4728308,
+    "ast_hash": "e689334f3de7cd3f02baaeafcaaa2e92",
+    "semantic_hash": "e689334f3de7cd3f02baaeafcaaa2e92"
+  },
+  "ui/screens/project_settings_sheet.dart": {
+    "mtime": 1772783883.5116649,
+    "ast_hash": "db96bf3363b383e3e0626df5b7f467de",
+    "semantic_hash": "db96bf3363b383e3e0626df5b7f467de"
+  },
+  "ui/screens/projects_screen.dart": {
+    "mtime": 1778421067.980069,
+    "ast_hash": "03aaec81d1eb1c2e2d94fc997982d22b",
+    "semantic_hash": "03aaec81d1eb1c2e2d94fc997982d22b"
+  },
+  "ui/screens/room_area_summary_panel.dart": {
+    "mtime": 1776149287.2392147,
+    "ast_hash": "3fde7a36df074d816ce3cba034d74425",
+    "semantic_hash": "3fde7a36df074d816ce3cba034d74425"
+  }
+}
