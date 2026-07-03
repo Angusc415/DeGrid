@@ -221,8 +221,11 @@ class PlanCanvasState extends State<PlanCanvas> {
   double _roomRotateAppliedDeg = 0;
 
   // Undo/Redo history
-  // Each history entry contains both completed rooms and draft room vertices
-  final List<({List<Room> rooms, List<Offset>? draftVertices})> _history = [];
+  // Each entry is a full snapshot of room-indexed state: rooms, draft
+  // vertices, openings, and the five index-keyed carpet maps. Restoring only
+  // the rooms would desync the maps (e.g. delete room → undo would leave
+  // carpet assignments keyed to the shifted indices).
+  final List<_PlanHistorySnapshot> _history = [];
   int _historyIndex =
       -1; // -1 means at initial state, 0 means after first action
   static const int _maxHistorySize = 50;
@@ -373,17 +376,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       _history.removeRange(_historyIndex + 1, _history.length);
     }
 
-    // Create a deep copy of current rooms
-    final roomsCopy = _completedRooms
-        .map((r) => Room(vertices: List<Offset>.from(r.vertices), name: r.name))
-        .toList();
-
-    // Create a deep copy of draft room vertices (if any)
-    final draftCopy = _draftRoomVertices != null
-        ? List<Offset>.from(_draftRoomVertices!)
-        : null;
-
-    _history.add((rooms: roomsCopy, draftVertices: draftCopy));
+    _history.add(_PlanHistorySnapshot.capture(this));
     _historyIndex = _history.length - 1;
 
     // Limit history size
@@ -393,34 +386,75 @@ class PlanCanvasState extends State<PlanCanvas> {
     }
   }
 
+  /// Restore a history snapshot into the live state. Used by undo/redo.
+  /// Must run inside setState.
+  void _restoreHistoryState(_PlanHistorySnapshot snapshot) {
+    _completedRooms
+      ..clear()
+      ..addAll(snapshot.rooms.map(
+        (r) => Room(vertices: List<Offset>.from(r.vertices), name: r.name),
+      ));
+
+    _draftRoomVertices = snapshot.draftVertices != null
+        ? List<Offset>.from(snapshot.draftVertices!)
+        : null;
+    _draftStartedFromVertexOrDoor = false;
+
+    // Restore room-indexed data in lockstep with the room list; openings and
+    // the carpet maps are keyed by room index and must never drift from it.
+    _openings
+      ..clear()
+      ..addAll(snapshot.openings);
+    _roomCarpetAssignments
+      ..clear()
+      ..addAll(snapshot.roomCarpetAssignments);
+    _roomCarpetSeamOverrides
+      ..clear()
+      ..addAll(snapshot.roomCarpetSeamOverrides
+          .map((k, v) => MapEntry(k, List<double>.from(v))));
+    _roomCarpetSeamLayDirectionDeg
+      ..clear()
+      ..addAll(snapshot.roomCarpetSeamLayDirectionDeg);
+    _roomCarpetLayoutVariantIndex
+      ..clear()
+      ..addAll(snapshot.roomCarpetLayoutVariantIndex);
+    _roomCarpetStripPieceLengthsOverrideMm
+      ..clear()
+      ..addAll(snapshot.roomCarpetStripPieceLengthsOverrideMm.map(
+        (k, v) => MapEntry(
+          k,
+          v.map((strip) => List<double>.from(strip)).toList(),
+        ),
+      ));
+
+    // Clear selection and hover state
+    _selectedRoomIndex = null;
+    _hoverPositionWorldMm = null;
+  }
+
+  /// Notify listeners (side panel, editor controller) after undo/redo, the
+  /// same way the mutating paths (e.g. room delete) do.
+  void _notifyHistoryRestored() {
+    widget.onRoomsChanged?.call(
+      _completedRooms,
+      _useImperial,
+      _selectedRoomIndex,
+    );
+    widget.onRoomCarpetAssignmentsChanged?.call(
+      Map<int, int>.from(_roomCarpetAssignments),
+    );
+  }
+
   /// Undo the last action
   void _undo() {
     // We save state *before* each action; current state is never pushed.
     // So we restore the last saved state (what we had before the last action).
     if (_historyIndex >= 0) {
       setState(() {
-        final state = _history[_historyIndex];
-
-        // Restore completed rooms
-        _completedRooms.clear();
-        _completedRooms.addAll(
-          state.rooms.map(
-            (r) => Room(vertices: List<Offset>.from(r.vertices), name: r.name),
-          ),
-        );
-
-        // Restore draft room vertices
-        _draftRoomVertices = state.draftVertices != null
-            ? List<Offset>.from(state.draftVertices!)
-            : null;
-        _draftStartedFromVertexOrDoor = false;
-
-        // Clear selection and hover state
-        _selectedRoomIndex = null;
-        _hoverPositionWorldMm = null;
-
+        _restoreHistoryState(_history[_historyIndex]);
         _historyIndex--;
       });
+      _notifyHistoryRestored();
     }
   }
 
@@ -429,26 +463,9 @@ class PlanCanvasState extends State<PlanCanvas> {
     if (_historyIndex < _history.length - 1) {
       setState(() {
         _historyIndex++;
-        final state = _history[_historyIndex];
-
-        // Restore completed rooms
-        _completedRooms.clear();
-        _completedRooms.addAll(
-          state.rooms.map(
-            (r) => Room(vertices: List<Offset>.from(r.vertices), name: r.name),
-          ),
-        );
-
-        // Restore draft room vertices
-        _draftRoomVertices = state.draftVertices != null
-            ? List<Offset>.from(state.draftVertices!)
-            : null;
-        _draftStartedFromVertexOrDoor = false;
-
-        // Clear selection and hover state
-        _selectedRoomIndex = null;
-        _hoverPositionWorldMm = null;
+        _restoreHistoryState(_history[_historyIndex]);
       });
+      _notifyHistoryRestored();
     }
   }
 
@@ -2920,4 +2937,61 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// Edit the name of an existing room.
   Future<void> _editRoomName(int roomIndex) =>
       _editRoomNameImpl(this, roomIndex);
+}
+
+/// Immutable full snapshot of the room-indexed canvas state for undo/redo.
+///
+/// Openings and the five carpet maps are keyed by room index, so a snapshot
+/// that captured only the room list would mis-associate them after a
+/// delete → undo cycle. Everything room-indexed is captured (and restored)
+/// together.
+class _PlanHistorySnapshot {
+  final List<Room> rooms;
+  final List<Offset>? draftVertices;
+  final List<Opening> openings;
+  final Map<int, int> roomCarpetAssignments;
+  final Map<int, List<double>> roomCarpetSeamOverrides;
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
+  final Map<int, int> roomCarpetLayoutVariantIndex;
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+
+  _PlanHistorySnapshot._({
+    required this.rooms,
+    required this.draftVertices,
+    required this.openings,
+    required this.roomCarpetAssignments,
+    required this.roomCarpetSeamOverrides,
+    required this.roomCarpetSeamLayDirectionDeg,
+    required this.roomCarpetLayoutVariantIndex,
+    required this.roomCarpetStripPieceLengthsOverrideMm,
+  });
+
+  /// Deep-copies the live state so later mutations can't alter the snapshot.
+  /// (Opening is immutable, so copying the list itself is sufficient.)
+  factory _PlanHistorySnapshot.capture(PlanCanvasState state) {
+    return _PlanHistorySnapshot._(
+      rooms: state._completedRooms
+          .map((r) =>
+              Room(vertices: List<Offset>.from(r.vertices), name: r.name))
+          .toList(),
+      draftVertices: state._draftRoomVertices != null
+          ? List<Offset>.from(state._draftRoomVertices!)
+          : null,
+      openings: List<Opening>.from(state._openings),
+      roomCarpetAssignments: Map<int, int>.from(state._roomCarpetAssignments),
+      roomCarpetSeamOverrides: state._roomCarpetSeamOverrides
+          .map((k, v) => MapEntry(k, List<double>.from(v))),
+      roomCarpetSeamLayDirectionDeg:
+          Map<int, double>.from(state._roomCarpetSeamLayDirectionDeg),
+      roomCarpetLayoutVariantIndex:
+          Map<int, int>.from(state._roomCarpetLayoutVariantIndex),
+      roomCarpetStripPieceLengthsOverrideMm:
+          state._roomCarpetStripPieceLengthsOverrideMm.map(
+        (k, v) => MapEntry(
+          k,
+          v.map((strip) => List<double>.from(strip)).toList(),
+        ),
+      ),
+    );
+  }
 }

@@ -9,6 +9,19 @@ import '../models/project.dart';
 import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
+/// Thrown when a stored project field fails to deserialize.
+///
+/// Load must fail loudly rather than silently substituting empty data:
+/// otherwise the next save would overwrite the (still recoverable) stored
+/// JSON with the empty in-memory state and make the loss permanent.
+class ProjectDataException implements Exception {
+  final String message;
+  ProjectDataException(this.message);
+
+  @override
+  String toString() => 'ProjectDataException: $message';
+}
+
 /// Service layer for project database operations.
 /// Handles all CRUD operations for projects and rooms.
 class ProjectService {
@@ -80,6 +93,22 @@ class ProjectService {
         .write(FoldersCompanion(parentId: Value(newParentId)));
   }
 
+  /// Runs [parse] for a user-data field of [project], converting any failure
+  /// into a [ProjectDataException] that names the project and field.
+  ///
+  /// The stored JSON stays untouched in the database, so the project remains
+  /// recoverable; the caller (load path) surfaces the error instead of
+  /// silently continuing with empty data that a later save would persist.
+  T _parseUserData<T>(Project project, String field, T Function() parse) {
+    try {
+      return parse();
+    } catch (e) {
+      throw ProjectDataException(
+        'Project "${project.name}" (id ${project.id}): failed to parse $field: $e',
+      );
+    }
+  }
+
   /// Get a single project with all its rooms.
   /// Returns null if project doesn't exist.
   Future<ProjectModel?> getProject(int id) async {
@@ -123,107 +152,119 @@ class ProjectService {
       }
     }
 
+    // Parse user data fields. Unlike viewport/background-image state above
+    // (cosmetic, safe to reset), a parse failure here must abort the load via
+    // ProjectDataException — see _parseUserData. Silently substituting empty
+    // collections would let the next save permanently wipe the stored data.
+
     // Parse openings if available
     List<Opening> openings = const [];
     if (project.openingsJson != null && project.openingsJson!.isNotEmpty) {
-      try {
+      openings = _parseUserData(project, 'openings', () {
         final list = jsonDecode(project.openingsJson!) as List<dynamic>;
-        openings = Opening.listFromJson(list);
-      } catch (e) {
-        openings = [];
-      }
+        return Opening.listFromJson(list);
+      });
     }
 
     // Parse carpet products if available
     List<CarpetProduct> carpetProducts = const [];
     if (project.carpetProductsJson != null && project.carpetProductsJson!.isNotEmpty) {
-      try {
+      carpetProducts = _parseUserData(project, 'carpet products', () {
         final list = jsonDecode(project.carpetProductsJson!) as List<dynamic>;
-        carpetProducts = CarpetProduct.listFromJson(list);
-      } catch (e) {
-        carpetProducts = [];
-      }
+        return CarpetProduct.listFromJson(list);
+      });
     }
 
     // Parse room carpet assignments if available
     Map<int, int> roomCarpetAssignments = {};
     if (project.roomCarpetAssignmentsJson != null && project.roomCarpetAssignmentsJson!.isNotEmpty) {
-      try {
+      roomCarpetAssignments = _parseUserData(project, 'room carpet assignments', () {
+        final result = <int, int>{};
         final list = jsonDecode(project.roomCarpetAssignmentsJson!) as List<dynamic>;
         for (final e in list) {
           final m = e as Map<String, dynamic>;
           final ri = m['roomIndex'] as int?;
           final pi = m['productIndex'] as int?;
-          if (ri != null && pi != null) roomCarpetAssignments[ri] = pi;
+          if (ri != null && pi != null) result[ri] = pi;
         }
-      } catch (_) {}
+        return result;
+      });
     }
 
     // Parse room carpet seam overrides if available
     Map<int, List<double>> roomCarpetSeamOverrides = {};
     if (project.roomCarpetSeamOverridesJson != null && project.roomCarpetSeamOverridesJson!.isNotEmpty) {
-      try {
+      roomCarpetSeamOverrides = _parseUserData(project, 'seam overrides', () {
+        final result = <int, List<double>>{};
         final map = jsonDecode(project.roomCarpetSeamOverridesJson!) as Map<String, dynamic>;
         for (final entry in map.entries) {
           final roomIndex = int.tryParse(entry.key);
           if (roomIndex == null) continue;
           final list = entry.value as List<dynamic>?;
           if (list == null) continue;
-          roomCarpetSeamOverrides[roomIndex] = list.map((e) => (e as num).toDouble()).toList();
+          result[roomIndex] = list.map((e) => (e as num).toDouble()).toList();
         }
-      } catch (_) {}
+        return result;
+      });
     }
 
     // Parse locked seam lay directions if available
     Map<int, double> roomCarpetSeamLayDirectionDeg = {};
     if (project.roomCarpetSeamLayDirectionDegJson != null &&
         project.roomCarpetSeamLayDirectionDegJson!.isNotEmpty) {
-      try {
+      roomCarpetSeamLayDirectionDeg = _parseUserData(project, 'seam lay directions', () {
+        final result = <int, double>{};
         final map = jsonDecode(project.roomCarpetSeamLayDirectionDegJson!)
             as Map<String, dynamic>;
         for (final entry in map.entries) {
           final roomIndex = int.tryParse(entry.key);
           final deg = entry.value as num?;
           if (roomIndex == null || deg == null) continue;
-          roomCarpetSeamLayDirectionDeg[roomIndex] = deg.toDouble();
+          result[roomIndex] = deg.toDouble();
         }
-      } catch (_) {}
+        return result;
+      });
     }
 
     // Parse per-room layout variant indices if available
     Map<int, int> roomCarpetLayoutVariantIndex = {};
     if (project.roomCarpetLayoutVariantIndexJson != null &&
         project.roomCarpetLayoutVariantIndexJson!.isNotEmpty) {
-      try {
+      roomCarpetLayoutVariantIndex = _parseUserData(project, 'layout variants', () {
+        final result = <int, int>{};
         final map = jsonDecode(project.roomCarpetLayoutVariantIndexJson!)
             as Map<String, dynamic>;
         for (final entry in map.entries) {
           final roomIndex = int.tryParse(entry.key);
           final variant = entry.value as int?;
           if (roomIndex == null || variant == null) continue;
-          roomCarpetLayoutVariantIndex[roomIndex] = variant;
+          result[roomIndex] = variant;
         }
-      } catch (_) {}
+        return result;
+      });
     }
 
     // Parse per-room piece-length overrides if available
     Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm = {};
     if (project.roomCarpetStripPieceLengthsJson != null &&
         project.roomCarpetStripPieceLengthsJson!.isNotEmpty) {
-      try {
+      roomCarpetStripPieceLengthsOverrideMm =
+          _parseUserData(project, 'strip piece-length overrides', () {
+        final result = <int, List<List<double>>>{};
         final map = jsonDecode(project.roomCarpetStripPieceLengthsJson!)
             as Map<String, dynamic>;
         for (final entry in map.entries) {
           final roomIndex = int.tryParse(entry.key);
           final strips = entry.value as List<dynamic>?;
           if (roomIndex == null || strips == null) continue;
-          roomCarpetStripPieceLengthsOverrideMm[roomIndex] = strips
+          result[roomIndex] = strips
               .map((s) => (s as List<dynamic>)
                   .map((e) => (e as num).toDouble())
                   .toList())
               .toList();
         }
-      } catch (_) {}
+        return result;
+      });
     }
 
     final stripSplitStrategy = StripSplitStrategy.values[
@@ -270,7 +311,6 @@ class ProjectService {
     final viewportState = PlanViewportState.fromViewport(viewport);
     final viewportJson = jsonEncode(viewportState.toJson());
 
-    // Insert project
     final projectCompanion = ProjectsCompanion.insert(
       name: name,
       folderId: Value(folderId),
@@ -280,10 +320,12 @@ class ProjectService {
       doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
     );
 
-    final projectId = await _db.into(_db.projects).insert(projectCompanion);
+    // Insert project and rooms in ONE transaction: a failure after the
+    // project insert must not commit an empty project row while the rooms
+    // roll back.
+    return await _db.transaction(() async {
+      final projectId = await _db.into(_db.projects).insert(projectCompanion);
 
-    // Insert rooms in a transaction
-    await _db.transaction(() async {
       for (int i = 0; i < rooms.length; i++) {
         final room = rooms[i];
         final roomCompanion = RoomsCompanion.insert(
@@ -294,9 +336,9 @@ class ProjectService {
         );
         await _db.into(_db.rooms).insert(roomCompanion);
       }
-    });
 
-    return projectId;
+      return projectId;
+    });
   }
 
   /// Update an existing project.
@@ -370,11 +412,15 @@ class ProjectService {
       doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
     );
 
-    await (_db.update(_db.projects)..where((p) => p.id.equals(id))).write(projectUpdate);
+    // Metadata write and rooms replacement must commit atomically: the
+    // metadata includes room-index-keyed JSON blobs (openings, carpet
+    // assignments, seam overrides, ...), so committing one without the other
+    // leaves those blobs referencing a room list they were not written for.
+    await _db.transaction(() async {
+      await (_db.update(_db.projects)..where((p) => p.id.equals(id))).write(projectUpdate);
 
-    // If rooms are provided, replace all rooms
-    if (rooms != null) {
-      await _db.transaction(() async {
+      // If rooms are provided, replace all rooms
+      if (rooms != null) {
         // Delete existing rooms
         await (_db.delete(_db.rooms)..where((r) => r.projectId.equals(id))).go();
 
@@ -389,8 +435,8 @@ class ProjectService {
           );
           await _db.into(_db.rooms).insert(roomCompanion);
         }
-      });
-    }
+      }
+    });
   }
 
   /// Delete a project and all its rooms (CASCADE).
@@ -424,6 +470,10 @@ class ProjectService {
   }) async {
     try {
       if (id == null) {
+        // Run create + follow-up metadata update as ONE transaction (the
+        // inner transactions in createProject/updateProject nest into this
+        // one), so a new project is never committed half-written.
+        return await _db.transaction(() async {
         final projectId = await createProject(
           name: name,
           rooms: rooms,
@@ -463,6 +513,7 @@ class ProjectService {
           );
         }
         return projectId;
+        });
       } else {
         await updateProject(
           id: id,
