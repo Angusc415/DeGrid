@@ -254,18 +254,13 @@ List<CutPieceAnchor> enumerateCutPieceAnchors({
   for (var stri = 0; stri < layout.numStrips; stri++) {
     final pieces = layout.pieceLengthsForStrip(stri);
     if (pieces.isEmpty) continue;
-    var stripStartPerp = 0.0;
-    for (var i = 0; i < stri; i++) {
-      stripStartPerp += i < layout.stripWidthsMm.length
-          ? layout.stripWidthsMm[i]
-          : layout.rollWidthMm;
-    }
+    final stripStartPerp = layout.stripPerpStartAt(stri);
     final stripWidth = stri < layout.stripWidthsMm.length
         ? layout.stripWidthsMm[stri]
         : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth);
     final perpMid = stripStartPerp + stripWidth / 2;
 
-    var alongStart = 0.0;
+    var alongStart = layout.stripAlongStartAt(stri);
     for (var pi = 0; pi < pieces.length; pi++) {
       final pieceLen = pieces[pi];
       final alongMid = alongStart + pieceLen / 2;
@@ -332,8 +327,14 @@ class RollLaneData {
   double get rollWidthMm =>
       product.rollWidthMm > 0 ? product.rollWidthMm : 4000;
 
+  /// True when the product has a physical roll length. When false,
+  /// [rollLengthMm] is only a display length for the board; tail/waste
+  /// figures derived from it are meaningless and should not be shown.
+  bool get hasRealRollLength =>
+      product.rollLengthM != null && product.rollLengthM! > 0;
+
   double get rollLengthMm {
-    if (product.rollLengthM != null && product.rollLengthM! > 0) {
+    if (hasRealRollLength) {
       return product.rollLengthM! * 1000;
     }
     final minLength = rollWidthMm;
@@ -412,6 +413,9 @@ class RollPlanState {
   List<RollOffcut> offcuts() {
     final offcuts = <RollOffcut>[];
     for (final lane in lanes) {
+      // Without a physical roll length the lane length is fabricated for
+      // display, so there is no real tail to report.
+      if (!lane.hasRealRollLength) continue;
       final placed = placedCutsOnLane(lane.rollIndex);
       final endAlong = placed.isEmpty
           ? 0.0

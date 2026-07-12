@@ -11,6 +11,13 @@ class StripLayout {
   final List<double> stripLengthsMm;
   /// Width of each strip in mm (perpendicular to lay direction). Used to mark slivers.
   final List<double> stripWidthsMm;
+  /// Perpendicular start of each strip in mm from the reference edge (bbox min).
+  /// Strips in the same band (disconnected regions of an L/U room) share a start,
+  /// so this must be used instead of accumulating [stripWidthsMm].
+  final List<double> stripPerpStartsMm;
+  /// Along-run start of each strip in mm from the bbox min along the lay
+  /// direction (0 for strips spanning the full extent; > 0 for offset legs).
+  final List<double> stripAlongStartsMm;
   /// When set, strip [i] is cut into multiple pieces along the run: [pieceLen1, pieceLen2, ...].
   /// When null, each strip is one piece (stripLengthsMm[i] = one cut). Sum per strip must match stripLengthsMm.
   final List<List<double>>? stripPieceLengthsMm;
@@ -42,6 +49,8 @@ class StripLayout {
     required this.numStrips,
     required this.stripLengthsMm,
     this.stripWidthsMm = const [],
+    this.stripPerpStartsMm = const [],
+    this.stripAlongStartsMm = const [],
     this.stripPieceLengthsMm,
     required this.layAngleDeg,
     this.bboxMinX = 0,
@@ -86,13 +95,40 @@ class StripLayout {
     return stripWidthsMm[index] < minWidthMm;
   }
 
+  /// Perpendicular start (mm from reference edge) of strip [index].
+  /// Uses [stripPerpStartsMm] when available; falls back to accumulating
+  /// widths (only correct when each band holds a single strip).
+  double stripPerpStartAt(int index) {
+    if (index >= 0 && index < stripPerpStartsMm.length) {
+      return stripPerpStartsMm[index];
+    }
+    var start = 0.0;
+    for (var i = 0; i < index; i++) {
+      start += i < stripWidthsMm.length ? stripWidthsMm[i] : rollWidthMm;
+    }
+    return start;
+  }
+
+  /// Along-run start (mm from bbox min along lay direction) of strip [index].
+  double stripAlongStartAt(int index) {
+    if (index >= 0 && index < stripAlongStartsMm.length) {
+      return stripAlongStartsMm[index];
+    }
+    return 0.0;
+  }
+
   /// Seam positions in mm from the reference edge (perpendicular to lay direction).
-  /// When [seamPositionsMmOverride] is set, returns that; otherwise from roll-width grid.
-  /// Empty when numStrips <= 1.
+  /// Prefers [seamPositionsMmOverride] (actual seam lines used by the layout),
+  /// then distinct strip starts, then the roll-width grid. Empty when numStrips <= 1.
   List<double> get seamPositionsFromReferenceMm {
     if (numStrips <= 1) return [];
     if (seamPositionsMmOverride != null && seamPositionsMmOverride!.isNotEmpty) {
       return List<double>.from(seamPositionsMmOverride!);
+    }
+    if (stripPerpStartsMm.isNotEmpty) {
+      final distinct = stripPerpStartsMm.where((p) => p > 0).toSet().toList()
+        ..sort();
+      return distinct;
     }
     if (rollWidthMm <= 0) return [];
     return List.generate(numStrips - 1, (i) => (i + 1) * rollWidthMm);
@@ -107,6 +143,8 @@ class StripLayout {
     int? numStrips,
     List<double>? stripLengthsMm,
     List<double>? stripWidthsMm,
+    List<double>? stripPerpStartsMm,
+    List<double>? stripAlongStartsMm,
     List<List<double>>? stripPieceLengthsMm,
     double? layAngleDeg,
     double? bboxMinX,
@@ -129,6 +167,8 @@ class StripLayout {
       numStrips: numStrips ?? this.numStrips,
       stripLengthsMm: stripLengthsMm ?? this.stripLengthsMm,
       stripWidthsMm: stripWidthsMm ?? this.stripWidthsMm,
+      stripPerpStartsMm: stripPerpStartsMm ?? this.stripPerpStartsMm,
+      stripAlongStartsMm: stripAlongStartsMm ?? this.stripAlongStartsMm,
       stripPieceLengthsMm: stripPieceLengthsMm ?? this.stripPieceLengthsMm,
       layAngleDeg: layAngleDeg ?? this.layAngleDeg,
       bboxMinX: bboxMinX ?? this.bboxMinX,
@@ -151,6 +191,18 @@ class StripLayout {
     );
   }
 }
+
+/// Result of computing strips for one lay direction.
+typedef _DirectionResult = ({
+  List<double> stripLengthsMm,
+  List<double> stripWidthsMm,
+  List<double> stripPerpStartsMm,
+  List<double> stripAlongStartsMm,
+  double totalLinearMm,
+  int seamCount,
+  double cost,
+  List<double>? seamPositionsUsed,
+});
 
 /// Computes carpet strip layout by intersecting strip bands with the room polygon.
 ///
@@ -239,6 +291,8 @@ class RollPlanner {
         numStrips: 1,
         stripLengthsMm: [cutLen],
         stripWidthsMm: [perpLen],
+        stripPerpStartsMm: const [0],
+        stripAlongStartsMm: const [0],
         layAngleDeg: layAlongX ? 0 : 90,
         bboxMinX: minX,
         bboxMinY: minY,
@@ -278,6 +332,8 @@ class RollPlanner {
       numStrips: r.stripLengthsMm.length,
       stripLengthsMm: r.stripLengthsMm,
       stripWidthsMm: r.stripWidthsMm,
+      stripPerpStartsMm: r.stripPerpStartsMm,
+      stripAlongStartsMm: r.stripAlongStartsMm,
       layAngleDeg: layAlongX ? 0 : 90,
       bboxMinX: minX,
       bboxMinY: minY,
@@ -328,15 +384,21 @@ class RollPlanner {
     if (opts.stripSplitStrategy == StripSplitStrategy.never) return layout;
     if (layout.numStrips == 0) return layout;
     final prefer = opts.stripSplitStrategy == StripSplitStrategy.preferStripInPieces;
+    final patternRepeat = opts.patternRepeatMm > 0 ? opts.patternRepeatMm : 0.0;
     // Physical hard cap from the roll length. Null = infinitely long roll, so
     // a cut is never *forced* to split.
     final hardCapMm = opts.maxSinglePieceLengthMm;
     // Length used when actually sizing split pieces. For preferStripInPieces
     // we still want to split long runs when no roll length is set, so fall back
     // to a default; for auto with no cap there is nothing to size against.
-    final pieceCapMm =
+    var pieceCapMm =
         (hardCapMm ?? (prefer ? _defaultMaxPieceLengthMm : double.infinity))
             .clamp(100.0, double.infinity);
+    // Patterned carpet: pieces are rounded up to whole repeats, so size them
+    // against a repeat-aligned cap or the rounding would exceed the roll.
+    if (patternRepeat > 0 && patternRepeat <= pieceCapMm && pieceCapMm.isFinite) {
+      pieceCapMm = (pieceCapMm / patternRepeat).floorToDouble() * patternRepeat;
+    }
     final pieceLengthsPerStrip = <List<double>>[];
     final newStripLengthsMm = <double>[];
     bool anySplit = false;
@@ -366,12 +428,20 @@ class RollPlanner {
         continue;
       }
       anySplit = true;
-      extraMaterialMm += total - L;
       final step = total / n;
-      final pieces = List<double>.generate(
+      var pieces = List<double>.generate(
         n,
         (j) => j < n - 1 ? step : total - step * (n - 1),
       );
+      if (patternRepeat > 0) {
+        // Each piece must start on a repeat so cross-joins pattern-match.
+        pieces = [
+          for (final p in pieces)
+            (p / patternRepeat).ceilToDouble() * patternRepeat,
+        ];
+        total = pieces.fold<double>(0, (a, b) => a + b);
+      }
+      extraMaterialMm += total - L;
       pieceLengthsPerStrip.add(pieces);
       newStripLengthsMm.add(total);
     }
@@ -391,7 +461,7 @@ class RollPlanner {
   static const int _seamOptimizationPhases = 4;
 
   /// Try several grid offsets (seam positions) and return the layout with lowest cost.
-  static ({List<double> stripLengthsMm, List<double> stripWidthsMm, double totalLinearMm, int seamCount, double cost, List<double>? seamPositionsUsed}) _computeBestLayoutForDirection(
+  static _DirectionResult _computeBestLayoutForDirection(
     Room room,
     double rollWidthMm,
     double minX,
@@ -421,7 +491,7 @@ class RollPlanner {
   /// For one direction: generate strip bands, intersect each with room polygon, compute cut lengths.
   /// When [opts.seamPositionsOverrideMm] is set, use those as strip boundaries (validated and clamped).
   /// When [gridOffsetMm] is non-null (and no overrides), use a shifted grid so seams are optimized (try 0, 0.25, 0.5, 0.75 * rollWidth).
-  static ({List<double> stripLengthsMm, List<double> stripWidthsMm, double totalLinearMm, int seamCount, double cost, List<double>? seamPositionsUsed}) _computeForDirection(
+  static _DirectionResult _computeForDirection(
     Room room,
     double rollWidthMm,
     double minX,
@@ -438,6 +508,8 @@ class RollPlanner {
     final perpLen = layAlongX ? bboxH : bboxW;
     final stripLengths = <double>[];
     final stripWidths = <double>[];
+    final stripPerpStarts = <double>[];
+    final stripAlongStarts = <double>[];
     int sliverCount = 0;
     List<double>? boundaries;
 
@@ -471,90 +543,96 @@ class RollPlanner {
       boundaries = null;
     }
 
+    // Each band [stripStart, stripEnd] can produce multiple strips for
+    // L/T/U-shaped rooms. Sampled regions decide connectivity only; the exact
+    // strip extent comes from clipping the polygon to the expanded cell
+    // (see [expandRegionsToCells]) so angled walls are never truncated.
+    void addStripsForBand(double stripStart, double stripEnd) {
+      final stripWidth = stripEnd - stripStart;
+      final left = layAlongX ? minX : minX + stripStart;
+      final top = layAlongX ? minY + stripStart : minY;
+      final right = layAlongX ? minX + bboxW : minX + stripEnd;
+      final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
+
+      final regions = expandRegionsToCells(
+        sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX),
+        left,
+        top,
+        right,
+        bottom,
+        layAlongX,
+      );
+      for (final region in regions) {
+        final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
+        if (clipped.length < 3) continue;
+        final range = _rangeAlong(clipped, layAlongX);
+        final segmentLen = range.hi - range.lo;
+        if (segmentLen <= 0) continue;
+        double cutLen = segmentLen + trimAllowance * 2;
+        if (patternRepeat > 0) {
+          cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
+        }
+        stripLengths.add(cutLen);
+        stripWidths.add(stripWidth);
+        stripPerpStarts.add(stripStart);
+        stripAlongStarts.add(range.lo - (layAlongX ? minX : minY));
+        if (stripWidth < minStripWidth) sliverCount++;
+      }
+    }
+
     if (boundaries != null) {
-      // Phase 2: Apply sweep-based logic to user seam overrides.
-      // Each band [stripStart, stripEnd] can produce multiple strips for L/T-shaped rooms.
+      // User seam overrides (or shifted grid) as strip boundaries.
       final bandEnds = [...boundaries, perpLen];
       double stripStart = 0;
       for (final stripEnd in bandEnds) {
-        final stripWidth = stripEnd - stripStart;
-        final left = layAlongX ? minX : minX + stripStart;
-        final top = layAlongX ? minY + stripStart : minY;
-        final right = layAlongX ? minX + bboxW : minX + stripEnd;
-        final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
-
-        for (final region in sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX)) {
-          final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
-          if (clipped.length >= 3) {
-            double segmentLen = _extentAlong(clipped, layAlongX);
-            if (segmentLen > 0) {
-              double cutLen = segmentLen + trimAllowance * 2;
-              if (patternRepeat > 0) cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
-              stripLengths.add(cutLen);
-              stripWidths.add(stripWidth);
-              if (stripWidth < minStripWidth) sliverCount++;
-            }
-          }
-        }
+        addStripsForBand(stripStart, stripEnd);
         stripStart = stripEnd;
       }
     } else {
-      // Phase 1 non-rectangular: sweep each band to find all disconnected regions
-      // (e.g. L-shape vertical + horizontal legs). Output one strip per region.
       int i = 0;
       while (i < 1000) {
         final stripStart = i * rollWidthMm;
         if (stripStart >= perpLen) break;
         final stripEnd = math.min((i + 1) * rollWidthMm, perpLen);
-        final stripWidth = stripEnd - stripStart;
-        final left = layAlongX ? minX : minX + stripStart;
-        final top = layAlongX ? minY + stripStart : minY;
-        final right = layAlongX ? minX + bboxW : minX + stripEnd;
-        final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
-
-        for (final region in sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX)) {
-          final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
-          if (clipped.length >= 3) {
-            double segmentLen = _extentAlong(clipped, layAlongX);
-            if (segmentLen > 0) {
-              double cutLen = segmentLen + trimAllowance * 2;
-              if (patternRepeat > 0) {
-                cutLen = (cutLen / patternRepeat).ceilToDouble() * patternRepeat;
-              }
-              stripLengths.add(cutLen);
-              stripWidths.add(stripWidth);
-              if (stripWidth < minStripWidth) sliverCount++;
-            }
-          }
-        }
+        addStripsForBand(stripStart, stripEnd);
         i++;
-      }
-
-      if (stripLengths.isEmpty) {
-        final alongLen = layAlongX ? bboxW : bboxH;
-        final cutLen = alongLen + trimAllowance * 2;
-        stripLengths.add(patternRepeat > 0 ? (cutLen / patternRepeat).ceilToDouble() * patternRepeat : cutLen);
-        stripWidths.add(perpLen);
       }
     }
 
+    if (stripLengths.isEmpty) {
+      final alongLen = layAlongX ? bboxW : bboxH;
+      final cutLen = alongLen + trimAllowance * 2;
+      stripLengths.add(patternRepeat > 0 ? (cutLen / patternRepeat).ceilToDouble() * patternRepeat : cutLen);
+      stripWidths.add(perpLen);
+      stripPerpStarts.add(0);
+      stripAlongStarts.add(0);
+    }
+
     final totalLinear = stripLengths.fold<double>(0, (s, l) => s + l);
-    final seamCount = stripLengths.isNotEmpty ? stripLengths.length - 1 : 0;
-    final seamPositionsForPenalty = boundaries ?? (seamCount > 0
-        ? List.generate(seamCount, (i) => (i + 1) * rollWidthMm)
-        : null);
-    final seamPenalty = _seamPenaltyTotal(seamPositionsForPenalty, room, opts, layAlongX, minX, minY, seamCount, rollWidthMm);
+    // Actual seam lines: distinct band boundaries where a strip starts. Strips
+    // sharing a band (disconnected regions) do not add a seam between them.
+    final seamLines = stripPerpStarts.where((p) => p > 0).toSet().toList()
+      ..sort();
+    final seamCount = seamLines.length;
+    final seamPositionsUsed = seamLines.isNotEmpty ? seamLines : null;
+    final seamPenalty = _seamPenaltyTotal(seamPositionsUsed, room, opts, layAlongX, minX, minY, seamCount, rollWidthMm);
     final sliverPenalty = sliverCount * opts.sliverPenaltyPerStripMm;
     final cost = totalLinear + seamPenalty + sliverPenalty;
-    // Expose override positions when we used them (seam lines on plan). Strip count may exceed
-    // boundaries.length + 1 for L/T-shaped rooms (multiple strips per band).
-    final used = boundaries;
 
-    return (stripLengthsMm: stripLengths, stripWidthsMm: stripWidths, totalLinearMm: totalLinear, seamCount: seamCount, cost: cost, seamPositionsUsed: used);
+    return (
+      stripLengthsMm: stripLengths,
+      stripWidthsMm: stripWidths,
+      stripPerpStartsMm: stripPerpStarts,
+      stripAlongStartsMm: stripAlongStarts,
+      totalLinearMm: totalLinear,
+      seamCount: seamCount,
+      cost: cost,
+      seamPositionsUsed: seamPositionsUsed,
+    );
   }
 
-  static double _extentAlong(List<Offset> poly, bool alongX) {
-    if (poly.isEmpty) return 0;
+  static ({double lo, double hi}) _rangeAlong(List<Offset> poly, bool alongX) {
+    if (poly.isEmpty) return (lo: 0, hi: 0);
     double lo = alongX ? poly[0].dx : poly[0].dy;
     double hi = lo;
     for (final p in poly) {
@@ -562,7 +640,7 @@ class RollPlanner {
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
-    return hi - lo;
+    return (lo: lo, hi: hi);
   }
 
   /// Total seam penalty from per-seam logic: doorway-crossing seams use [seamPenaltyMmInDoorway].

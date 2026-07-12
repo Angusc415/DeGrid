@@ -50,17 +50,25 @@ StripLayout? computeRoomStripLayout({
         product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
   );
   final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
-  return applyStripPieceLengthsOverride(layout, stripPieceLengthsOverride);
+  return applyStripPieceLengthsOverride(
+    layout,
+    stripPieceLengthsOverride,
+    wastePercent: settings.wasteAllowancePercent,
+  );
 }
 
 /// Applies the user's along-run piece-length override to [layout].
 ///
 /// The override is ignored when empty or when its strip count no longer
 /// matches the layout (e.g. room geometry or seams changed underneath it).
+/// Totals and score fields are recomputed so waste/material stay consistent
+/// with the overridden lengths; [wastePercent] defaults to the ratio already
+/// baked into the layout.
 StripLayout applyStripPieceLengthsOverride(
   StripLayout layout,
-  List<List<double>>? override,
-) {
+  List<List<double>>? override, {
+  double? wastePercent,
+}) {
   if (override == null ||
       override.isEmpty ||
       override.length != layout.numStrips) {
@@ -68,8 +76,21 @@ StripLayout applyStripPieceLengthsOverride(
   }
   final stripLengthsMm =
       override.map((p) => p.fold<double>(0.0, (a, b) => a + b)).toList();
+  final newTotal = stripLengthsMm.fold<double>(0.0, (a, b) => a + b);
+  final oldTotal = layout.totalLinearMm;
+  final wasteFactor = wastePercent != null
+      ? 1 + wastePercent / 100
+      : (oldTotal > 0 && layout.totalLinearWithWasteMm != null
+          ? layout.totalLinearWithWasteMm! / oldTotal
+          : 1.0);
+  final materialDelta = newTotal - oldTotal;
   return layout.copyWith(
     stripLengthsMm: stripLengthsMm,
     stripPieceLengthsMm: override,
+    totalLinearWithWasteMm: layout.totalLinearWithWasteMm != null
+        ? newTotal * wasteFactor
+        : null,
+    scoreMaterialMm: layout.scoreMaterialMm + materialDelta,
+    scoreCostMm: layout.scoreCostMm + materialDelta,
   );
 }

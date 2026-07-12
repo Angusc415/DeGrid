@@ -23,10 +23,11 @@ class UnitConverter {
 
   /// Format as imperial (feet and inches).
   static String _formatImperial(double mm) {
-    final totalInches = mm / mmPerInch;
-    final feet = (totalInches / 12).floor();
-    final inches = (totalInches % 12).round();
-    
+    // Round total inches first, then split, so 71.9" becomes 6' and not 5' 12".
+    final totalInches = (mm / mmPerInch).round();
+    final feet = totalInches ~/ 12;
+    final inches = totalInches % 12;
+
     if (feet == 0) {
       return '$inches"';
     } else if (inches == 0) {

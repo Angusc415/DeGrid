@@ -12,11 +12,12 @@ List<({double start, double end})> intersectPolygonWithHorizontalLine(List<Offse
     final v1 = polygon[(i + 1) % n];
     final d0 = v0.dy - y;
     final d1 = v1.dy - y;
-    if (d0 == 0) {
-      xs.add(v0.dx);
-    } else if (d1 == 0) {
-      if (i + 1 < n || polygon[0] != v1) xs.add(v1.dx);
-    } else if ((d0 > 0) != (d1 > 0)) {
+    // Vertices exactly on the line count as the positive side (simulation of
+    // simplicity): each true crossing is recorded exactly once and edges lying
+    // on the line are skipped, keeping the even-odd interval pairing valid.
+    final s0 = d0 >= 0;
+    final s1 = d1 >= 0;
+    if (s0 != s1) {
       final t = d0 / (d0 - d1);
       xs.add(v0.dx + t * (v1.dx - v0.dx));
     }
@@ -40,11 +41,10 @@ List<({double start, double end})> intersectPolygonWithVerticalLine(List<Offset>
     final v1 = polygon[(i + 1) % n];
     final d0 = v0.dx - x;
     final d1 = v1.dx - x;
-    if (d0 == 0) {
-      ys.add(v0.dy);
-    } else if (d1 == 0) {
-      if (i + 1 < n || polygon[0] != v1) ys.add(v1.dy);
-    } else if ((d0 > 0) != (d1 > 0)) {
+    // See horizontal variant: on-line vertices count as the positive side.
+    final s0 = d0 >= 0;
+    final s1 = d1 >= 0;
+    if (s0 != s1) {
       final t = d0 / (d0 - d1);
       ys.add(v0.dy + t * (v1.dy - v0.dy));
     }
@@ -181,6 +181,47 @@ List<BandRegion> sweepBandForRegions(
     }
   }
   return regions;
+}
+
+/// Expands sampled band regions so their along-run bounds partition the band.
+///
+/// Region bounds from [sweepBandForRegions] come from a finite number of
+/// scanlines and can truncate a region's true extent (e.g. angled walls whose
+/// extreme point lies between samples). Clipping the room polygon to these
+/// expanded cells instead of the sampled bboxes is exact: cell boundaries fall
+/// in the empty gaps between disconnected regions, so the Sutherland-Hodgman
+/// clip recovers each region's true along-run extent. A single-region band
+/// expands to the whole band.
+List<BandRegion> expandRegionsToCells(
+  List<BandRegion> regions,
+  double left,
+  double top,
+  double right,
+  double bottom,
+  bool layAlongX,
+) {
+  if (regions.length <= 1) {
+    return regions.isEmpty
+        ? regions
+        : [BandRegion(left, top, right, bottom)];
+  }
+  double lo(BandRegion r) => layAlongX ? r.left : r.top;
+  double hi(BandRegion r) => layAlongX ? r.right : r.bottom;
+  final alongLo = layAlongX ? left : top;
+  final alongHi = layAlongX ? right : bottom;
+  final sorted = List<BandRegion>.from(regions)
+    ..sort((a, b) => lo(a).compareTo(lo(b)));
+  final out = <BandRegion>[];
+  for (int i = 0; i < sorted.length; i++) {
+    final cellLo = i == 0 ? alongLo : (hi(sorted[i - 1]) + lo(sorted[i])) / 2;
+    final cellHi = i == sorted.length - 1
+        ? alongHi
+        : (hi(sorted[i]) + lo(sorted[i + 1])) / 2;
+    out.add(layAlongX
+        ? BandRegion(cellLo, top, cellHi, bottom)
+        : BandRegion(left, cellLo, right, cellHi));
+  }
+  return out;
 }
 
 /// Clip polygon to half-plane: nx*x + ny*y >= c (with (nx,ny) normal).
