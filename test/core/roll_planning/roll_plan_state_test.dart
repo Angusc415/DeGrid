@@ -156,6 +156,36 @@ void main() {
       expect(entries[0].lengthMm, closeTo(4150, 0.5));
     });
 
+    test('narrow cuts report an estimated side offcut', () {
+      final projectModel = ProjectModel(
+        name: 'Test',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+        rooms: [
+          Room(
+            name: 'Hall',
+            vertices: const [
+              Offset(0, 0),
+              Offset(5000, 0),
+              Offset(5000, 4000),
+              Offset(0, 4000),
+            ],
+          ),
+        ],
+        carpetProducts: [product()],
+        roomCarpetAssignments: const {0: 0},
+        carpetPlanningSettings: const CarpetPlanningSettings(
+          doorwayExtensionMm: 0,
+        ),
+      );
+      final data = buildPdfCutSheetData(projectModel);
+      // 90 deg lay: strips 3600 + 1400 wide; the 1400 strip leaves a
+      // 2200mm-wide side offcut, the full-width strip leaves none.
+      expect(data.offcuts, hasLength(1));
+      expect(data.offcuts.single.breadthMm, closeTo(2200, 0.5));
+      expect(data.offcuts.single.fromCutId, 'A2');
+    });
+
     test('empty when no carpet assignments', () {
       final projectModel = ProjectModel(
         name: 'Test',

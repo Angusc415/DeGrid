@@ -43,6 +43,7 @@ class PdfExportService {
   /// [viewport] - Optional viewport for calculating initial scale
   /// [includeGrid] - Whether to include grid lines
   /// [carpetCuts] - Carpet cut-sheet rows; when non-empty a cut sheet page is added
+  /// [carpetOffcuts] - Estimated side offcuts listed under the cut sheet
   ///
   /// Returns PDF document as bytes.
   static Future<Uint8List> exportToPdf({
@@ -52,6 +53,7 @@ class PdfExportService {
     PlanViewport? viewport,
     bool includeGrid = false,
     List<PdfCutSheetEntry> carpetCuts = const [],
+    List<PdfOffcutEntry> carpetOffcuts = const [],
   }) async {
     if (rooms.isEmpty) {
       // Empty project - create a simple PDF with message
@@ -115,6 +117,21 @@ class PdfExportService {
             _buildCutSheetTable(carpetCuts, useImperial),
             pw.SizedBox(height: 12),
             ..._buildCutSheetTotals(carpetCuts, useImperial),
+            if (carpetOffcuts.isNotEmpty) ...[
+              pw.SizedBox(height: 16),
+              pw.Text(
+                'Estimated side offcuts (unused roll width beside narrow cuts)',
+                style:
+                    pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 6),
+              ...carpetOffcuts.map(
+                (o) => pw.Text(
+                  '${o.productName}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} x ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)} (beside cut ${o.fromCutId})',
+                  style: const pw.TextStyle(fontSize: 9),
+                ),
+              ),
+            ],
           ],
         ),
       );

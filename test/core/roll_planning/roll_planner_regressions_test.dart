@@ -56,12 +56,14 @@ void main() {
         const CarpetLayoutOptions(layDirectionDeg: 0, trimAllowanceMm: 75),
       );
       expect(layout.numStrips, 2);
+      // Tolerance 2mm: the clip is inset 0.5mm on the perp axis (degenerate
+      // boundary-sliver guard), which trims ~0.6mm off a steep diagonal.
       // Band 1 (y 0..3600): widest at y=0 -> extent 8000.
-      expect(layout.stripLengthsMm[0], closeTo(8000 + 150, 0.5));
+      expect(layout.stripLengthsMm[0], closeTo(8000 + 150, 2));
       // Band 2 (y 3600..7000): widest at y=3600 -> 8000*(1-3600/7000).
       expect(
         layout.stripLengthsMm[1],
-        closeTo(8000 * (1 - 3600 / 7000) + 150, 0.5),
+        closeTo(8000 * (1 - 3600 / 7000) + 150, 2),
       );
     });
   });
@@ -288,6 +290,34 @@ void main() {
         const CarpetLayoutOptions(layDirectionDeg: 0, trimAllowanceMm: 0),
       );
       expect(layout.seamPositionsFromReferenceMm, [3600.0]);
+    });
+  });
+
+  group('notch-edge seam alignment', () {
+    test('shallow-notch U room splits at the notch edge instead of bridging',
+        () {
+      // U-shape 9000x7000, notch x[3000,6000] y[0,3400] (shallower than the
+      // 3600 roll). The uniform grid would merge the legs into one 9000
+      // strip (carpeting the void); aligning the seam at y=3400 yields two
+      // 3000 legs + one 9000 strip, saving 3000mm of material.
+      final room = Room(vertices: const [
+        Offset(0, 0),
+        Offset(3000, 0),
+        Offset(3000, 3400),
+        Offset(6000, 3400),
+        Offset(6000, 0),
+        Offset(9000, 0),
+        Offset(9000, 7000),
+        Offset(0, 7000),
+      ]);
+      final layout = RollPlanner.computeLayout(
+        room,
+        3600,
+        const CarpetLayoutOptions(layDirectionDeg: 0, trimAllowanceMm: 0),
+      );
+      expect(layout.totalLinearMm, closeTo(15000, 0.5));
+      expect(layout.seamPositionsFromReferenceMm, [3400.0]);
+      expect(layout.numStrips, 3);
     });
   });
 

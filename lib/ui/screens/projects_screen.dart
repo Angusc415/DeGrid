@@ -799,13 +799,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
       // Generate PDF (includes a carpet cut sheet page when the project has
       // carpet assignments)
+      final cutSheetData = buildPdfCutSheetData(projectModel);
       final pdfBytes = await PdfExportService.exportToPdf(
         rooms: projectModel.rooms,
         useImperial: projectModel.useImperial,
         projectName: projectModel.name,
         viewport: projectModel.viewportState?.toViewport(),
         includeGrid: false, // Can be made configurable later
-        carpetCuts: buildPdfCutSheetEntries(projectModel),
+        carpetCuts: cutSheetData.cuts,
+        carpetOffcuts: cutSheetData.offcuts,
       );
 
       if (!mounted) return;

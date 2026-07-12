@@ -493,9 +493,26 @@ class RollPlanner {
     }
     var best = _computeForDirection(room, openingsRoom, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, null);
     final perpLen = layAlongX ? bboxH : bboxW;
+
+    // Candidate grid offsets: uniform phases plus notch-edge alignment. A
+    // seam landing exactly on a notch edge (a vertex's perpendicular
+    // coordinate) splits that band into separate legs instead of carpeting
+    // across the void — often a large material saving for L/U/T rooms that
+    // the uniform scan misses.
+    final offsets = <double>{};
     for (int phase = 1; phase < _seamOptimizationPhases; phase++) {
-      final offset = (phase / _seamOptimizationPhases) * rollWidthMm;
-      if (offset >= perpLen) break;
+      offsets.add((phase / _seamOptimizationPhases) * rollWidthMm);
+    }
+    final perpMin = layAlongX ? minY : minX;
+    for (final v in room.vertices) {
+      final perp = (layAlongX ? v.dy : v.dx) - perpMin;
+      if (perp <= 0 || perp >= perpLen) continue;
+      final offset = perp % rollWidthMm;
+      if (offset > 0) offsets.add(offset);
+    }
+
+    for (final offset in offsets) {
+      if (offset <= 0 || offset >= perpLen) continue;
       final candidate = _computeForDirection(room, openingsRoom, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, offset);
       if (candidate.cost < best.cost) best = candidate;
     }
@@ -588,12 +605,23 @@ class RollPlanner {
     // L/T/U-shaped rooms. Sampled regions decide connectivity only; the exact
     // strip extent comes from clipping the polygon to the expanded cell
     // (see [expandRegionsToCells]) so angled walls are never truncated.
+    // Inset the clip by a hair on the perpendicular axis: a room edge lying
+    // exactly on a band boundary (e.g. a seam aligned with a notch edge)
+    // otherwise contributes a zero-height full-width sliver to the clip and
+    // inflates the strip's along-extent with material that isn't needed.
+    const perpEps = 0.5;
+
     void addStripsForBand(double stripStart, double stripEnd) {
       final stripWidth = stripEnd - stripStart;
       final left = layAlongX ? minX : minX + stripStart;
       final top = layAlongX ? minY + stripStart : minY;
       final right = layAlongX ? minX + bboxW : minX + stripEnd;
       final bottom = layAlongX ? minY + stripEnd : minY + bboxH;
+      final inset = stripWidth > 2 * perpEps ? perpEps : 0.0;
+      final clipTop = layAlongX ? top + inset : top;
+      final clipBottom = layAlongX ? bottom - inset : bottom;
+      final clipLeft = layAlongX ? left : left + inset;
+      final clipRight = layAlongX ? right : right - inset;
 
       final regions = expandRegionsToCells(
         sweepBandForRegions(room.vertices, left, top, right, bottom, layAlongX),
@@ -604,7 +632,13 @@ class RollPlanner {
         layAlongX,
       );
       for (final region in regions) {
-        final clipped = clipPolygonToRect(room.vertices, region.left, region.top, region.right, region.bottom);
+        final clipped = clipPolygonToRect(
+          room.vertices,
+          layAlongX ? region.left : clipLeft,
+          layAlongX ? clipTop : region.top,
+          layAlongX ? region.right : clipRight,
+          layAlongX ? clipBottom : region.bottom,
+        );
         if (clipped.length < 3) continue;
         final range = _rangeAlong(clipped, layAlongX);
         final segmentLen = range.hi - range.lo;

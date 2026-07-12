@@ -22,11 +22,36 @@ class PdfCutSheetEntry {
   });
 }
 
+/// Estimated side offcut produced by one cut: the unused roll width beside a
+/// strip narrower than the roll.
+class PdfOffcutEntry {
+  final String productName;
+  final String fromCutId;
+  final double lengthMm;
+  final double breadthMm;
+
+  const PdfOffcutEntry({
+    required this.productName,
+    required this.fromCutId,
+    required this.lengthMm,
+    required this.breadthMm,
+  });
+}
+
 /// Builds carpet cut-sheet rows for a saved project, using the same shared
 /// layout path as the canvas/cut list so the PDF always matches the app.
 /// Empty when the project has no carpet assignments.
-List<PdfCutSheetEntry> buildPdfCutSheetEntries(ProjectModel project) {
+List<PdfCutSheetEntry> buildPdfCutSheetEntries(ProjectModel project) =>
+    buildPdfCutSheetData(project).cuts;
+
+/// Cut rows plus the estimated side offcut each narrow cut leaves behind
+/// (unused roll width of at least 100mm). Offcuts assume each cut is taken
+/// across the full roll width.
+({List<PdfCutSheetEntry> cuts, List<PdfOffcutEntry> offcuts})
+    buildPdfCutSheetData(ProjectModel project) {
+  const minOffcutBreadthMm = 100.0;
   final entries = <PdfCutSheetEntry>[];
+  final offcuts = <PdfOffcutEntry>[];
   final layouts = <int, StripLayout?>{};
 
   StripLayout? layoutFor(int ri) => layouts.putIfAbsent(ri, () {
@@ -86,14 +111,15 @@ List<PdfCutSheetEntry> buildPdfCutSheetEntries(ProjectModel project) {
           if (isSliver) 'Sliver',
           if (rollLengthMm != null && len > rollLengthMm) 'Exceeds roll',
         ];
+        final cutId = formatCutId(
+          roomLetterIndex: letterIndex,
+          stripIndex: si,
+          pieceIndex: piIdx,
+          pieceCountInStrip: pieces.length,
+        );
         entries.add(
           PdfCutSheetEntry(
-            cutId: formatCutId(
-              roomLetterIndex: letterIndex,
-              stripIndex: si,
-              pieceIndex: piIdx,
-              pieceCountInStrip: pieces.length,
-            ),
+            cutId: cutId,
             roomName: roomName,
             productName: product.name,
             lengthMm: len,
@@ -101,8 +127,19 @@ List<PdfCutSheetEntry> buildPdfCutSheetEntries(ProjectModel project) {
             note: notes.join(', '),
           ),
         );
+        final freeBreadth = product.rollWidthMm - widthMm;
+        if (freeBreadth >= minOffcutBreadthMm) {
+          offcuts.add(
+            PdfOffcutEntry(
+              productName: product.name,
+              fromCutId: cutId,
+              lengthMm: len,
+              breadthMm: freeBreadth,
+            ),
+          );
+        }
       }
     }
   }
-  return entries;
+  return (cuts: entries, offcuts: offcuts);
 }
