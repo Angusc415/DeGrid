@@ -50,6 +50,7 @@ StripLayout? computeRoomStripLayout({
         product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
     doorwayExtensionMm: settings.doorwayExtensionMm,
     seamWidthAllowanceMm: settings.seamWidthAllowanceMm,
+    sliverPenaltyPerStripMm: settings.sliverPenaltyPerStripMm,
   );
   final layout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
   return applyStripPieceLengthsOverride(

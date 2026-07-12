@@ -26,7 +26,11 @@ class ProjectModel {
   /// Room index -> piece lengths per strip (user merged/split pieces by dragging along-run seams).
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   /// Carpet planning: waste allowance percent (user-adjustable).
+  /// Kept in sync with [carpetPlanningSettings] for backwards compat.
   final double carpetWasteAllowancePercent;
+  /// Full carpet planning settings (waste %, seam penalties, doorway
+  /// extension, seam width allowance).
+  final CarpetPlanningSettings carpetPlanningSettings;
   /// Carpet planning: how strips split into pieces along the run.
   final StripSplitStrategy stripSplitStrategy;
   final PlanViewportState? viewportState;
@@ -52,13 +56,18 @@ class ProjectModel {
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     this.carpetWasteAllowancePercent = 5.0,
+    CarpetPlanningSettings? carpetPlanningSettings,
     this.stripSplitStrategy = StripSplitStrategy.auto,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
     double? wallWidthMm,
     this.doorThicknessMm,
-  })  : openings = openings ?? const [],
+  })  : carpetPlanningSettings = carpetPlanningSettings ??
+            CarpetPlanningSettings(
+              wasteAllowancePercent: carpetWasteAllowancePercent,
+            ),
+        openings = openings ?? const [],
         carpetProducts = carpetProducts ?? const [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
         roomCarpetSeamOverrides = roomCarpetSeamOverrides ?? const {},
@@ -85,6 +94,7 @@ class ProjectModel {
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
+    CarpetPlanningSettings? carpetPlanningSettings,
     StripSplitStrategy? stripSplitStrategy,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
@@ -112,6 +122,8 @@ class ProjectModel {
               this.roomCarpetStripPieceLengthsOverrideMm,
       carpetWasteAllowancePercent:
           carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
+      carpetPlanningSettings:
+          carpetPlanningSettings ?? this.carpetPlanningSettings,
       stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,

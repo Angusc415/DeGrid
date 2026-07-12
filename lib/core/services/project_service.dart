@@ -271,6 +271,22 @@ class ProjectService {
         project.stripSplitStrategy
             .clamp(0, StripSplitStrategy.values.length - 1)];
 
+    // Full planning settings from JSON when present; older projects fall back
+    // to defaults seeded with the legacy waste column.
+    CarpetPlanningSettings carpetPlanningSettings = CarpetPlanningSettings(
+      wasteAllowancePercent: project.carpetWasteAllowancePercent,
+    );
+    if (project.carpetPlanningSettingsJson != null &&
+        project.carpetPlanningSettingsJson!.isNotEmpty) {
+      carpetPlanningSettings =
+          _parseUserData(project, 'carpet planning settings', () {
+        return CarpetPlanningSettings.fromJson(
+          jsonDecode(project.carpetPlanningSettingsJson!)
+              as Map<String, dynamic>,
+        );
+      });
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -287,6 +303,7 @@ class ProjectService {
       roomCarpetStripPieceLengthsOverrideMm:
           roomCarpetStripPieceLengthsOverrideMm,
       carpetWasteAllowancePercent: project.carpetWasteAllowancePercent,
+      carpetPlanningSettings: carpetPlanningSettings,
       stripSplitStrategy: stripSplitStrategy,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
@@ -355,6 +372,7 @@ class ProjectService {
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
+    CarpetPlanningSettings? carpetPlanningSettings,
     StripSplitStrategy? stripSplitStrategy,
     PlanViewport? viewport,
     bool? useImperial,
@@ -363,6 +381,9 @@ class ProjectService {
     double? wallWidthMm,
     double? doorThicknessMm,
   }) async {
+    // Keep the legacy waste column in sync when full settings are written.
+    final effectiveWastePercent = carpetWasteAllowancePercent ??
+        carpetPlanningSettings?.wasteAllowancePercent;
     final projectUpdate = ProjectsCompanion(
       id: Value(id),
       updatedAt: Value(DateTime.now()),
@@ -402,8 +423,11 @@ class ProjectService {
               ? Value(jsonEncode(roomCarpetStripPieceLengthsOverrideMm
                   .map((k, v) => MapEntry(k.toString(), v))))
               : const Value.absent(),
-      carpetWasteAllowancePercent: carpetWasteAllowancePercent != null
-          ? Value(carpetWasteAllowancePercent)
+      carpetWasteAllowancePercent: effectiveWastePercent != null
+          ? Value(effectiveWastePercent)
+          : const Value.absent(),
+      carpetPlanningSettingsJson: carpetPlanningSettings != null
+          ? Value(jsonEncode(carpetPlanningSettings.toJson()))
           : const Value.absent(),
       stripSplitStrategy: stripSplitStrategy != null
           ? Value(stripSplitStrategy.index)
@@ -459,6 +483,7 @@ class ProjectService {
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
+    CarpetPlanningSettings? carpetPlanningSettings,
     StripSplitStrategy? stripSplitStrategy,
     required PlanViewport viewport,
     bool useImperial = false,
@@ -493,6 +518,7 @@ class ProjectService {
             (roomCarpetLayoutVariantIndex != null && roomCarpetLayoutVariantIndex.isNotEmpty) ||
             (roomCarpetStripPieceLengthsOverrideMm != null && roomCarpetStripPieceLengthsOverrideMm.isNotEmpty) ||
             carpetWasteAllowancePercent != null ||
+            carpetPlanningSettings != null ||
             stripSplitStrategy != null) {
           await updateProject(
             id: projectId,
@@ -507,6 +533,7 @@ class ProjectService {
             roomCarpetStripPieceLengthsOverrideMm:
                 roomCarpetStripPieceLengthsOverrideMm,
             carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+            carpetPlanningSettings: carpetPlanningSettings,
             stripSplitStrategy: stripSplitStrategy,
           wallWidthMm: wallWidthMm,
           doorThicknessMm: doorThicknessMm,
@@ -528,6 +555,7 @@ class ProjectService {
           roomCarpetStripPieceLengthsOverrideMm:
               roomCarpetStripPieceLengthsOverrideMm,
           carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+          carpetPlanningSettings: carpetPlanningSettings,
           stripSplitStrategy: stripSplitStrategy,
           viewport: viewport,
           useImperial: useImperial,

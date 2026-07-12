@@ -292,6 +292,9 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     final inDoorwayController = TextEditingController(
       text: settings.seamPenaltyMmInDoorway.round().toString(),
     );
+    final sliverPenaltyController = TextEditingController(
+      text: settings.sliverPenaltyPerStripMm.round().toString(),
+    );
     final updated = await showDialog<CarpetPlanningSettings>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -368,6 +371,15 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                       border: OutlineInputBorder(),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: sliverPenaltyController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Per sliver strip (narrower than minimum)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -390,6 +402,8 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                   double.tryParse(withDoorsController.text.trim());
               final inDoorway =
                   double.tryParse(inDoorwayController.text.trim());
+              final sliverPenalty =
+                  double.tryParse(sliverPenaltyController.text.trim());
               Navigator.pop(
                 ctx,
                 settings.copyWith(
@@ -412,6 +426,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                       withDoors != null && withDoors >= 0 ? withDoors : null,
                   seamPenaltyMmInDoorway:
                       inDoorway != null && inDoorway >= 0 ? inDoorway : null,
+                  sliverPenaltyPerStripMm:
+                      sliverPenalty != null && sliverPenalty >= 0
+                          ? sliverPenalty
+                          : null,
                 ),
               );
             },
@@ -516,7 +534,32 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     final placements = <String, RollCutPlacement>{};
     final first = list.first;
     double totalLinear = 0;
-    double alongPos = 0;
+
+    // Shelf packing: cuts stay in cutting order along the roll, but a narrow
+    // cut nests beside an earlier cut when the roll width allows (both fit
+    // across the width and the nested cut is no longer than the shelf).
+    // Nested cuts consume the roll once, reducing the ordered length.
+    final shelfAlongStart = <double>[];
+    final shelfLength = <double>[];
+    final shelfUsedBreadth = <double>[];
+    double nextAlong = 0;
+    Offset placeCut(double lengthMm, double breadthMm, double rollWidthMm) {
+      for (var s = 0; s < shelfAlongStart.length; s++) {
+        if (shelfUsedBreadth[s] + breadthMm <= rollWidthMm + 1e-6 &&
+            lengthMm <= shelfLength[s] + 1e-6) {
+          final pos = Offset(shelfAlongStart[s], shelfUsedBreadth[s]);
+          shelfUsedBreadth[s] += breadthMm;
+          return pos;
+        }
+      }
+      final pos = Offset(nextAlong, 0);
+      shelfAlongStart.add(nextAlong);
+      shelfLength.add(lengthMm);
+      shelfUsedBreadth.add(breadthMm);
+      nextAlong += lengthMm;
+      return pos;
+    }
+
     for (int li = 0; li < list.length; li++) {
       final r = list[li];
       final roomName = r.room.name ?? 'Room ${r.roomIndex + 1}';
@@ -557,8 +600,8 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
               layAlongX: r.layout.isSinglePiece ? r.layout.layAlongX : null,
             ),
           );
-          placements[cutId] = Offset(alongPos, 0);
-          alongPos += lengthMm;
+          placements[cutId] =
+              placeCut(lengthMm, breadthMm, r.product.rollWidthMm);
         }
       }
     }
@@ -968,12 +1011,18 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       );
     }
     final offcuts = plan.offcuts();
-    if (offcuts.isNotEmpty) {
+    final sideOffcuts = plan.sideOffcuts();
+    if (offcuts.isNotEmpty || sideOffcuts.isNotEmpty) {
       sb.writeln();
       sb.writeln('Offcut,Lane,Length (m),Breadth (m),Start along (m)');
       for (final o in offcuts) {
         sb.writeln(
-          'Remaining,${o.rollIndex},${csvMetres(o.lengthMm)},${csvMetres(o.breadthMm)},${csvMetres(o.startAlongMm)}',
+          'Tail,${o.rollIndex},${csvMetres(o.lengthMm)},${csvMetres(o.breadthMm)},${csvMetres(o.startAlongMm)}',
+        );
+      }
+      for (final o in sideOffcuts) {
+        sb.writeln(
+          'Side,${o.rollIndex},${csvMetres(o.lengthMm)},${csvMetres(o.breadthMm)},${csvMetres(o.startAlongMm)}',
         );
       }
     }
@@ -1096,8 +1145,13 @@ class _SummaryBar extends StatelessWidget {
               total *
               100)
         : null;
+    // Roll length actually consumed (nested cuts share it) — the ordering
+    // number. Falls back to the cut total when nothing is placed yet.
+    final rollUsed = plan.lanes.isNotEmpty ? plan.usedRollLengthMm(0) : 0.0;
+    final orderLength =
+        placed == totalCuts && rollUsed > 0 ? rollUsed : total;
     final estimatedCost = plan.lanes.isNotEmpty
-        ? plan.lanes[0].product.estimatedCostForLinearMm(total)
+        ? plan.lanes[0].product.estimatedCostForLinearMm(orderLength)
         : null;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1107,11 +1161,21 @@ class _SummaryBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Total: ${UnitConverter.formatDistance(total, useImperial: useImperial)} linear',
+              'Cuts: ${UnitConverter.formatDistance(total, useImperial: useImperial)} linear',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
             ),
+            if (rollUsed > 0) ...[
+              const SizedBox(width: 16),
+              Text(
+                'Roll used: ${UnitConverter.formatDistance(rollUsed, useImperial: useImperial)}',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
             if (estimatedCost != null) ...[
               const SizedBox(width: 16),
               Text(
@@ -1171,7 +1235,10 @@ class _OffcutsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final offcuts = plan.offcuts();
-    if (offcuts.isEmpty) return const SizedBox.shrink();
+    final sideOffcuts = plan.sideOffcuts();
+    if (offcuts.isEmpty && sideOffcuts.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final fromOffcutCount = plan.allCuts.where((c) => c.fromOffcut).length;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1179,7 +1246,7 @@ class _OffcutsSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Roll tail: ',
+            'Offcuts: ',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontWeight: FontWeight.w600,
               color: Theme.of(
@@ -1194,7 +1261,15 @@ class _OffcutsSection extends StatelessWidget {
               children: [
                 ...offcuts.map((o) {
                   return Text(
-                    'Lane ${o.rollIndex}: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)} available',
+                    'Tail: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)} available',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.secondary,
+                    ),
+                  );
+                }),
+                ...sideOffcuts.map((o) {
+                  return Text(
+                    'Side: ${UnitConverter.formatDistance(o.lengthMm, useImperial: useImperial)} × ${UnitConverter.formatDistance(o.breadthMm, useImperial: useImperial)} beside cuts',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.secondary,
                     ),

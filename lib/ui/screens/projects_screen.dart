@@ -4,6 +4,7 @@ import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
+import '../../core/export/cut_sheet_entries.dart';
 import '../../core/export/pdf_export.dart';
 import '../canvas/viewport.dart';
 import 'editor_screen.dart';
@@ -796,13 +797,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         return;
       }
 
-      // Generate PDF
+      // Generate PDF (includes a carpet cut sheet page when the project has
+      // carpet assignments)
       final pdfBytes = await PdfExportService.exportToPdf(
         rooms: projectModel.rooms,
         useImperial: projectModel.useImperial,
         projectName: projectModel.name,
         viewport: projectModel.viewportState?.toViewport(),
         includeGrid: false, // Can be made configurable later
+        carpetCuts: buildPdfCutSheetEntries(projectModel),
       );
 
       if (!mounted) return;

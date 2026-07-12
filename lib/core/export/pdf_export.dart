@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../geometry/room.dart';
 import '../units/unit_converter.dart';
 import '../../ui/canvas/viewport.dart';
+import 'cut_sheet_entries.dart';
 
 /// Service for exporting floor plans to PDF format.
 class PdfExportService {
@@ -35,13 +36,14 @@ class PdfExportService {
   }
 
   /// Export a floor plan to PDF bytes.
-  /// 
+  ///
   /// [rooms] - List of rooms to export
   /// [useImperial] - Whether to use imperial units for measurements
   /// [projectName] - Name of the project (for header)
   /// [viewport] - Optional viewport for calculating initial scale
   /// [includeGrid] - Whether to include grid lines
-  /// 
+  /// [carpetCuts] - Carpet cut-sheet rows; when non-empty a cut sheet page is added
+  ///
   /// Returns PDF document as bytes.
   static Future<Uint8List> exportToPdf({
     required List<Room> rooms,
@@ -49,6 +51,7 @@ class PdfExportService {
     required String projectName,
     PlanViewport? viewport,
     bool includeGrid = false,
+    List<PdfCutSheetEntry> carpetCuts = const [],
   }) async {
     if (rooms.isEmpty) {
       // Empty project - create a simple PDF with message
@@ -93,6 +96,30 @@ class PdfExportService {
       ),
     );
 
+    // Page 3: carpet cut sheet, when the project has carpet planning data.
+    if (carpetCuts.isNotEmpty) {
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) => [
+            pw.Text(
+              projectName,
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Text(
+              'Carpet cut sheet - ${useImperial ? "Imperial" : "Metric"}',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+            ),
+            pw.SizedBox(height: 16),
+            _buildCutSheetTable(carpetCuts, useImperial),
+            pw.SizedBox(height: 12),
+            ..._buildCutSheetTotals(carpetCuts, useImperial),
+          ],
+        ),
+      );
+    }
+
     // Extra pages: one page per room for readability (handles rooms far apart)
     if (rooms.length > 1) {
       for (int i = 0; i < rooms.length; i++) {
@@ -110,6 +137,78 @@ class PdfExportService {
     }
 
     return pdf.save();
+  }
+
+  /// Cut sheet table: one row per cut piece.
+  static pw.Widget _buildCutSheetTable(
+    List<PdfCutSheetEntry> cuts,
+    bool useImperial,
+  ) {
+    pw.Widget cell(String text, {bool bold = false}) => pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: pw.Text(
+            text,
+            style: pw.TextStyle(
+              fontSize: 9,
+              fontWeight: bold ? pw.FontWeight.bold : null,
+            ),
+          ),
+        );
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: {
+        0: const pw.FlexColumnWidth(0.8),
+        1: const pw.FlexColumnWidth(1.8),
+        2: const pw.FlexColumnWidth(1.8),
+        3: const pw.FlexColumnWidth(1.1),
+        4: const pw.FlexColumnWidth(1.1),
+        5: const pw.FlexColumnWidth(1.2),
+      },
+      children: [
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE0E0E0)),
+          children: [
+            cell('Cut', bold: true),
+            cell('Room', bold: true),
+            cell('Product', bold: true),
+            cell('Length', bold: true),
+            cell('Width', bold: true),
+            cell('Note', bold: true),
+          ],
+        ),
+        ...cuts.map(
+          (c) => pw.TableRow(
+            children: [
+              cell(c.cutId),
+              cell(c.roomName),
+              cell(c.productName),
+              cell(UnitConverter.formatDistance(c.lengthMm, useImperial: useImperial)),
+              cell(UnitConverter.formatDistance(c.breadthMm, useImperial: useImperial)),
+              cell(c.note.isEmpty ? '-' : c.note),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Per-product total linear metres under the cut sheet table.
+  static List<pw.Widget> _buildCutSheetTotals(
+    List<PdfCutSheetEntry> cuts,
+    bool useImperial,
+  ) {
+    final totals = <String, double>{};
+    for (final c in cuts) {
+      totals[c.productName] = (totals[c.productName] ?? 0) + c.lengthMm;
+    }
+    return [
+      for (final e in totals.entries)
+        pw.Text(
+          '${e.key}: ${UnitConverter.formatDistance(e.value, useImperial: useImperial)} linear (cuts, before waste)',
+          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+        ),
+    ];
   }
 
   /// Page setup constants (A4).

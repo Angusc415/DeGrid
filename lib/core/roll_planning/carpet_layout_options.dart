@@ -17,8 +17,8 @@ enum StripSplitStrategy {
 
 /// User-adjustable planning settings shared by canvas, cut list and roll sheet.
 ///
-/// [wasteAllowancePercent] is persisted per project; the seam penalties are
-/// advanced (session-only) tuning knobs that feed [CarpetLayoutOptions].
+/// Persisted per project as JSON (see `carpetPlanningSettingsJson`); these
+/// knobs feed [CarpetLayoutOptions].
 class CarpetPlanningSettings {
   /// Waste allowance as percent (e.g. 5 = 5%).
   final double wasteAllowancePercent;
@@ -41,6 +41,10 @@ class CarpetPlanningSettings {
   /// seam trimming/pattern matching. 0 = strips tile the room width exactly.
   final double seamWidthAllowanceMm;
 
+  /// Penalty (mm-equivalent) per strip narrower than the product's minimum
+  /// strip width; higher = avoid slivers harder.
+  final double sliverPenaltyPerStripMm;
+
   const CarpetPlanningSettings({
     this.wasteAllowancePercent = 5.0,
     this.seamPenaltyMmNoDoors = 500000,
@@ -49,7 +53,40 @@ class CarpetPlanningSettings {
         CarpetLayoutOptions.defaultSeamPenaltyMmInDoorway,
     this.doorwayExtensionMm = 35.0,
     this.seamWidthAllowanceMm = 0.0,
+    this.sliverPenaltyPerStripMm = 500000,
   });
+
+  Map<String, dynamic> toJson() => {
+        'wasteAllowancePercent': wasteAllowancePercent,
+        'seamPenaltyMmNoDoors': seamPenaltyMmNoDoors,
+        'seamPenaltyMmWithDoors': seamPenaltyMmWithDoors,
+        'seamPenaltyMmInDoorway': seamPenaltyMmInDoorway,
+        'doorwayExtensionMm': doorwayExtensionMm,
+        'seamWidthAllowanceMm': seamWidthAllowanceMm,
+        'sliverPenaltyPerStripMm': sliverPenaltyPerStripMm,
+      };
+
+  factory CarpetPlanningSettings.fromJson(Map<String, dynamic> json) {
+    const defaults = CarpetPlanningSettings();
+    double read(String key, double fallback) =>
+        (json[key] as num?)?.toDouble() ?? fallback;
+    return CarpetPlanningSettings(
+      wasteAllowancePercent:
+          read('wasteAllowancePercent', defaults.wasteAllowancePercent),
+      seamPenaltyMmNoDoors:
+          read('seamPenaltyMmNoDoors', defaults.seamPenaltyMmNoDoors),
+      seamPenaltyMmWithDoors:
+          read('seamPenaltyMmWithDoors', defaults.seamPenaltyMmWithDoors),
+      seamPenaltyMmInDoorway:
+          read('seamPenaltyMmInDoorway', defaults.seamPenaltyMmInDoorway),
+      doorwayExtensionMm:
+          read('doorwayExtensionMm', defaults.doorwayExtensionMm),
+      seamWidthAllowanceMm:
+          read('seamWidthAllowanceMm', defaults.seamWidthAllowanceMm),
+      sliverPenaltyPerStripMm:
+          read('sliverPenaltyPerStripMm', defaults.sliverPenaltyPerStripMm),
+    );
+  }
 
   CarpetPlanningSettings copyWith({
     double? wasteAllowancePercent,
@@ -58,6 +95,7 @@ class CarpetPlanningSettings {
     double? seamPenaltyMmInDoorway,
     double? doorwayExtensionMm,
     double? seamWidthAllowanceMm,
+    double? sliverPenaltyPerStripMm,
   }) {
     return CarpetPlanningSettings(
       wasteAllowancePercent:
@@ -70,6 +108,8 @@ class CarpetPlanningSettings {
       doorwayExtensionMm: doorwayExtensionMm ?? this.doorwayExtensionMm,
       seamWidthAllowanceMm:
           seamWidthAllowanceMm ?? this.seamWidthAllowanceMm,
+      sliverPenaltyPerStripMm:
+          sliverPenaltyPerStripMm ?? this.sliverPenaltyPerStripMm,
     );
   }
 
@@ -81,7 +121,8 @@ class CarpetPlanningSettings {
         other.seamPenaltyMmWithDoors == seamPenaltyMmWithDoors &&
         other.seamPenaltyMmInDoorway == seamPenaltyMmInDoorway &&
         other.doorwayExtensionMm == doorwayExtensionMm &&
-        other.seamWidthAllowanceMm == seamWidthAllowanceMm;
+        other.seamWidthAllowanceMm == seamWidthAllowanceMm &&
+        other.sliverPenaltyPerStripMm == sliverPenaltyPerStripMm;
   }
 
   @override
@@ -92,6 +133,7 @@ class CarpetPlanningSettings {
         seamPenaltyMmInDoorway,
         doorwayExtensionMm,
         seamWidthAllowanceMm,
+        sliverPenaltyPerStripMm,
       );
 }
 
@@ -175,6 +217,7 @@ class CarpetLayoutOptions {
     double? maxSinglePieceLengthMm,
     double doorwayExtensionMm = 0,
     double seamWidthAllowanceMm = 0,
+    double sliverPenaltyPerStripMm = 500000,
   }) {
     return CarpetLayoutOptions(
       layDirectionDeg: layDirectionDeg,
@@ -192,6 +235,7 @@ class CarpetLayoutOptions {
       maxSinglePieceLengthMm: maxSinglePieceLengthMm,
       doorwayExtensionMm: doorwayExtensionMm,
       seamWidthAllowanceMm: seamWidthAllowanceMm,
+      sliverPenaltyPerStripMm: sliverPenaltyPerStripMm,
     );
   }
 

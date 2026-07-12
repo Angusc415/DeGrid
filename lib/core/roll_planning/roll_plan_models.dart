@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import '../geometry/carpet_product.dart';
@@ -406,6 +407,75 @@ class RollPlanState {
       (sum, cut) => sum + cut.lengthMm * cut.breadthMm,
     );
     return ((rollArea - usedArea) / lane.rollWidthMm).clamp(0, double.infinity);
+  }
+
+  /// Roll length actually consumed on [rollIndex]: the far end of the
+  /// furthest placed cut. This is the ordering length when cuts are nested
+  /// side by side (two nested cuts consume the roll once, not twice).
+  double usedRollLengthMm(int rollIndex) {
+    final placed = placedCutsOnLane(rollIndex);
+    var used = 0.0;
+    for (final c in placed) {
+      final end = placements[c.cutId]!.dx + c.lengthMm;
+      if (end > used) used = end;
+    }
+    return used;
+  }
+
+  /// Usable side offcuts from the current placements: for each along-run
+  /// cluster of placed cuts, the free strip between the cuts' lowest edge and
+  /// the roll width. Conservative (uses the cluster's max occupied breadth)
+  /// so a reported offcut is always genuinely free. Uses the real roll width,
+  /// so no roll length is required.
+  List<RollOffcut> sideOffcuts({
+    double minBreadthMm = 100,
+    double minLengthMm = 300,
+  }) {
+    final result = <RollOffcut>[];
+    for (final lane in lanes) {
+      final placed = placedCutsOnLane(lane.rollIndex); // sorted by along pos
+      double? clusterStart;
+      var clusterEnd = 0.0;
+      var maxBottom = 0.0;
+      void flush() {
+        final start = clusterStart;
+        if (start == null) return;
+        final free = lane.rollWidthMm - maxBottom;
+        final len = clusterEnd - start;
+        if (free >= minBreadthMm && len >= minLengthMm) {
+          result.add(
+            RollOffcut(
+              rollIndex: lane.rollIndex,
+              startAlongMm: start,
+              lengthMm: len,
+              breadthMm: free,
+            ),
+          );
+        }
+      }
+
+      for (final c in placed) {
+        final p = placements[c.cutId]!;
+        final start = p.dx;
+        final end = p.dx + c.lengthMm;
+        final bottom = p.dy + c.breadthMm;
+        if (clusterStart == null) {
+          clusterStart = start;
+          clusterEnd = end;
+          maxBottom = bottom;
+        } else if (start <= clusterEnd + 1e-6) {
+          clusterEnd = math.max(clusterEnd, end);
+          maxBottom = math.max(maxBottom, bottom);
+        } else {
+          flush();
+          clusterStart = start;
+          clusterEnd = end;
+          maxBottom = bottom;
+        }
+      }
+      flush();
+    }
+    return result;
   }
 
   List<RollOffcut> offcuts() {

@@ -36,7 +36,11 @@ class Projects extends Table {
   TextColumn get roomCarpetAssignmentsJson => text().nullable()(); // JSON: list of {roomIndex, productIndex}
   TextColumn get roomCarpetSeamOverridesJson => text().nullable()(); // JSON: { "roomIndex": [posMm, ...], ... }
   /// Carpet planning: waste allowance percent (user-adjustable, default 5%).
+  /// Kept in sync with [carpetPlanningSettingsJson] for backwards compat.
   RealColumn get carpetWasteAllowancePercent => real().withDefault(const Constant(5.0))();
+  /// Carpet planning settings as JSON (waste %, seam penalties, doorway
+  /// extension, seam width allowance). Null = defaults + waste column.
+  TextColumn get carpetPlanningSettingsJson => text().nullable()();
   /// Carpet planning: strip split strategy index (StripSplitStrategy.index, default 0 = auto).
   IntColumn get stripSplitStrategy => integer().withDefault(const Constant(0))();
   TextColumn get roomCarpetSeamLayDirectionDegJson => text().nullable()(); // JSON: { "roomIndex": deg, ... }
@@ -72,7 +76,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration {
@@ -121,6 +125,9 @@ class AppDatabase extends _$AppDatabase {
           await _addColumnIfNotExists(m, projects, projects.roomCarpetSeamLayDirectionDegJson);
           await _addColumnIfNotExists(m, projects, projects.roomCarpetLayoutVariantIndexJson);
           await _addColumnIfNotExists(m, projects, projects.roomCarpetStripPieceLengthsJson);
+        }
+        if (from < 14) {
+          await _addColumnIfNotExists(m, projects, projects.carpetPlanningSettingsJson);
         }
       },
     );

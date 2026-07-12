@@ -128,9 +128,7 @@ Future<void> _loadProject(PlanCanvasState state, int projectId) async {
           ..clear()
           ..addAll(project.roomCarpetStripPieceLengthsOverrideMm);
         state._stripSplitStrategy = project.stripSplitStrategy;
-        state._carpetPlanningSettings = state._carpetPlanningSettings.copyWith(
-          wasteAllowancePercent: project.carpetWasteAllowancePercent,
-        );
+        state._carpetPlanningSettings = project.carpetPlanningSettings;
         state.widget.onRoomCarpetAssignmentsChanged?.call(
           Map<int, int>.from(state._roomCarpetAssignments),
         );
@@ -374,8 +372,7 @@ Future<void> _saveProject(PlanCanvasState state) async {
       roomCarpetLayoutVariantIndex: state._roomCarpetLayoutVariantIndex,
       roomCarpetStripPieceLengthsOverrideMm:
           state._roomCarpetStripPieceLengthsOverrideMm,
-      carpetWasteAllowancePercent:
-          state._carpetPlanningSettings.wasteAllowancePercent,
+      carpetPlanningSettings: state._carpetPlanningSettings,
       stripSplitStrategy: state._stripSplitStrategy,
       viewport: state._vp,
       useImperial: state._useImperial,

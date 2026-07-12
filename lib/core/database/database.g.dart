@@ -554,6 +554,17 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         requiredDuringInsert: false,
         defaultValue: const Constant(5.0),
       );
+  static const VerificationMeta _carpetPlanningSettingsJsonMeta =
+      const VerificationMeta('carpetPlanningSettingsJson');
+  @override
+  late final GeneratedColumn<String> carpetPlanningSettingsJson =
+      GeneratedColumn<String>(
+        'carpet_planning_settings_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _stripSplitStrategyMeta =
       const VerificationMeta('stripSplitStrategy');
   @override
@@ -616,6 +627,7 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
     roomCarpetAssignmentsJson,
     roomCarpetSeamOverridesJson,
     carpetWasteAllowancePercent,
+    carpetPlanningSettingsJson,
     stripSplitStrategy,
     roomCarpetSeamLayDirectionDegJson,
     roomCarpetLayoutVariantIndexJson,
@@ -761,6 +773,15 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         ),
       );
     }
+    if (data.containsKey('carpet_planning_settings_json')) {
+      context.handle(
+        _carpetPlanningSettingsJsonMeta,
+        carpetPlanningSettingsJson.isAcceptableOrUnknown(
+          data['carpet_planning_settings_json']!,
+          _carpetPlanningSettingsJsonMeta,
+        ),
+      );
+    }
     if (data.containsKey('strip_split_strategy')) {
       context.handle(
         _stripSplitStrategyMeta,
@@ -870,6 +891,10 @@ class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
         DriftSqlType.double,
         data['${effectivePrefix}carpet_waste_allowance_percent'],
       )!,
+      carpetPlanningSettingsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}carpet_planning_settings_json'],
+      ),
       stripSplitStrategy: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}strip_split_strategy'],
@@ -917,7 +942,12 @@ class Project extends DataClass implements Insertable<Project> {
   final String? roomCarpetSeamOverridesJson;
 
   /// Carpet planning: waste allowance percent (user-adjustable, default 5%).
+  /// Kept in sync with [carpetPlanningSettingsJson] for backwards compat.
   final double carpetWasteAllowancePercent;
+
+  /// Carpet planning settings as JSON (waste %, seam penalties, doorway
+  /// extension, seam width allowance). Null = defaults + waste column.
+  final String? carpetPlanningSettingsJson;
 
   /// Carpet planning: strip split strategy index (StripSplitStrategy.index, default 0 = auto).
   final int stripSplitStrategy;
@@ -941,6 +971,7 @@ class Project extends DataClass implements Insertable<Project> {
     this.roomCarpetAssignmentsJson,
     this.roomCarpetSeamOverridesJson,
     required this.carpetWasteAllowancePercent,
+    this.carpetPlanningSettingsJson,
     required this.stripSplitStrategy,
     this.roomCarpetSeamLayDirectionDegJson,
     this.roomCarpetLayoutVariantIndexJson,
@@ -989,6 +1020,11 @@ class Project extends DataClass implements Insertable<Project> {
     map['carpet_waste_allowance_percent'] = Variable<double>(
       carpetWasteAllowancePercent,
     );
+    if (!nullToAbsent || carpetPlanningSettingsJson != null) {
+      map['carpet_planning_settings_json'] = Variable<String>(
+        carpetPlanningSettingsJson,
+      );
+    }
     map['strip_split_strategy'] = Variable<int>(stripSplitStrategy);
     if (!nullToAbsent || roomCarpetSeamLayDirectionDegJson != null) {
       map['room_carpet_seam_lay_direction_deg_json'] = Variable<String>(
@@ -1046,6 +1082,10 @@ class Project extends DataClass implements Insertable<Project> {
           ? const Value.absent()
           : Value(roomCarpetSeamOverridesJson),
       carpetWasteAllowancePercent: Value(carpetWasteAllowancePercent),
+      carpetPlanningSettingsJson:
+          carpetPlanningSettingsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(carpetPlanningSettingsJson),
       stripSplitStrategy: Value(stripSplitStrategy),
       roomCarpetSeamLayDirectionDegJson:
           roomCarpetSeamLayDirectionDegJson == null && nullToAbsent
@@ -1096,6 +1136,9 @@ class Project extends DataClass implements Insertable<Project> {
       carpetWasteAllowancePercent: serializer.fromJson<double>(
         json['carpetWasteAllowancePercent'],
       ),
+      carpetPlanningSettingsJson: serializer.fromJson<String?>(
+        json['carpetPlanningSettingsJson'],
+      ),
       stripSplitStrategy: serializer.fromJson<int>(json['stripSplitStrategy']),
       roomCarpetSeamLayDirectionDegJson: serializer.fromJson<String?>(
         json['roomCarpetSeamLayDirectionDegJson'],
@@ -1134,6 +1177,9 @@ class Project extends DataClass implements Insertable<Project> {
       'carpetWasteAllowancePercent': serializer.toJson<double>(
         carpetWasteAllowancePercent,
       ),
+      'carpetPlanningSettingsJson': serializer.toJson<String?>(
+        carpetPlanningSettingsJson,
+      ),
       'stripSplitStrategy': serializer.toJson<int>(stripSplitStrategy),
       'roomCarpetSeamLayDirectionDegJson': serializer.toJson<String?>(
         roomCarpetSeamLayDirectionDegJson,
@@ -1164,6 +1210,7 @@ class Project extends DataClass implements Insertable<Project> {
     Value<String?> roomCarpetAssignmentsJson = const Value.absent(),
     Value<String?> roomCarpetSeamOverridesJson = const Value.absent(),
     double? carpetWasteAllowancePercent,
+    Value<String?> carpetPlanningSettingsJson = const Value.absent(),
     int? stripSplitStrategy,
     Value<String?> roomCarpetSeamLayDirectionDegJson = const Value.absent(),
     Value<String?> roomCarpetLayoutVariantIndexJson = const Value.absent(),
@@ -1198,6 +1245,9 @@ class Project extends DataClass implements Insertable<Project> {
         : this.roomCarpetSeamOverridesJson,
     carpetWasteAllowancePercent:
         carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
+    carpetPlanningSettingsJson: carpetPlanningSettingsJson.present
+        ? carpetPlanningSettingsJson.value
+        : this.carpetPlanningSettingsJson,
     stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
     roomCarpetSeamLayDirectionDegJson: roomCarpetSeamLayDirectionDegJson.present
         ? roomCarpetSeamLayDirectionDegJson.value
@@ -1249,6 +1299,9 @@ class Project extends DataClass implements Insertable<Project> {
       carpetWasteAllowancePercent: data.carpetWasteAllowancePercent.present
           ? data.carpetWasteAllowancePercent.value
           : this.carpetWasteAllowancePercent,
+      carpetPlanningSettingsJson: data.carpetPlanningSettingsJson.present
+          ? data.carpetPlanningSettingsJson.value
+          : this.carpetPlanningSettingsJson,
       stripSplitStrategy: data.stripSplitStrategy.present
           ? data.stripSplitStrategy.value
           : this.stripSplitStrategy,
@@ -1286,6 +1339,7 @@ class Project extends DataClass implements Insertable<Project> {
           ..write('roomCarpetAssignmentsJson: $roomCarpetAssignmentsJson, ')
           ..write('roomCarpetSeamOverridesJson: $roomCarpetSeamOverridesJson, ')
           ..write('carpetWasteAllowancePercent: $carpetWasteAllowancePercent, ')
+          ..write('carpetPlanningSettingsJson: $carpetPlanningSettingsJson, ')
           ..write('stripSplitStrategy: $stripSplitStrategy, ')
           ..write(
             'roomCarpetSeamLayDirectionDegJson: $roomCarpetSeamLayDirectionDegJson, ',
@@ -1301,7 +1355,7 @@ class Project extends DataClass implements Insertable<Project> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     name,
     folderId,
@@ -1318,11 +1372,12 @@ class Project extends DataClass implements Insertable<Project> {
     roomCarpetAssignmentsJson,
     roomCarpetSeamOverridesJson,
     carpetWasteAllowancePercent,
+    carpetPlanningSettingsJson,
     stripSplitStrategy,
     roomCarpetSeamLayDirectionDegJson,
     roomCarpetLayoutVariantIndexJson,
     roomCarpetStripPieceLengthsJson,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1345,6 +1400,7 @@ class Project extends DataClass implements Insertable<Project> {
               this.roomCarpetSeamOverridesJson &&
           other.carpetWasteAllowancePercent ==
               this.carpetWasteAllowancePercent &&
+          other.carpetPlanningSettingsJson == this.carpetPlanningSettingsJson &&
           other.stripSplitStrategy == this.stripSplitStrategy &&
           other.roomCarpetSeamLayDirectionDegJson ==
               this.roomCarpetSeamLayDirectionDegJson &&
@@ -1371,6 +1427,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
   final Value<String?> roomCarpetAssignmentsJson;
   final Value<String?> roomCarpetSeamOverridesJson;
   final Value<double> carpetWasteAllowancePercent;
+  final Value<String?> carpetPlanningSettingsJson;
   final Value<int> stripSplitStrategy;
   final Value<String?> roomCarpetSeamLayDirectionDegJson;
   final Value<String?> roomCarpetLayoutVariantIndexJson;
@@ -1392,6 +1449,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.roomCarpetAssignmentsJson = const Value.absent(),
     this.roomCarpetSeamOverridesJson = const Value.absent(),
     this.carpetWasteAllowancePercent = const Value.absent(),
+    this.carpetPlanningSettingsJson = const Value.absent(),
     this.stripSplitStrategy = const Value.absent(),
     this.roomCarpetSeamLayDirectionDegJson = const Value.absent(),
     this.roomCarpetLayoutVariantIndexJson = const Value.absent(),
@@ -1414,6 +1472,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     this.roomCarpetAssignmentsJson = const Value.absent(),
     this.roomCarpetSeamOverridesJson = const Value.absent(),
     this.carpetWasteAllowancePercent = const Value.absent(),
+    this.carpetPlanningSettingsJson = const Value.absent(),
     this.stripSplitStrategy = const Value.absent(),
     this.roomCarpetSeamLayDirectionDegJson = const Value.absent(),
     this.roomCarpetLayoutVariantIndexJson = const Value.absent(),
@@ -1436,6 +1495,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Expression<String>? roomCarpetAssignmentsJson,
     Expression<String>? roomCarpetSeamOverridesJson,
     Expression<double>? carpetWasteAllowancePercent,
+    Expression<String>? carpetPlanningSettingsJson,
     Expression<int>? stripSplitStrategy,
     Expression<String>? roomCarpetSeamLayDirectionDegJson,
     Expression<String>? roomCarpetLayoutVariantIndexJson,
@@ -1464,6 +1524,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
         'room_carpet_seam_overrides_json': roomCarpetSeamOverridesJson,
       if (carpetWasteAllowancePercent != null)
         'carpet_waste_allowance_percent': carpetWasteAllowancePercent,
+      if (carpetPlanningSettingsJson != null)
+        'carpet_planning_settings_json': carpetPlanningSettingsJson,
       if (stripSplitStrategy != null)
         'strip_split_strategy': stripSplitStrategy,
       if (roomCarpetSeamLayDirectionDegJson != null)
@@ -1494,6 +1556,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
     Value<String?>? roomCarpetAssignmentsJson,
     Value<String?>? roomCarpetSeamOverridesJson,
     Value<double>? carpetWasteAllowancePercent,
+    Value<String?>? carpetPlanningSettingsJson,
     Value<int>? stripSplitStrategy,
     Value<String?>? roomCarpetSeamLayDirectionDegJson,
     Value<String?>? roomCarpetLayoutVariantIndexJson,
@@ -1519,6 +1582,8 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           roomCarpetSeamOverridesJson ?? this.roomCarpetSeamOverridesJson,
       carpetWasteAllowancePercent:
           carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
+      carpetPlanningSettingsJson:
+          carpetPlanningSettingsJson ?? this.carpetPlanningSettingsJson,
       stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
       roomCarpetSeamLayDirectionDegJson:
           roomCarpetSeamLayDirectionDegJson ??
@@ -1593,6 +1658,11 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
         carpetWasteAllowancePercent.value,
       );
     }
+    if (carpetPlanningSettingsJson.present) {
+      map['carpet_planning_settings_json'] = Variable<String>(
+        carpetPlanningSettingsJson.value,
+      );
+    }
     if (stripSplitStrategy.present) {
       map['strip_split_strategy'] = Variable<int>(stripSplitStrategy.value);
     }
@@ -1633,6 +1703,7 @@ class ProjectsCompanion extends UpdateCompanion<Project> {
           ..write('roomCarpetAssignmentsJson: $roomCarpetAssignmentsJson, ')
           ..write('roomCarpetSeamOverridesJson: $roomCarpetSeamOverridesJson, ')
           ..write('carpetWasteAllowancePercent: $carpetWasteAllowancePercent, ')
+          ..write('carpetPlanningSettingsJson: $carpetPlanningSettingsJson, ')
           ..write('stripSplitStrategy: $stripSplitStrategy, ')
           ..write(
             'roomCarpetSeamLayDirectionDegJson: $roomCarpetSeamLayDirectionDegJson, ',
@@ -2458,6 +2529,7 @@ typedef $$ProjectsTableCreateCompanionBuilder =
       Value<String?> roomCarpetAssignmentsJson,
       Value<String?> roomCarpetSeamOverridesJson,
       Value<double> carpetWasteAllowancePercent,
+      Value<String?> carpetPlanningSettingsJson,
       Value<int> stripSplitStrategy,
       Value<String?> roomCarpetSeamLayDirectionDegJson,
       Value<String?> roomCarpetLayoutVariantIndexJson,
@@ -2481,6 +2553,7 @@ typedef $$ProjectsTableUpdateCompanionBuilder =
       Value<String?> roomCarpetAssignmentsJson,
       Value<String?> roomCarpetSeamOverridesJson,
       Value<double> carpetWasteAllowancePercent,
+      Value<String?> carpetPlanningSettingsJson,
       Value<int> stripSplitStrategy,
       Value<String?> roomCarpetSeamLayDirectionDegJson,
       Value<String?> roomCarpetLayoutVariantIndexJson,
@@ -2609,6 +2682,11 @@ class $$ProjectsTableFilterComposer
 
   ColumnFilters<double> get carpetWasteAllowancePercent => $composableBuilder(
     column: $table.carpetWasteAllowancePercent,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get carpetPlanningSettingsJson => $composableBuilder(
+    column: $table.carpetPlanningSettingsJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2768,6 +2846,11 @@ class $$ProjectsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get carpetPlanningSettingsJson => $composableBuilder(
+    column: $table.carpetPlanningSettingsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get stripSplitStrategy => $composableBuilder(
     column: $table.stripSplitStrategy,
     builder: (column) => ColumnOrderings(column),
@@ -2891,6 +2974,11 @@ class $$ProjectsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get carpetPlanningSettingsJson => $composableBuilder(
+    column: $table.carpetPlanningSettingsJson,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get stripSplitStrategy => $composableBuilder(
     column: $table.stripSplitStrategy,
     builder: (column) => column,
@@ -3009,6 +3097,8 @@ class $$ProjectsTableTableManager
                     const Value.absent(),
                 Value<double> carpetWasteAllowancePercent =
                     const Value.absent(),
+                Value<String?> carpetPlanningSettingsJson =
+                    const Value.absent(),
                 Value<int> stripSplitStrategy = const Value.absent(),
                 Value<String?> roomCarpetSeamLayDirectionDegJson =
                     const Value.absent(),
@@ -3033,6 +3123,7 @@ class $$ProjectsTableTableManager
                 roomCarpetAssignmentsJson: roomCarpetAssignmentsJson,
                 roomCarpetSeamOverridesJson: roomCarpetSeamOverridesJson,
                 carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+                carpetPlanningSettingsJson: carpetPlanningSettingsJson,
                 stripSplitStrategy: stripSplitStrategy,
                 roomCarpetSeamLayDirectionDegJson:
                     roomCarpetSeamLayDirectionDegJson,
@@ -3061,6 +3152,8 @@ class $$ProjectsTableTableManager
                     const Value.absent(),
                 Value<double> carpetWasteAllowancePercent =
                     const Value.absent(),
+                Value<String?> carpetPlanningSettingsJson =
+                    const Value.absent(),
                 Value<int> stripSplitStrategy = const Value.absent(),
                 Value<String?> roomCarpetSeamLayDirectionDegJson =
                     const Value.absent(),
@@ -3085,6 +3178,7 @@ class $$ProjectsTableTableManager
                 roomCarpetAssignmentsJson: roomCarpetAssignmentsJson,
                 roomCarpetSeamOverridesJson: roomCarpetSeamOverridesJson,
                 carpetWasteAllowancePercent: carpetWasteAllowancePercent,
+                carpetPlanningSettingsJson: carpetPlanningSettingsJson,
                 stripSplitStrategy: stripSplitStrategy,
                 roomCarpetSeamLayDirectionDegJson:
                     roomCarpetSeamLayDirectionDegJson,
