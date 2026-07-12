@@ -31,7 +31,6 @@ class RoomAreaSummaryPanel extends StatefulWidget {
   final Map<int, List<double>> roomCarpetSeamOverrides;
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
-  final StripSplitStrategy stripSplitStrategy;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   final CarpetPlanningSettings carpetPlanningSettings;
 
@@ -49,7 +48,6 @@ class RoomAreaSummaryPanel extends StatefulWidget {
     this.roomCarpetSeamOverrides = const {},
     this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
-    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
   });
@@ -314,7 +312,6 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
       seamOverrides: widget.roomCarpetSeamOverrides[roomIndex],
       layDirectionDeg: widget.roomCarpetSeamLayDirectionDeg[roomIndex] ??
           layDirectionDegFromVariant(variantIndex),
-      stripSplitStrategy: widget.stripSplitStrategy,
       stripPieceLengthsOverride:
           widget.roomCarpetStripPieceLengthsOverrideMm[roomIndex],
       settings: widget.carpetPlanningSettings,

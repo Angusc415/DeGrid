@@ -27,7 +27,6 @@ StripLayout? computeRoomStripLayout({
   required List<Opening> openings,
   List<double>? seamOverrides,
   double? layDirectionDeg,
-  StripSplitStrategy stripSplitStrategy = StripSplitStrategy.auto,
   List<List<double>>? stripPieceLengthsOverride,
   CarpetPlanningSettings settings = const CarpetPlanningSettings(),
 }) {
@@ -45,7 +44,7 @@ StripLayout? computeRoomStripLayout({
     seamPenaltyMmNoDoors: settings.seamPenaltyMmNoDoors,
     seamPenaltyMmWithDoors: settings.seamPenaltyMmWithDoors,
     seamPenaltyMmInDoorway: settings.seamPenaltyMmInDoorway,
-    stripSplitStrategy: stripSplitStrategy,
+    stripSplitStrategy: settings.stripSplitStrategy,
     maxSinglePieceLengthMm:
         product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
     doorwayExtensionMm: settings.doorwayExtensionMm,

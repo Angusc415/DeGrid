@@ -41,7 +41,9 @@ class Projects extends Table {
   /// Carpet planning settings as JSON (waste %, seam penalties, doorway
   /// extension, seam width allowance). Null = defaults + waste column.
   TextColumn get carpetPlanningSettingsJson => text().nullable()();
-  /// Carpet planning: strip split strategy index (StripSplitStrategy.index, default 0 = auto).
+  /// Carpet planning: strip split strategy index (StripSplitStrategy.index,
+  /// default 0 = auto). Legacy column kept in sync with
+  /// [carpetPlanningSettingsJson] for older builds.
   IntColumn get stripSplitStrategy => integer().withDefault(const Constant(0))();
   TextColumn get roomCarpetSeamLayDirectionDegJson => text().nullable()(); // JSON: { "roomIndex": deg, ... }
   TextColumn get roomCarpetLayoutVariantIndexJson => text().nullable()(); // JSON: { "roomIndex": variant, ... }

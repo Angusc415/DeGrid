@@ -267,23 +267,30 @@ class ProjectService {
       });
     }
 
-    final stripSplitStrategy = StripSplitStrategy.values[
+    final legacyStripSplitStrategy = StripSplitStrategy.values[
         project.stripSplitStrategy
             .clamp(0, StripSplitStrategy.values.length - 1)];
 
     // Full planning settings from JSON when present; older projects fall back
-    // to defaults seeded with the legacy waste column.
+    // to defaults seeded with the legacy waste + strategy columns. A JSON blob
+    // written before the strategy moved into the settings lacks the key, so
+    // the legacy column fills it in.
     CarpetPlanningSettings carpetPlanningSettings = CarpetPlanningSettings(
       wasteAllowancePercent: project.carpetWasteAllowancePercent,
+      stripSplitStrategy: legacyStripSplitStrategy,
     );
     if (project.carpetPlanningSettingsJson != null &&
         project.carpetPlanningSettingsJson!.isNotEmpty) {
       carpetPlanningSettings =
           _parseUserData(project, 'carpet planning settings', () {
-        return CarpetPlanningSettings.fromJson(
-          jsonDecode(project.carpetPlanningSettingsJson!)
-              as Map<String, dynamic>,
-        );
+        final map = jsonDecode(project.carpetPlanningSettingsJson!)
+            as Map<String, dynamic>;
+        var settings = CarpetPlanningSettings.fromJson(map);
+        if (!map.containsKey('stripSplitStrategy')) {
+          settings =
+              settings.copyWith(stripSplitStrategy: legacyStripSplitStrategy);
+        }
+        return settings;
       });
     }
 
@@ -304,7 +311,6 @@ class ProjectService {
           roomCarpetStripPieceLengthsOverrideMm,
       carpetWasteAllowancePercent: project.carpetWasteAllowancePercent,
       carpetPlanningSettings: carpetPlanningSettings,
-      stripSplitStrategy: stripSplitStrategy,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -373,7 +379,6 @@ class ProjectService {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
-    StripSplitStrategy? stripSplitStrategy,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -429,8 +434,8 @@ class ProjectService {
       carpetPlanningSettingsJson: carpetPlanningSettings != null
           ? Value(jsonEncode(carpetPlanningSettings.toJson()))
           : const Value.absent(),
-      stripSplitStrategy: stripSplitStrategy != null
-          ? Value(stripSplitStrategy.index)
+      stripSplitStrategy: carpetPlanningSettings != null
+          ? Value(carpetPlanningSettings.stripSplitStrategy.index)
           : const Value.absent(),
       wallWidthMm: wallWidthMm != null ? Value(wallWidthMm) : const Value.absent(),
       doorThicknessMm: doorThicknessMm != null ? Value(doorThicknessMm) : const Value.absent(),
@@ -484,7 +489,6 @@ class ProjectService {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
-    StripSplitStrategy? stripSplitStrategy,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -518,8 +522,7 @@ class ProjectService {
             (roomCarpetLayoutVariantIndex != null && roomCarpetLayoutVariantIndex.isNotEmpty) ||
             (roomCarpetStripPieceLengthsOverrideMm != null && roomCarpetStripPieceLengthsOverrideMm.isNotEmpty) ||
             carpetWasteAllowancePercent != null ||
-            carpetPlanningSettings != null ||
-            stripSplitStrategy != null) {
+            carpetPlanningSettings != null) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
@@ -534,7 +537,6 @@ class ProjectService {
                 roomCarpetStripPieceLengthsOverrideMm,
             carpetWasteAllowancePercent: carpetWasteAllowancePercent,
             carpetPlanningSettings: carpetPlanningSettings,
-            stripSplitStrategy: stripSplitStrategy,
           wallWidthMm: wallWidthMm,
           doorThicknessMm: doorThicknessMm,
           );
@@ -556,7 +558,6 @@ class ProjectService {
               roomCarpetStripPieceLengthsOverrideMm,
           carpetWasteAllowancePercent: carpetWasteAllowancePercent,
           carpetPlanningSettings: carpetPlanningSettings,
-          stripSplitStrategy: stripSplitStrategy,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

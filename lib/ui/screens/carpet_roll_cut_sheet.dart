@@ -29,8 +29,6 @@ class CarpetRollCutSheet extends StatefulWidget {
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
-  final StripSplitStrategy stripSplitStrategy;
-  final void Function(StripSplitStrategy)? onStripSplitStrategyChanged;
 
   /// User-adjustable planning settings (waste %, seam penalties).
   final CarpetPlanningSettings carpetPlanningSettings;
@@ -65,8 +63,6 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
-    this.stripSplitStrategy = StripSplitStrategy.auto,
-    this.onStripSplitStrategyChanged,
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.onCarpetPlanningSettingsChanged,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
@@ -185,7 +181,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           old.roomCarpetLayoutVariantIndex,
           widget.roomCarpetLayoutVariantIndex,
         ) ||
-        old.stripSplitStrategy != widget.stripSplitStrategy ||
         old.carpetPlanningSettings != widget.carpetPlanningSettings ||
         !_mapOfNestedListEquals(
           old.roomCarpetStripPieceLengthsOverrideMm,
@@ -505,7 +500,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         seamOverrides: widget.roomCarpetSeamOverrides[ri],
         layDirectionDeg: widget.roomCarpetSeamLayDirectionDeg[ri] ??
             layDirectionDegFromVariant(variantIndex),
-        stripSplitStrategy: widget.stripSplitStrategy,
         stripPieceLengthsOverride:
             widget.roomCarpetStripPieceLengthsOverrideMm[ri],
         settings: widget.carpetPlanningSettings,
@@ -819,21 +813,20 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                 Tab(text: 'Roll cut'),
               ],
             ),
-            if (widget.onStripSplitStrategyChanged != null ||
-                widget.onCarpetPlanningSettingsChanged != null)
+            if (widget.onCarpetPlanningSettingsChanged != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (widget.onStripSplitStrategyChanged != null) ...[
+                    if (widget.onCarpetPlanningSettingsChanged != null) ...[
                       Text(
                         'Strip layout:',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(width: 8),
                       DropdownButton<StripSplitStrategy>(
-                        value: widget.stripSplitStrategy,
+                        value: widget.carpetPlanningSettings.stripSplitStrategy,
                         isDense: true,
                         items: const [
                           DropdownMenuItem(
@@ -850,7 +843,12 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                           ),
                         ],
                         onChanged: (v) {
-                          if (v != null) widget.onStripSplitStrategyChanged!(v);
+                          if (v != null) {
+                            widget.onCarpetPlanningSettingsChanged!(
+                              widget.carpetPlanningSettings
+                                  .copyWith(stripSplitStrategy: v),
+                            );
+                          }
                         },
                       ),
                     ],
@@ -931,7 +929,6 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       roomCarpetLayoutVariantIndex: _layoutVariantIndex,
       onLayoutVariantChanged: _onLayoutVariantChanged,
       onResetSeamsForRoom: widget.onResetSeamsForRoom,
-      stripSplitStrategy: widget.stripSplitStrategy,
       roomCarpetStripPieceLengthsOverrideMm:
           widget.roomCarpetStripPieceLengthsOverrideMm,
       carpetPlanningSettings: widget.carpetPlanningSettings,

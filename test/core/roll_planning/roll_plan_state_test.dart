@@ -107,6 +107,7 @@ void main() {
         doorwayExtensionMm: 45,
         seamWidthAllowanceMm: 40,
         sliverPenaltyPerStripMm: 444,
+        stripSplitStrategy: StripSplitStrategy.preferStripInPieces,
       );
       final restored =
           CarpetPlanningSettings.fromJson(settings.toJson());

@@ -19,7 +19,6 @@ class EditorViewState {
   final Map<int, List<double>> roomCarpetSeamOverrides;
   final Map<int, double> roomCarpetSeamLayDirectionDeg;
   final Map<int, int> roomCarpetLayoutVariantIndex;
-  final StripSplitStrategy stripSplitStrategy;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   final CarpetPlanningSettings carpetPlanningSettings;
   final String? selectedCutId;
@@ -38,7 +37,6 @@ class EditorViewState {
     this.roomCarpetSeamOverrides = const {},
     this.roomCarpetSeamLayDirectionDeg = const {},
     this.roomCarpetLayoutVariantIndex = const {},
-    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
   });
@@ -58,7 +56,6 @@ class EditorController extends ChangeNotifier {
   void Function(double? value)? _setDoorThicknessMm;
   void Function(bool value)? _setUseImperial;
   void Function(bool value)? _setShowGrid;
-  void Function(StripSplitStrategy value)? _setStripSplitStrategy;
   void Function(CarpetPlanningSettings value)? _setCarpetPlanningSettings;
   void Function(String? cutId, {int? roomIndex})? _selectCut;
 
@@ -76,7 +73,6 @@ class EditorController extends ChangeNotifier {
     required void Function(double? value) setDoorThicknessMm,
     required void Function(bool value) setUseImperial,
     required void Function(bool value) setShowGrid,
-    void Function(StripSplitStrategy value)? setStripSplitStrategy,
     void Function(CarpetPlanningSettings value)? setCarpetPlanningSettings,
     void Function(String? cutId, {int? roomIndex})? selectCut,
   }) {
@@ -90,7 +86,6 @@ class EditorController extends ChangeNotifier {
     _setDoorThicknessMm = setDoorThicknessMm;
     _setUseImperial = setUseImperial;
     _setShowGrid = setShowGrid;
-    _setStripSplitStrategy = setStripSplitStrategy;
     _setCarpetPlanningSettings = setCarpetPlanningSettings;
     _selectCut = selectCut;
   }
@@ -106,7 +101,6 @@ class EditorController extends ChangeNotifier {
     _setDoorThicknessMm = null;
     _setUseImperial = null;
     _setShowGrid = null;
-    _setStripSplitStrategy = null;
     _setCarpetPlanningSettings = null;
     _selectCut = null;
   }
@@ -140,8 +134,6 @@ class EditorController extends ChangeNotifier {
 
   void setShowGrid(bool value) => _setShowGrid?.call(value);
 
-  void setStripSplitStrategy(StripSplitStrategy value) =>
-      _setStripSplitStrategy?.call(value);
 
   void setCarpetPlanningSettings(CarpetPlanningSettings value) =>
       _setCarpetPlanningSettings?.call(value);

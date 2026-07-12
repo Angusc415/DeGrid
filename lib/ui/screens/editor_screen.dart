@@ -129,7 +129,6 @@ class _EditorScreenState extends State<EditorScreen> {
               roomCarpetLayoutVariantIndex: kEnableCarpetFeatures
                   ? state.roomCarpetLayoutVariantIndex
                   : const {},
-              stripSplitStrategy: state.stripSplitStrategy,
               roomCarpetStripPieceLengthsOverrideMm: kEnableCarpetFeatures
                   ? state.roomCarpetStripPieceLengthsOverrideMm
                   : const {},
@@ -209,9 +208,6 @@ class _EditorScreenState extends State<EditorScreen> {
                         state.roomCarpetLayoutVariantIndex,
                     onLayoutVariantChanged:
                         _editorController.setRoomLayoutVariant,
-                    stripSplitStrategy: state.stripSplitStrategy,
-                    onStripSplitStrategyChanged:
-                        _editorController.setStripSplitStrategy,
                     carpetPlanningSettings: state.carpetPlanningSettings,
                     onCarpetPlanningSettingsChanged:
                         _editorController.setCarpetPlanningSettings,

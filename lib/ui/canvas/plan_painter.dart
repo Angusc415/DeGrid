@@ -54,7 +54,6 @@ class PlanPaintModel {
   /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   /// When to split a strip into pieces along the run (user-adjustable, matches cut sheet).
-  final StripSplitStrategy stripSplitStrategy;
   /// User-adjustable planning settings (waste %, seam penalties) shared with the cut sheet.
   final CarpetPlanningSettings carpetPlanningSettings;
   /// Optional project-level door thickness in millimeters (used when drawing doors).
@@ -112,7 +111,6 @@ class PlanPaintModel {
     Map<int, double>? roomCarpetSeamLayDirectionDeg,
     Map<int, int>? roomCarpetLayoutVariantIndex,
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
-    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.doorThicknessMm,
     List<RoomMoveAlignHint>? roomMoveAlignHints,
@@ -922,7 +920,6 @@ class PlanPainter extends CustomPainter {
       seamOverrides: m.roomCarpetSeamOverrides[roomIndex],
       layDirectionDeg: m.roomCarpetSeamLayDirectionDeg[roomIndex] ??
           layDirectionDegFromVariant(variantIndex),
-      stripSplitStrategy: m.stripSplitStrategy,
       stripPieceLengthsOverride:
           m.roomCarpetStripPieceLengthsOverrideMm[roomIndex],
       settings: m.carpetPlanningSettings,

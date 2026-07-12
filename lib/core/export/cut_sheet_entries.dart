@@ -71,7 +71,6 @@ List<PdfCutSheetEntry> buildPdfCutSheetEntries(ProjectModel project) =>
           seamOverrides: project.roomCarpetSeamOverrides[ri],
           layDirectionDeg: project.roomCarpetSeamLayDirectionDeg[ri] ??
               layDirectionDegFromVariant(variantIndex),
-          stripSplitStrategy: project.stripSplitStrategy,
           stripPieceLengthsOverride:
               project.roomCarpetStripPieceLengthsOverrideMm[ri],
           settings: project.carpetPlanningSettings,

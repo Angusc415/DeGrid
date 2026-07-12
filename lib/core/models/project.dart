@@ -31,8 +31,6 @@ class ProjectModel {
   /// Full carpet planning settings (waste %, seam penalties, doorway
   /// extension, seam width allowance).
   final CarpetPlanningSettings carpetPlanningSettings;
-  /// Carpet planning: how strips split into pieces along the run.
-  final StripSplitStrategy stripSplitStrategy;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -57,7 +55,6 @@ class ProjectModel {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     this.carpetWasteAllowancePercent = 5.0,
     CarpetPlanningSettings? carpetPlanningSettings,
-    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
@@ -95,7 +92,6 @@ class ProjectModel {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
-    StripSplitStrategy? stripSplitStrategy,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -124,7 +120,6 @@ class ProjectModel {
           carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
       carpetPlanningSettings:
           carpetPlanningSettings ?? this.carpetPlanningSettings,
-      stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,

@@ -116,7 +116,6 @@ class PlanCanvasState extends State<PlanCanvas> {
   final Map<int, int> _roomCarpetLayoutVariantIndex = {};
 
   /// Strip layout: when to split a strip into pieces along the run (user-adjustable).
-  StripSplitStrategy _stripSplitStrategy = StripSplitStrategy.auto;
 
   /// User-adjustable planning settings (waste %, seam penalties). Waste % is persisted per project.
   CarpetPlanningSettings _carpetPlanningSettings =
@@ -1182,7 +1181,6 @@ class PlanCanvasState extends State<PlanCanvas> {
       // When room has seam overrides, use locked direction so moving the seam doesn't flip strip direction.
       layDirectionDeg: _roomCarpetSeamLayDirectionDeg[roomIndex] ??
           layDirectionDegFromVariant(variantIndex),
-      stripSplitStrategy: _stripSplitStrategy,
       stripPieceLengthsOverride:
           _roomCarpetStripPieceLengthsOverrideMm[roomIndex],
       settings: _carpetPlanningSettings,
@@ -2267,9 +2265,6 @@ class PlanCanvasState extends State<PlanCanvas> {
                                   ),
                                 )
                               : const {},
-                          stripSplitStrategy: kEnableCarpetFeatures
-                              ? _stripSplitStrategy
-                              : StripSplitStrategy.auto,
                           carpetPlanningSettings: kEnableCarpetFeatures
                               ? _carpetPlanningSettings
                               : const CarpetPlanningSettings(),

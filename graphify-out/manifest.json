@@ -25,14 +25,14 @@
     "semantic_hash": "257841db9d25f1aceeb77fac4a0038d2"
   },
   "core/database/database.dart": {
-    "mtime": 1781317849.9278214,
-    "ast_hash": "af72183f475bc0378e61961aa48e72aa",
-    "semantic_hash": "af72183f475bc0378e61961aa48e72aa"
+    "mtime": 1783854999.3519173,
+    "ast_hash": "fe6fbcdce76e7837a54b8a54ae92179e",
+    "semantic_hash": "fe6fbcdce76e7837a54b8a54ae92179e"
   },
   "core/database/database.g.dart": {
-    "mtime": 1781095440.4763534,
-    "ast_hash": "bf9149e90f774c748f759a753b309787",
-    "semantic_hash": "bf9149e90f774c748f759a753b309787"
+    "mtime": 1783855022.1187422,
+    "ast_hash": "b40041efad457eb0f6e6a5422fc471a5",
+    "semantic_hash": "b40041efad457eb0f6e6a5422fc471a5"
   },
   "core/database/database_native.dart": {
     "mtime": 1769738512.2661128,
@@ -50,14 +50,14 @@
     "semantic_hash": "27471eabe6d0feb9adbca4e31b2347bd"
   },
   "core/export/pdf_export.dart": {
-    "mtime": 1778553496.1135159,
-    "ast_hash": "59ce0eae18ee91faa40058bd68d63210",
-    "semantic_hash": "59ce0eae18ee91faa40058bd68d63210"
+    "mtime": 1783856929.4858637,
+    "ast_hash": "56972264af4b628f923ccb47dcfef668",
+    "semantic_hash": "56972264af4b628f923ccb47dcfef668"
   },
   "core/geometry/carpet_product.dart": {
-    "mtime": 1771479335.4011264,
-    "ast_hash": "b4b7e710d62bd0af79242f289273f2f8",
-    "semantic_hash": "b4b7e710d62bd0af79242f289273f2f8"
+    "mtime": 1783848449.5169356,
+    "ast_hash": "d851d9702fe56c312cf60f51c9af3ad6",
+    "semantic_hash": "d851d9702fe56c312cf60f51c9af3ad6"
   },
   "core/geometry/opening.dart": {
     "mtime": 1779300039.9855163,
@@ -80,44 +80,44 @@
     "semantic_hash": "deba7313ef341a0c9b000aedec5ad02b"
   },
   "core/models/project.dart": {
-    "mtime": 1781317849.9242446,
-    "ast_hash": "c0d9c120ea55d68199a597e006e46c8b",
-    "semantic_hash": "c0d9c120ea55d68199a597e006e46c8b"
+    "mtime": 1783855048.5049765,
+    "ast_hash": "f54c9d1db2f46c804e88059dcbad9c38",
+    "semantic_hash": "f54c9d1db2f46c804e88059dcbad9c38"
   },
   "core/roll_planning/carpet_layout_options.dart": {
-    "mtime": 1781317849.9117174,
-    "ast_hash": "e47543cc411261e85318e24f3f20eb5a",
-    "semantic_hash": "e47543cc411261e85318e24f3f20eb5a"
+    "mtime": 1783856090.9854963,
+    "ast_hash": "89dd5ac630aa2cf6ab027c5980fe960e",
+    "semantic_hash": "89dd5ac630aa2cf6ab027c5980fe960e"
   },
   "core/roll_planning/polygon_clip.dart": {
-    "mtime": 1772510810.5395105,
-    "ast_hash": "112b826f68c0300692cd885b2f4360d5",
-    "semantic_hash": "112b826f68c0300692cd885b2f4360d5"
+    "mtime": 1783837312.2436118,
+    "ast_hash": "616b4c47453772d57759be7831c97005",
+    "semantic_hash": "616b4c47453772d57759be7831c97005"
   },
   "core/roll_planning/roll_plan_models.dart": {
-    "mtime": 1783005712.3347301,
-    "ast_hash": "4162535206cc43066ed137f77d641dcb",
-    "semantic_hash": "4162535206cc43066ed137f77d641dcb"
+    "mtime": 1783856262.5194626,
+    "ast_hash": "20e562161ea16c8c99c3b006930d6aeb",
+    "semantic_hash": "20e562161ea16c8c99c3b006930d6aeb"
   },
   "core/roll_planning/roll_planner.dart": {
-    "mtime": 1781936443.4469306,
-    "ast_hash": "22513aa44c237df687f0cf73a9ec5853",
-    "semantic_hash": "22513aa44c237df687f0cf73a9ec5853"
+    "mtime": 1783859313.672579,
+    "ast_hash": "9b38e2a65d1e90d034e7a92c052a70ff",
+    "semantic_hash": "9b38e2a65d1e90d034e7a92c052a70ff"
   },
   "core/roll_planning/room_strip_layout.dart": {
-    "mtime": 1781317849.9077194,
-    "ast_hash": "2e94a5d8c73411e2d44c3d0212581da9",
-    "semantic_hash": "2e94a5d8c73411e2d44c3d0212581da9"
+    "mtime": 1783856104.1880817,
+    "ast_hash": "78d6e9d139ff5a01bd9bae81b048292e",
+    "semantic_hash": "78d6e9d139ff5a01bd9bae81b048292e"
   },
   "core/services/project_service.dart": {
-    "mtime": 1781317849.9125059,
-    "ast_hash": "52fabea30a785b2b20f2079b6ce57b57",
-    "semantic_hash": "52fabea30a785b2b20f2079b6ce57b57"
+    "mtime": 1783855132.682635,
+    "ast_hash": "110adf17792eb9dc0bb30a32289e6b3e",
+    "semantic_hash": "110adf17792eb9dc0bb30a32289e6b3e"
   },
   "core/units/unit_converter.dart": {
-    "mtime": 1770815569.3695512,
-    "ast_hash": "7523badff5ed58fbbf8bb8ac61d2ee91",
-    "semantic_hash": "7523badff5ed58fbbf8bb8ac61d2ee91"
+    "mtime": 1783848407.9491253,
+    "ast_hash": "0a554a79ee690ac04ce6a5038ea1d83c",
+    "semantic_hash": "0a554a79ee690ac04ce6a5038ea1d83c"
   },
   "main.dart": {
     "mtime": 1769664717.1185322,
@@ -125,9 +125,9 @@
     "semantic_hash": "e8f5c0f07c2a918dce6172b73dde7dcf"
   },
   "ui/canvas/plan_canvas.dart": {
-    "mtime": 1783005766.6574006,
-    "ast_hash": "3657a80def9bbd30651e0ac40c91877d",
-    "semantic_hash": "3657a80def9bbd30651e0ac40c91877d"
+    "mtime": 1783837312.2447727,
+    "ast_hash": "d2ea39cec7ac611f827eeec4a28d49e9",
+    "semantic_hash": "d2ea39cec7ac611f827eeec4a28d49e9"
   },
   "ui/canvas/plan_canvas_cut_selection.dart": {
     "mtime": 1783005771.7582595,
@@ -155,9 +155,9 @@
     "semantic_hash": "18208942ab75fdc1ae586c452bd2e2b4"
   },
   "ui/canvas/plan_canvas_persistence.dart": {
-    "mtime": 1781317849.9277778,
-    "ast_hash": "8604d1bba4f5e6fa9f4c0e00c9e5ddfa",
-    "semantic_hash": "8604d1bba4f5e6fa9f4c0e00c9e5ddfa"
+    "mtime": 1783855153.2601461,
+    "ast_hash": "4e748bd58198fa90c7f18450baef4c7f",
+    "semantic_hash": "4e748bd58198fa90c7f18450baef4c7f"
   },
   "ui/canvas/plan_canvas_room_editing.dart": {
     "mtime": 1778421068.0065913,
@@ -189,20 +189,15 @@
     "ast_hash": "9c4a28c565cdef9b7752a80ce08881ca",
     "semantic_hash": "9c4a28c565cdef9b7752a80ce08881ca"
   },
-  "ui/canvas/plan_history_manager.dart": {
-    "mtime": 1772029114.4410903,
-    "ast_hash": "a234dde5b8b62e1c7d13507e33e4ba6f",
-    "semantic_hash": "a234dde5b8b62e1c7d13507e33e4ba6f"
-  },
   "ui/canvas/plan_length_input_pad.dart": {
     "mtime": 1772782899.4984028,
     "ast_hash": "a78e21e1936972e9daa2b3b08ad48fa2",
     "semantic_hash": "a78e21e1936972e9daa2b3b08ad48fa2"
   },
   "ui/canvas/plan_painter.dart": {
-    "mtime": 1783005915.5613678,
-    "ast_hash": "41352f843e00b7e9addd1bbe89ecec86",
-    "semantic_hash": "41352f843e00b7e9addd1bbe89ecec86"
+    "mtime": 1783837312.2450752,
+    "ast_hash": "7fb44a43c623409eeb22c0bde75c463d",
+    "semantic_hash": "7fb44a43c623409eeb22c0bde75c463d"
   },
   "ui/canvas/plan_toolbar.dart": {
     "mtime": 1772804254.1899533,
@@ -220,9 +215,9 @@
     "semantic_hash": "96a92f6b0acc02bb4812f12d7637f5d5"
   },
   "ui/screens/carpet_cut_list_panel.dart": {
-    "mtime": 1783005902.8534448,
-    "ast_hash": "125fbc1f3d1d0a966dcf81736cf4d6d2",
-    "semantic_hash": "125fbc1f3d1d0a966dcf81736cf4d6d2"
+    "mtime": 1783850016.3559318,
+    "ast_hash": "e87e45f1dd60ee691b0e6d71028554dc",
+    "semantic_hash": "e87e45f1dd60ee691b0e6d71028554dc"
   },
   "ui/screens/carpet_products_screen.dart": {
     "mtime": 1781317849.9200342,
@@ -230,14 +225,14 @@
     "semantic_hash": "0d1bd93e0f3cf0ae03f0a9262e836896"
   },
   "ui/screens/carpet_roll_cut_sheet.dart": {
-    "mtime": 1783008546.1248493,
-    "ast_hash": "1f9f9979d8e919e63466802d658526ef",
-    "semantic_hash": "1f9f9979d8e919e63466802d658526ef"
+    "mtime": 1783856113.2084486,
+    "ast_hash": "ad631e710f557482fce09528dc65cb5f",
+    "semantic_hash": "ad631e710f557482fce09528dc65cb5f"
   },
   "ui/screens/editor_screen.dart": {
-    "mtime": 1783005847.4728308,
-    "ast_hash": "e689334f3de7cd3f02baaeafcaaa2e92",
-    "semantic_hash": "e689334f3de7cd3f02baaeafcaaa2e92"
+    "mtime": 1783837312.245781,
+    "ast_hash": "f2013117403714a346e01fe2baf5d5f7",
+    "semantic_hash": "f2013117403714a346e01fe2baf5d5f7"
   },
   "ui/screens/project_settings_sheet.dart": {
     "mtime": 1772783883.5116649,
@@ -245,13 +240,28 @@
     "semantic_hash": "db96bf3363b383e3e0626df5b7f467de"
   },
   "ui/screens/projects_screen.dart": {
-    "mtime": 1778421067.980069,
-    "ast_hash": "03aaec81d1eb1c2e2d94fc997982d22b",
-    "semantic_hash": "03aaec81d1eb1c2e2d94fc997982d22b"
+    "mtime": 1783856933.1912038,
+    "ast_hash": "7e22ff6c9d698f8c558be81e5d09917e",
+    "semantic_hash": "7e22ff6c9d698f8c558be81e5d09917e"
   },
   "ui/screens/room_area_summary_panel.dart": {
-    "mtime": 1776149287.2392147,
-    "ast_hash": "3fde7a36df074d816ce3cba034d74425",
-    "semantic_hash": "3fde7a36df074d816ce3cba034d74425"
+    "mtime": 1783837312.245939,
+    "ast_hash": "52c777ba410dfecd470aab5ce513940a",
+    "semantic_hash": "52c777ba410dfecd470aab5ce513940a"
+  },
+  "core/export/csv.dart": {
+    "mtime": 1783821742.5924916,
+    "ast_hash": "a6daad3cbede8b30e6c45fdbc7cd247b",
+    "semantic_hash": "a6daad3cbede8b30e6c45fdbc7cd247b"
+  },
+  "core/export/cut_sheet_entries.dart": {
+    "mtime": 1783856914.169172,
+    "ast_hash": "160a09786a30735b62529edff75b5d48",
+    "semantic_hash": "160a09786a30735b62529edff75b5d48"
+  },
+  "core/roll_planning/room_opening_extension.dart": {
+    "mtime": 1783850814.0034933,
+    "ast_hash": "c6897c98686393af679530350d913c3e",
+    "semantic_hash": "c6897c98686393af679530350d913c3e"
   }
 }

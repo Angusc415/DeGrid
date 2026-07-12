@@ -15,7 +15,6 @@ void _bindEditorController(
     setDoorThicknessMm: state.setDoorThicknessMm,
     setUseImperial: state.setUseImperial,
     setShowGrid: state.setShowGrid,
-    setStripSplitStrategy: state.setStripSplitStrategy,
     setCarpetPlanningSettings: state.setCarpetPlanningSettings,
     selectCut: state.selectCut,
   );
@@ -49,7 +48,6 @@ void _publishEditorControllerState(PlanCanvasState state) {
       roomCarpetLayoutVariantIndex: Map<int, int>.from(
         state._roomCarpetLayoutVariantIndex,
       ),
-      stripSplitStrategy: state._stripSplitStrategy,
       roomCarpetStripPieceLengthsOverrideMm: Map<int, List<List<double>>>.from(
         state._roomCarpetStripPieceLengthsOverrideMm.map(
           (k, v) => MapEntry(k, v.map((p) => List<double>.from(p)).toList()),
@@ -92,15 +90,6 @@ extension PlanCanvasEditorSettingsAccessors on PlanCanvasState {
   void setShowGrid(bool value) {
     setState(() {
       _showGrid = value;
-    });
-  }
-
-  StripSplitStrategy get stripSplitStrategy => _stripSplitStrategy;
-
-  void setStripSplitStrategy(StripSplitStrategy value) {
-    setState(() {
-      _stripSplitStrategy = value;
-      _hasUnsavedChanges = true;
     });
   }
 

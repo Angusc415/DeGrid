@@ -26,7 +26,6 @@ class CarpetCutListPanel extends StatelessWidget {
   /// Room index -> layout variant (0 = Auto, 1 = 0°, 2 = 90°). Default 0.
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final void Function(int roomIndex, int variantIndex)? onLayoutVariantChanged;
-  final StripSplitStrategy stripSplitStrategy;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   /// User-adjustable planning settings (waste %, seam penalties).
   final CarpetPlanningSettings carpetPlanningSettings;
@@ -45,7 +44,6 @@ class CarpetCutListPanel extends StatelessWidget {
     this.onResetSeamsForRoom,
     this.roomCarpetLayoutVariantIndex = const {},
     this.onLayoutVariantChanged,
-    this.stripSplitStrategy = StripSplitStrategy.auto,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.selectedCutId,
@@ -168,7 +166,6 @@ class CarpetCutListPanel extends StatelessWidget {
       seamOverrides: roomCarpetSeamOverrides[roomIndex],
       layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
           layDirectionDegFromVariant(variantIndex),
-      stripSplitStrategy: stripSplitStrategy,
       stripPieceLengthsOverride:
           roomCarpetStripPieceLengthsOverrideMm[roomIndex],
       settings: carpetPlanningSettings,
@@ -211,8 +208,7 @@ class CarpetCutListPanel extends StatelessWidget {
               carpetPlanningSettings.seamPenaltyMmWithDoors,
           seamPenaltyMmInDoorway:
               carpetPlanningSettings.seamPenaltyMmInDoorway,
-          stripSplitStrategy: stripSplitStrategy,
-          maxSinglePieceLengthMm:
+              maxSinglePieceLengthMm:
               product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
         ),
       );

@@ -48,3 +48,6 @@ app.*.map.json
 /android/key.properties
 *.jks
 *.keystore
+
+# graphify AST cache (scan-scoped, regenerated on each /graphify run)
+lib/graphify-out/

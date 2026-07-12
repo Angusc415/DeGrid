@@ -45,6 +45,10 @@ class CarpetPlanningSettings {
   /// strip width; higher = avoid slivers harder.
   final double sliverPenaltyPerStripMm;
 
+  /// How strips split into pieces along the run. Travels with the other
+  /// planning knobs so every layout consumer sees the same value.
+  final StripSplitStrategy stripSplitStrategy;
+
   const CarpetPlanningSettings({
     this.wasteAllowancePercent = 5.0,
     this.seamPenaltyMmNoDoors = 500000,
@@ -54,6 +58,7 @@ class CarpetPlanningSettings {
     this.doorwayExtensionMm = 35.0,
     this.seamWidthAllowanceMm = 0.0,
     this.sliverPenaltyPerStripMm = 500000,
+    this.stripSplitStrategy = StripSplitStrategy.auto,
   });
 
   Map<String, dynamic> toJson() => {
@@ -64,12 +69,14 @@ class CarpetPlanningSettings {
         'doorwayExtensionMm': doorwayExtensionMm,
         'seamWidthAllowanceMm': seamWidthAllowanceMm,
         'sliverPenaltyPerStripMm': sliverPenaltyPerStripMm,
+        'stripSplitStrategy': stripSplitStrategy.name,
       };
 
   factory CarpetPlanningSettings.fromJson(Map<String, dynamic> json) {
     const defaults = CarpetPlanningSettings();
     double read(String key, double fallback) =>
         (json[key] as num?)?.toDouble() ?? fallback;
+    final strategyName = json['stripSplitStrategy'] as String?;
     return CarpetPlanningSettings(
       wasteAllowancePercent:
           read('wasteAllowancePercent', defaults.wasteAllowancePercent),
@@ -85,6 +92,8 @@ class CarpetPlanningSettings {
           read('seamWidthAllowanceMm', defaults.seamWidthAllowanceMm),
       sliverPenaltyPerStripMm:
           read('sliverPenaltyPerStripMm', defaults.sliverPenaltyPerStripMm),
+      stripSplitStrategy: StripSplitStrategy.values.asNameMap()[strategyName] ??
+          defaults.stripSplitStrategy,
     );
   }
 
@@ -96,6 +105,7 @@ class CarpetPlanningSettings {
     double? doorwayExtensionMm,
     double? seamWidthAllowanceMm,
     double? sliverPenaltyPerStripMm,
+    StripSplitStrategy? stripSplitStrategy,
   }) {
     return CarpetPlanningSettings(
       wasteAllowancePercent:
@@ -110,6 +120,7 @@ class CarpetPlanningSettings {
           seamWidthAllowanceMm ?? this.seamWidthAllowanceMm,
       sliverPenaltyPerStripMm:
           sliverPenaltyPerStripMm ?? this.sliverPenaltyPerStripMm,
+      stripSplitStrategy: stripSplitStrategy ?? this.stripSplitStrategy,
     );
   }
 
@@ -122,7 +133,8 @@ class CarpetPlanningSettings {
         other.seamPenaltyMmInDoorway == seamPenaltyMmInDoorway &&
         other.doorwayExtensionMm == doorwayExtensionMm &&
         other.seamWidthAllowanceMm == seamWidthAllowanceMm &&
-        other.sliverPenaltyPerStripMm == sliverPenaltyPerStripMm;
+        other.sliverPenaltyPerStripMm == sliverPenaltyPerStripMm &&
+        other.stripSplitStrategy == stripSplitStrategy;
   }
 
   @override
@@ -134,6 +146,7 @@ class CarpetPlanningSettings {
         doorwayExtensionMm,
         seamWidthAllowanceMm,
         sliverPenaltyPerStripMm,
+        stripSplitStrategy,
       );
 }
 
