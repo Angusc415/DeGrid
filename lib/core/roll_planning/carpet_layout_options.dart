@@ -32,12 +32,23 @@ class CarpetPlanningSettings {
   /// Seam penalty per seam crossing a doorway opening.
   final double seamPenaltyMmInDoorway;
 
+  /// How far (mm) carpet extends through each door/pass-through opening —
+  /// standard take-off measures to under the closed door, roughly half the
+  /// wall thickness. 0 disables the extension.
+  final double doorwayExtensionMm;
+
+  /// Extra usable-width allowance (mm) consumed per seamed strip edge for
+  /// seam trimming/pattern matching. 0 = strips tile the room width exactly.
+  final double seamWidthAllowanceMm;
+
   const CarpetPlanningSettings({
     this.wasteAllowancePercent = 5.0,
     this.seamPenaltyMmNoDoors = 500000,
     this.seamPenaltyMmWithDoors = 1000000,
     this.seamPenaltyMmInDoorway =
         CarpetLayoutOptions.defaultSeamPenaltyMmInDoorway,
+    this.doorwayExtensionMm = 35.0,
+    this.seamWidthAllowanceMm = 0.0,
   });
 
   CarpetPlanningSettings copyWith({
@@ -45,6 +56,8 @@ class CarpetPlanningSettings {
     double? seamPenaltyMmNoDoors,
     double? seamPenaltyMmWithDoors,
     double? seamPenaltyMmInDoorway,
+    double? doorwayExtensionMm,
+    double? seamWidthAllowanceMm,
   }) {
     return CarpetPlanningSettings(
       wasteAllowancePercent:
@@ -54,6 +67,9 @@ class CarpetPlanningSettings {
           seamPenaltyMmWithDoors ?? this.seamPenaltyMmWithDoors,
       seamPenaltyMmInDoorway:
           seamPenaltyMmInDoorway ?? this.seamPenaltyMmInDoorway,
+      doorwayExtensionMm: doorwayExtensionMm ?? this.doorwayExtensionMm,
+      seamWidthAllowanceMm:
+          seamWidthAllowanceMm ?? this.seamWidthAllowanceMm,
     );
   }
 
@@ -63,7 +79,9 @@ class CarpetPlanningSettings {
         other.wasteAllowancePercent == wasteAllowancePercent &&
         other.seamPenaltyMmNoDoors == seamPenaltyMmNoDoors &&
         other.seamPenaltyMmWithDoors == seamPenaltyMmWithDoors &&
-        other.seamPenaltyMmInDoorway == seamPenaltyMmInDoorway;
+        other.seamPenaltyMmInDoorway == seamPenaltyMmInDoorway &&
+        other.doorwayExtensionMm == doorwayExtensionMm &&
+        other.seamWidthAllowanceMm == seamWidthAllowanceMm;
   }
 
   @override
@@ -72,6 +90,8 @@ class CarpetPlanningSettings {
         seamPenaltyMmNoDoors,
         seamPenaltyMmWithDoors,
         seamPenaltyMmInDoorway,
+        doorwayExtensionMm,
+        seamWidthAllowanceMm,
       );
 }
 
@@ -129,6 +149,15 @@ class CarpetLayoutOptions {
   /// Max length in mm for a single piece. When set (e.g. from roll length), caps piece length; when null, a default is used so splitting can still apply for long runs (waste/offcut-driven).
   final double? maxSinglePieceLengthMm;
 
+  /// Extend the room polygon this far (mm) through each opening before
+  /// computing strips — carpet runs to under the closed door. 0 = off.
+  final double doorwayExtensionMm;
+
+  /// Usable-width allowance (mm) consumed per seamed strip edge for seam
+  /// trimming/pattern matching. First strip loses it once (seam side only),
+  /// interior strips twice. 0 = strips tile the room width exactly.
+  final double seamWidthAllowanceMm;
+
   /// Builds options for a room from product and overrides. Use this so cut list and roll sheet stay in sync.
   factory CarpetLayoutOptions.forRoom({
     required int roomIndex,
@@ -144,6 +173,8 @@ class CarpetLayoutOptions {
     double? seamPenaltyMmInDoorway,
     StripSplitStrategy stripSplitStrategy = StripSplitStrategy.auto,
     double? maxSinglePieceLengthMm,
+    double doorwayExtensionMm = 0,
+    double seamWidthAllowanceMm = 0,
   }) {
     return CarpetLayoutOptions(
       layDirectionDeg: layDirectionDeg,
@@ -159,6 +190,8 @@ class CarpetLayoutOptions {
       seamPenaltyMmInDoorway: seamPenaltyMmInDoorway ?? defaultSeamPenaltyMmInDoorway,
       stripSplitStrategy: stripSplitStrategy,
       maxSinglePieceLengthMm: maxSinglePieceLengthMm,
+      doorwayExtensionMm: doorwayExtensionMm,
+      seamWidthAllowanceMm: seamWidthAllowanceMm,
     );
   }
 
@@ -177,6 +210,8 @@ class CarpetLayoutOptions {
     this.seamPositionsOverrideMm,
     this.stripSplitStrategy = StripSplitStrategy.auto,
     this.maxSinglePieceLengthMm,
+    this.doorwayExtensionMm = 0,
+    this.seamWidthAllowanceMm = 0,
   });
 
   /// Copy with lay direction override. Pass [layDirectionDeg] to set (0, 90, or null for auto).
@@ -197,6 +232,8 @@ class CarpetLayoutOptions {
       seamPositionsOverrideMm: seamPositionsOverrideMm,
       stripSplitStrategy: stripSplitStrategy,
       maxSinglePieceLengthMm: maxSinglePieceLengthMm,
+      doorwayExtensionMm: doorwayExtensionMm,
+      seamWidthAllowanceMm: seamWidthAllowanceMm,
     );
   }
 
@@ -217,6 +254,8 @@ class CarpetLayoutOptions {
       seamPositionsOverrideMm: seamPositionsOverrideMm,
       stripSplitStrategy: stripSplitStrategy,
       maxSinglePieceLengthMm: maxSinglePieceLengthMm,
+      doorwayExtensionMm: doorwayExtensionMm,
+      seamWidthAllowanceMm: seamWidthAllowanceMm,
     );
   }
 }

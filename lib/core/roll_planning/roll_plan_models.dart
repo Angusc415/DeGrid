@@ -78,6 +78,19 @@ class RollCutPiece {
   }
 }
 
+/// Room letter for a cut ID: A..Z, then AA, AB, ... (spreadsheet style) so
+/// projects with more than 26 rooms per product still get valid IDs.
+String roomLetterForIndex(int index) {
+  var i = index + 1;
+  var s = '';
+  while (i > 0) {
+    i--;
+    s = String.fromCharCode(65 + i % 26) + s;
+    i ~/= 26;
+  }
+  return s;
+}
+
 /// Format a cut ID matching the roll cut sheet: `A1`, `A2`, or `A1-1` when a
 /// strip is split into multiple along-run pieces (cross-join).
 String formatCutId({
@@ -86,27 +99,12 @@ String formatCutId({
   required int pieceIndex,
   required int pieceCountInStrip,
 }) {
-  final letter = String.fromCharCode(65 + roomLetterIndex);
+  final letter = roomLetterForIndex(roomLetterIndex);
   final stripNum = stripIndex + 1;
   if (pieceCountInStrip > 1) {
     return '$letter$stripNum-${pieceIndex + 1}';
   }
   return '$letter$stripNum';
-}
-
-/// Letter index (0 = A) per room among carpet-assigned rooms with the same
-/// product, in [assignments] iteration order. Matches cut sheet ordering when
-/// a single product roll is shown.
-Map<int, int> buildRoomLetterIndicesByProduct(Map<int, int> assignments) {
-  final counters = <int, int>{};
-  final result = <int, int>{};
-  for (final e in assignments.entries) {
-    final pi = e.value;
-    final li = counters[pi] ?? 0;
-    result[e.key] = li;
-    counters[pi] = li + 1;
-  }
-  return result;
 }
 
 /// Letter index for [roomIndex] among same-product rooms that have a plannable

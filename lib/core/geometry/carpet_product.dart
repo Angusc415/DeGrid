@@ -24,6 +24,14 @@ class CarpetProduct {
     this.trimAllowanceMm,
   });
 
+  /// Estimated cost of ordering [linearMm] of this roll: linear metres x roll
+  /// width in metres x [costPerSqm]. Null when cost or roll width is not set.
+  double? estimatedCostForLinearMm(double linearMm) {
+    final cost = costPerSqm;
+    if (cost == null || rollWidthMm <= 0 || linearMm <= 0) return null;
+    return (linearMm / 1000) * (rollWidthMm / 1000) * cost;
+  }
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'rollWidthMm': rollWidthMm,

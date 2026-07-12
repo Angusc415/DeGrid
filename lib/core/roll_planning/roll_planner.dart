@@ -4,6 +4,7 @@ import '../geometry/opening.dart';
 import '../geometry/room.dart';
 import 'carpet_layout_options.dart';
 import 'polygon_clip.dart';
+import 'room_opening_extension.dart';
 
 /// Result of computing carpet strip layout for a room.
 class StripLayout {
@@ -250,7 +251,16 @@ class RollPlanner {
     final patternRepeat = opts.patternRepeatMm > 0 ? opts.patternRepeatMm : 0.0;
     final wastePercent = opts.wasteAllowancePercent >= 0 ? opts.wasteAllowancePercent : _defaultWastePercent;
 
-    final verts = room.vertices;
+    // Take-off area: the room polygon extended through door/pass-through
+    // openings (carpet runs to under the closed door). The original [room] is
+    // still used for seam-vs-doorway checks, whose opening edge indices refer
+    // to the unextended ring.
+    final effectiveRoom = opts.doorwayExtensionMm > 0
+        ? extendRoomThroughOpenings(
+            room, opts.openings, opts.roomIndex, opts.doorwayExtensionMm)
+        : room;
+
+    final verts = effectiveRoom.vertices;
     double minX = verts[0].dx, maxX = verts[0].dx;
     double minY = verts[0].dy, maxY = verts[0].dy;
     for (final v in verts) {
@@ -304,7 +314,7 @@ class RollPlanner {
         totalLinearWithWasteMm: totalWithWaste,
         seamPositionsMmOverride: null,
         isSinglePiece: true,
-        roomShapeVerticesMm: List<Offset>.from(room.vertices),
+        roomShapeVerticesMm: List<Offset>.from(effectiveRoom.vertices),
         scoreMaterialMm: cutLen,
         scoreSeamPenaltyMm: 0,
         scoreSliverPenaltyMm: 0,
@@ -318,12 +328,12 @@ class RollPlanner {
     if (opts.layDirectionDeg != null) {
       layAlongX = opts.layDirectionDeg! == 0;
     } else {
-      final r0 = _computeForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, true, minStripWidth, trimAllowance, patternRepeat, opts, null);
-      final r90 = _computeForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, false, minStripWidth, trimAllowance, patternRepeat, opts, null);
+      final r0 = _computeForDirection(effectiveRoom, room, rollWidthMm, minX, minY, bboxW, bboxH, true, minStripWidth, trimAllowance, patternRepeat, opts, null);
+      final r90 = _computeForDirection(effectiveRoom, room, rollWidthMm, minX, minY, bboxW, bboxH, false, minStripWidth, trimAllowance, patternRepeat, opts, null);
       layAlongX = r0.cost <= r90.cost;
     }
 
-    final r = _computeBestLayoutForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts);
+    final r = _computeBestLayoutForDirection(effectiveRoom, room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts);
     final totalWithWaste = r.totalLinearMm * (1 + wastePercent / 100);
     final seamPenaltyMm = _seamPenaltyTotal(r.seamPositionsUsed, room, opts, layAlongX, minX, minY, r.seamCount, rollWidthMm);
     final sliverPenaltyMm = (r.cost - r.totalLinearMm - seamPenaltyMm).clamp(0.0, double.infinity);
@@ -458,11 +468,15 @@ class RollPlanner {
   }
 
   static const double _minStripWidthForOverrideMm = 50.0;
-  static const int _seamOptimizationPhases = 4;
+  /// Number of grid offsets scanned when optimizing seam positions. Layouts
+  /// are cheap to evaluate, and a finer scan often lands a seam on a notch
+  /// edge or removes a sliver entirely.
+  static const int _seamOptimizationPhases = 12;
 
   /// Try several grid offsets (seam positions) and return the layout with lowest cost.
   static _DirectionResult _computeBestLayoutForDirection(
     Room room,
+    Room openingsRoom,
     double rollWidthMm,
     double minX,
     double minY,
@@ -475,14 +489,14 @@ class RollPlanner {
     CarpetLayoutOptions opts,
   ) {
     if (opts.seamPositionsOverrideMm != null && opts.seamPositionsOverrideMm!.isNotEmpty) {
-      return _computeForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, null);
+      return _computeForDirection(room, openingsRoom, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, null);
     }
-    var best = _computeForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, null);
+    var best = _computeForDirection(room, openingsRoom, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, null);
     final perpLen = layAlongX ? bboxH : bboxW;
     for (int phase = 1; phase < _seamOptimizationPhases; phase++) {
       final offset = (phase / _seamOptimizationPhases) * rollWidthMm;
       if (offset >= perpLen) break;
-      final candidate = _computeForDirection(room, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, offset);
+      final candidate = _computeForDirection(room, openingsRoom, rollWidthMm, minX, minY, bboxW, bboxH, layAlongX, minStripWidth, trimAllowance, patternRepeat, opts, offset);
       if (candidate.cost < best.cost) best = candidate;
     }
     return best;
@@ -490,9 +504,13 @@ class RollPlanner {
 
   /// For one direction: generate strip bands, intersect each with room polygon, compute cut lengths.
   /// When [opts.seamPositionsOverrideMm] is set, use those as strip boundaries (validated and clamped).
-  /// When [gridOffsetMm] is non-null (and no overrides), use a shifted grid so seams are optimized (try 0, 0.25, 0.5, 0.75 * rollWidth).
+  /// When [gridOffsetMm] is non-null (and no overrides), use a shifted grid so seams are optimized.
+  /// [openingsRoom] is the unextended room whose edge indices match
+  /// [CarpetLayoutOptions.openings] (for seam-vs-doorway penalty checks);
+  /// [room] may be the doorway-extended polygon used for clipping.
   static _DirectionResult _computeForDirection(
     Room room,
+    Room openingsRoom,
     double rollWidthMm,
     double minX,
     double minY,
@@ -513,6 +531,18 @@ class RollPlanner {
     int sliverCount = 0;
     List<double>? boundaries;
 
+    // Seam width allowance: each seamed strip edge consumes this much usable
+    // width, so the coverage grid steps by less than the roll width. The
+    // first strip has one seamed edge (wall side needs none), interior strips
+    // two. Ignored when it would leave no meaningful strip width.
+    final seamAllowance = (opts.seamWidthAllowanceMm > 0 &&
+            rollWidthMm - 2 * opts.seamWidthAllowanceMm >=
+                _minStripWidthForOverrideMm)
+        ? opts.seamWidthAllowanceMm
+        : 0.0;
+    final firstStep = rollWidthMm - seamAllowance;
+    final innerStep = rollWidthMm - 2 * seamAllowance;
+
     if (opts.seamPositionsOverrideMm != null && opts.seamPositionsOverrideMm!.isNotEmpty) {
       // Validate and clamp override positions: sorted, in (0, perpLen), min gap _minStripWidthForOverrideMm
       final raw = List<double>.from(opts.seamPositionsOverrideMm!)..sort();
@@ -527,17 +557,28 @@ class RollPlanner {
       }
       if (boundaries.isEmpty) boundaries = null;
     } else if (gridOffsetMm != null && gridOffsetMm > 0) {
-      // Build boundaries from shifted grid: first boundary in (0, perpLen) at offset + k*rollWidth
+      // Build boundaries from a shifted grid: first boundary in (0, firstStep],
+      // subsequent boundaries one usable-width apart.
       boundaries = <double>[];
-      double b = gridOffsetMm;
+      double b = gridOffsetMm.clamp(0.0, firstStep);
       while (b <= 0) {
-         b += rollWidthMm;
+        b += innerStep;
       }
       while (b < perpLen) {
         if (b > 0) boundaries.add(b);
-        b += rollWidthMm;
+        b += innerStep;
       }
       boundaries.sort();
+      if (boundaries.isEmpty) boundaries = null;
+    } else if (seamAllowance > 0 && perpLen > rollWidthMm) {
+      // Default grid with seam allowance: boundaries at cumulative usable
+      // widths instead of raw roll widths.
+      boundaries = <double>[];
+      double b = firstStep;
+      while (b < perpLen) {
+        boundaries.add(b);
+        b += innerStep;
+      }
       if (boundaries.isEmpty) boundaries = null;
     } else {
       boundaries = null;
@@ -615,7 +656,7 @@ class RollPlanner {
       ..sort();
     final seamCount = seamLines.length;
     final seamPositionsUsed = seamLines.isNotEmpty ? seamLines : null;
-    final seamPenalty = _seamPenaltyTotal(seamPositionsUsed, room, opts, layAlongX, minX, minY, seamCount, rollWidthMm);
+    final seamPenalty = _seamPenaltyTotal(seamPositionsUsed, openingsRoom, opts, layAlongX, minX, minY, seamCount, rollWidthMm);
     final sliverPenalty = sliverCount * opts.sliverPenaltyPerStripMm;
     final cost = totalLinear + seamPenalty + sliverPenalty;
 

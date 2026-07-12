@@ -277,6 +277,12 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     final wasteController = TextEditingController(
       text: _formatPercent(settings.wasteAllowancePercent),
     );
+    final doorwayExtensionController = TextEditingController(
+      text: settings.doorwayExtensionMm.round().toString(),
+    );
+    final seamAllowanceController = TextEditingController(
+      text: settings.seamWidthAllowanceMm.round().toString(),
+    );
     final noDoorsController = TextEditingController(
       text: settings.seamPenaltyMmNoDoors.round().toString(),
     );
@@ -300,6 +306,26 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                 decoration: const InputDecoration(
                   labelText: 'Waste allowance (%)',
                   hintText: 'e.g. 5',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: doorwayExtensionController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Carpet into doorways (mm)',
+                  hintText: 'e.g. 35 = half wall; 0 = off',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: seamAllowanceController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Seam width allowance (mm per seamed edge)',
+                  hintText: 'e.g. 40; 0 = off',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -355,6 +381,10 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           FilledButton(
             onPressed: () {
               final waste = double.tryParse(wasteController.text.trim());
+              final doorwayExt =
+                  double.tryParse(doorwayExtensionController.text.trim());
+              final seamAllowance =
+                  double.tryParse(seamAllowanceController.text.trim());
               final noDoors = double.tryParse(noDoorsController.text.trim());
               final withDoors =
                   double.tryParse(withDoorsController.text.trim());
@@ -367,6 +397,15 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                       waste != null && waste >= 0 && waste <= 100
                           ? waste
                           : null,
+                  doorwayExtensionMm:
+                      doorwayExt != null && doorwayExt >= 0 && doorwayExt <= 500
+                          ? doorwayExt
+                          : null,
+                  seamWidthAllowanceMm: seamAllowance != null &&
+                          seamAllowance >= 0 &&
+                          seamAllowance <= 300
+                      ? seamAllowance
+                      : null,
                   seamPenaltyMmNoDoors:
                       noDoors != null && noDoors >= 0 ? noDoors : null,
                   seamPenaltyMmWithDoors:
@@ -1057,6 +1096,9 @@ class _SummaryBar extends StatelessWidget {
               total *
               100)
         : null;
+    final estimatedCost = plan.lanes.isNotEmpty
+        ? plan.lanes[0].product.estimatedCostForLinearMm(total)
+        : null;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: SingleChildScrollView(
@@ -1070,13 +1112,15 @@ class _SummaryBar extends StatelessWidget {
                 context,
               ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
             ),
-            const SizedBox(width: 16),
-            Text(
-              'Cost: ${UnitConverter.formatDistance(plan.totalScoreCostMm, useImperial: useImperial)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.primary,
+            if (estimatedCost != null) ...[
+              const SizedBox(width: 16),
+              Text(
+                'Est. cost: \$${estimatedCost.toStringAsFixed(2)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
-            ),
+            ],
             if (wastePct != null) ...[
               const SizedBox(width: 16),
               Text(
@@ -1778,260 +1822,4 @@ class _RoomWithCarpet {
     required this.product,
     required this.layout,
   });
-}
-
-/// Roll of carpet with cuts positioned on it; drag cuts along the roll (no overlap).
-/// Positions are in mm from roll start; drag updates position with validation.
-class RollCutView extends StatefulWidget {
-  final String roomName;
-  final CarpetProduct product;
-  final List<double> stripLengthsMm;
-  final bool useImperial;
-  final String roomKey;
-
-  const RollCutView({
-    super.key,
-    required this.roomName,
-    required this.product,
-    required this.stripLengthsMm,
-    required this.useImperial,
-    required this.roomKey,
-  });
-
-  @override
-  State<RollCutView> createState() => _RollCutViewState();
-}
-
-class _RollCutViewState extends State<RollCutView> {
-  /// For each cut: (stripIndex, lengthMm, startMm on roll). No overlap; within roll length.
-  late List<({int stripIndex, double lengthMm, double startMm})> _cuts;
-
-  static const double _pxPerMmLength =
-      0.08; // roll length (horizontal) in pixels per mm
-  static const double _pxPerMmWidth =
-      0.022; // roll width (vertical) so 3660mm → ~80px
-  static const double _minSegmentWidthPx = 40.0;
-  static const double _minRollHeightPx = 56.0;
-  static const double _maxRollHeightPx = 120.0;
-
-  /// Roll width in mm (full width of carpet, e.g. 3660).
-  double get _rollWidthMm =>
-      widget.product.rollWidthMm > 0 ? widget.product.rollWidthMm : 4000;
-
-  /// Height in px of the roll strip (represents full carpet width).
-  double get _rollHeightPx =>
-      (_rollWidthMm * _pxPerMmWidth).clamp(_minRollHeightPx, _maxRollHeightPx);
-
-  double get _rollLengthMm {
-    if (widget.product.rollLengthM != null && widget.product.rollLengthM! > 0) {
-      return widget.product.rollLengthM! * 1000;
-    }
-    final sum = widget.stripLengthsMm.fold<double>(0, (a, b) => a + b);
-    return sum * 1.1; // 10% extra so cuts can be spaced
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _resetCuts();
-  }
-
-  @override
-  void didUpdateWidget(covariant RollCutView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.roomKey != widget.roomKey ||
-        oldWidget.stripLengthsMm.length != widget.stripLengthsMm.length) {
-      _resetCuts();
-    }
-  }
-
-  void _resetCuts() {
-    double pos = 0;
-    _cuts = [];
-    for (int i = 0; i < widget.stripLengthsMm.length; i++) {
-      final len = widget.stripLengthsMm[i];
-      _cuts.add((stripIndex: i, lengthMm: len, startMm: pos));
-      pos += len;
-    }
-  }
-
-  /// Clamp startMm so cut doesn't overlap others and stays in [0, rollLength - length].
-  double _clampStart(int cutIndex, double newStart) {
-    final len = _cuts[cutIndex].lengthMm;
-    final rollLen = _rollLengthMm;
-    newStart = newStart.clamp(0.0, (rollLen - len).clamp(0.0, double.infinity));
-    // Snap out of overlaps: repeatedly nudge to nearest gap until no overlap
-    for (int pass = 0; pass < _cuts.length + 1; pass++) {
-      bool anyOverlap = false;
-      for (int j = 0; j < _cuts.length; j++) {
-        if (j == cutIndex) continue;
-        final a = _cuts[j].startMm;
-        final b = a + _cuts[j].lengthMm;
-        if (newStart < b && newStart + len > a) {
-          anyOverlap = true;
-          final snapBefore = (a - len).clamp(0.0, rollLen - len);
-          final snapAfter = b.clamp(0.0, rollLen - len);
-          newStart =
-              (newStart - snapBefore).abs() <= (newStart - snapAfter).abs()
-              ? snapBefore
-              : snapAfter;
-        }
-      }
-      if (!anyOverlap) break;
-    }
-    return newStart.clamp(0.0, (rollLen - len).clamp(0.0, double.infinity));
-  }
-
-  void _moveCut(int cutIndex, double deltaMm) {
-    final c = _cuts[cutIndex];
-    final newStart = _clampStart(cutIndex, c.startMm + deltaMm);
-    if ((newStart - c.startMm).abs() < 0.1) return;
-    setState(() {
-      _cuts[cutIndex] = (
-        stripIndex: c.stripIndex,
-        lengthMm: c.lengthMm,
-        startMm: newStart,
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.stripLengthsMm.isEmpty) return const SizedBox.shrink();
-    final rollLenMm = _rollLengthMm;
-    final rollLengthPx = (rollLenMm * _pxPerMmLength).clamp(
-      280.0,
-      double.infinity,
-    );
-    final rollH = _rollHeightPx;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${widget.roomName} — ${widget.product.name}',
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(230),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Roll: ${UnitConverter.formatDistance(_rollWidthMm, useImperial: widget.useImperial)} wide × ${UnitConverter.formatDistance(rollLenMm, useImperial: widget.useImperial)} long. Drag cuts along the roll.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontSize: 12,
-            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(179),
-          ),
-        ),
-        const SizedBox(height: 12),
-        // Roll = full width of carpet (height) × length (horizontal, scrollable)
-        SizedBox(
-          height: rollH + 8,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: rollLengthPx,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Roll (full carpet width strip)
-                  Positioned(
-                    left: 0,
-                    top: 4,
-                    child: Container(
-                      width: rollLengthPx,
-                      height: rollH,
-                      decoration: BoxDecoration(
-                        color: Colors.brown.shade200,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.brown.shade400),
-                      ),
-                    ),
-                  ),
-                  // Cuts on top (each cut spans full roll width = full height)
-                  for (int i = 0; i < _cuts.length; i++)
-                    _buildDraggableCut(
-                      context,
-                      i,
-                      rollLengthPx,
-                      rollLenMm,
-                      rollH,
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: [
-            for (int i = 0; i < _cuts.length; i++)
-              Text(
-                '${_cuts[i].stripIndex + 1}: ${UnitConverter.formatDistance(_cuts[i].lengthMm, useImperial: widget.useImperial)} @ ${UnitConverter.formatDistance(_cuts[i].startMm, useImperial: widget.useImperial)}',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(fontSize: 11),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDraggableCut(
-    BuildContext context,
-    int cutIndex,
-    double rollLengthPx,
-    double rollLenMm,
-    double rollHeightPx,
-  ) {
-    final c = _cuts[cutIndex];
-    final leftPx = (c.startMm / rollLenMm * rollLengthPx).clamp(
-      0.0,
-      rollLengthPx - 4,
-    );
-    final widthPx = (c.lengthMm / rollLenMm * rollLengthPx).clamp(
-      _minSegmentWidthPx,
-      double.infinity,
-    );
-
-    return Positioned(
-      left: leftPx,
-      top: 4,
-      child: GestureDetector(
-        onHorizontalDragUpdate: (d) {
-          final deltaMm = (rollLenMm / rollLengthPx) * d.delta.dx;
-          _moveCut(cutIndex, deltaMm);
-        },
-        child: Container(
-          width: widthPx,
-          height: rollHeightPx,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: cutIndex.isEven
-                ? Theme.of(context).colorScheme.primary.withAlpha(128)
-                : Theme.of(context).colorScheme.primary.withAlpha(179),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.primary,
-              width: 1.5,
-            ),
-          ),
-          child: Tooltip(
-            message:
-                'Strip ${c.stripIndex + 1}: ${UnitConverter.formatDistance(c.lengthMm, useImperial: widget.useImperial)} — drag along roll',
-            child: Text(
-              '${c.stripIndex + 1}',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onPrimary,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

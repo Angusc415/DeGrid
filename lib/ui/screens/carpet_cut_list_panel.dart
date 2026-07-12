@@ -147,8 +147,42 @@ class CarpetCutListPanel extends StatelessWidget {
     );
   }
 
+  /// Layout for one room via the shared helper so it always matches the
+  /// canvas (seam-locked direction included). Null when unassigned/invalid.
+  StripLayout? _layoutForRoom(int roomIndex) {
+    if (roomIndex < 0 || roomIndex >= rooms.length) return null;
+    final productIndex = roomCarpetAssignments[roomIndex];
+    if (productIndex == null ||
+        productIndex < 0 ||
+        productIndex >= carpetProducts.length) {
+      return null;
+    }
+    final product = carpetProducts[productIndex];
+    if (product.rollWidthMm <= 0) return null;
+    final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+    return computeRoomStripLayout(
+      room: rooms[roomIndex],
+      roomIndex: roomIndex,
+      product: product,
+      openings: openings,
+      seamOverrides: roomCarpetSeamOverrides[roomIndex],
+      layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          layDirectionDegFromVariant(variantIndex),
+      stripSplitStrategy: stripSplitStrategy,
+      stripPieceLengthsOverride:
+          roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+      settings: carpetPlanningSettings,
+    );
+  }
+
   List<Widget> _buildEntries() {
     final list = <Widget>[];
+    // One layout computation per room per build; letter lookups below reuse
+    // this map instead of recomputing layouts (was O(rooms^2)).
+    final layouts = <int, StripLayout?>{
+      for (final roomIndex in roomCarpetAssignments.keys)
+        roomIndex: _layoutForRoom(roomIndex),
+    };
     for (final entry in roomCarpetAssignments.entries) {
       final roomIndex = entry.key;
       final productIndex = entry.value;
@@ -159,21 +193,7 @@ class CarpetCutListPanel extends StatelessWidget {
       if (product.rollWidthMm <= 0) continue;
 
       final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-      // Selected layout via the shared helper so it always matches the canvas
-      // (seam-locked direction included). Candidates only feed the variant chips.
-      final layout = computeRoomStripLayout(
-        room: room,
-        roomIndex: roomIndex,
-        product: product,
-        openings: openings,
-        seamOverrides: roomCarpetSeamOverrides[roomIndex],
-        layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
-            layDirectionDegFromVariant(variantIndex),
-        stripSplitStrategy: stripSplitStrategy,
-        stripPieceLengthsOverride:
-            roomCarpetStripPieceLengthsOverrideMm[roomIndex],
-        settings: carpetPlanningSettings,
-      );
+      final layout = layouts[roomIndex];
       if (layout == null || layout.numStrips == 0) continue;
       final candidates = RollPlanner.computeLayoutCandidates(
         room,
@@ -203,7 +223,7 @@ class CarpetCutListPanel extends StatelessWidget {
       final roomLetterIndex = roomLetterIndexInProduct(
         assignments: roomCarpetAssignments,
         roomIndex: roomIndex,
-        hasPlannableLayout: _hasPlannableLayout,
+        hasPlannableLayout: (ri) => (layouts[ri]?.numStrips ?? 0) > 0,
       );
       if (roomLetterIndex == null) continue;
       list.add(
@@ -228,28 +248,6 @@ class CarpetCutListPanel extends StatelessWidget {
     return list;
   }
 
-  bool _hasPlannableLayout(int ri) {
-    if (ri < 0 || ri >= rooms.length) return false;
-    final pi = roomCarpetAssignments[ri];
-    if (pi == null || pi < 0 || pi >= carpetProducts.length) return false;
-    final product = carpetProducts[pi];
-    if (product.rollWidthMm <= 0) return false;
-    final variantIndex = roomCarpetLayoutVariantIndex[ri] ?? 0;
-    final layout = computeRoomStripLayout(
-      room: rooms[ri],
-      roomIndex: ri,
-      product: product,
-      openings: openings,
-      seamOverrides: roomCarpetSeamOverrides[ri],
-      layDirectionDeg: roomCarpetSeamLayDirectionDeg[ri] ??
-          layDirectionDegFromVariant(variantIndex),
-      stripSplitStrategy: stripSplitStrategy,
-      stripPieceLengthsOverride: roomCarpetStripPieceLengthsOverrideMm[ri],
-      settings: carpetPlanningSettings,
-    );
-    return layout != null && layout.numStrips > 0;
-  }
-
   void _exportAndCopy(BuildContext context) {
     final sb = StringBuffer();
     sb.writeln('room,product,strip,cut_length_mm');
@@ -262,20 +260,7 @@ class CarpetCutListPanel extends StatelessWidget {
       final product = carpetProducts[productIndex];
       if (product.rollWidthMm <= 0) continue;
 
-      final variantIndex = roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
-      final layout = computeRoomStripLayout(
-        room: room,
-        roomIndex: roomIndex,
-        product: product,
-        openings: openings,
-        seamOverrides: roomCarpetSeamOverrides[roomIndex],
-        layDirectionDeg: roomCarpetSeamLayDirectionDeg[roomIndex] ??
-            layDirectionDegFromVariant(variantIndex),
-        stripSplitStrategy: stripSplitStrategy,
-        stripPieceLengthsOverride:
-            roomCarpetStripPieceLengthsOverrideMm[roomIndex],
-        settings: carpetPlanningSettings,
-      );
+      final layout = _layoutForRoom(roomIndex);
       if (layout == null || layout.numStrips == 0) continue;
       final roomName = csvField(room.name ?? 'Room ${roomIndex + 1}');
       final productName = csvField(product.name);
@@ -350,6 +335,15 @@ class _RoomCutListCard extends StatelessWidget {
 
   static const List<String> _variantLabels = ['Auto', '0°', '90°'];
 
+  /// Dollar estimate for this room's ordered material (incl. waste), or null
+  /// when the product has no cost per m².
+  String? _estimatedCostText() {
+    final cost = product.estimatedCostForLinearMm(
+      layout.totalLinearWithWasteMm ?? layout.totalLinearMm,
+    );
+    return cost != null ? '\$${cost.toStringAsFixed(2)}' : null;
+  }
+
   String _formatSeamPositions(StripLayout layout) {
     final positions = layout.seamPositionsFromReferenceMm;
     if (positions.isEmpty) return '';
@@ -410,8 +404,9 @@ class _RoomCutListCard extends StatelessWidget {
             ],
             const SizedBox(height: 2),
             Text(
-              'Cost: ${UnitConverter.formatDistance(layout.scoreCostMm, useImperial: useImperial)}'
-              '${layout.totalLinearWithWasteMm != null && layout.totalLinearMm > 0 ? " · Waste: ${((layout.totalLinearWithWasteMm! - layout.totalLinearMm) / layout.totalLinearMm * 100).toStringAsFixed(1)}%" : ""}',
+              'Material: ${UnitConverter.formatDistance(layout.totalLinearMm, useImperial: useImperial)}'
+              ' · ${layout.seamCount} seam${layout.seamCount == 1 ? '' : 's'}'
+              '${_estimatedCostText() != null ? ' · Est. ${_estimatedCostText()}' : ''}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.primary.withAlpha(230),

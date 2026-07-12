@@ -21,36 +21,41 @@ class UnitConverter {
     }
   }
 
-  /// Format as imperial (feet and inches).
+  /// Format as imperial (feet and inches to the nearest 1/4").
+  ///
+  /// Rounds total quarter-inches first, then splits, so 71.9" becomes 6' and
+  /// not 5' 12". Quarter-inch precision keeps cut lengths within ~3mm instead
+  /// of the ~13mm loss of whole-inch rounding.
   static String _formatImperial(double mm) {
-    // Round total inches first, then split, so 71.9" becomes 6' and not 5' 12".
-    final totalInches = (mm / mmPerInch).round();
-    final feet = totalInches ~/ 12;
-    final inches = totalInches % 12;
+    final totalQuarters = (mm / mmPerInch * 4).round();
+    final feet = totalQuarters ~/ 48;
+    final quarters = totalQuarters % 48;
+    final inches = quarters ~/ 4;
+    const fractions = ['', ' 1/4', ' 1/2', ' 3/4'];
+    final fraction = fractions[quarters % 4];
+    final inchText = '$inches$fraction"';
 
     if (feet == 0) {
-      return '$inches"';
-    } else if (inches == 0) {
+      return inchText;
+    } else if (quarters == 0) {
       return "$feet'";
     } else {
-      return "$feet' $inches\"";
+      return "$feet' $inchText";
     }
   }
 
-  /// Format as metric: mm under 1m, then cm with decimals, then m with decimals.
+  /// Format as metric: mm under 1m, metres (trade convention) above.
   static String _formatMetric(double mm) {
     if (mm < 1000) {
-      // Under 1m: show mm
       return '${mm.round()}mm';
-    } else if (mm < 10000) {
-      // 1000mm–10000mm (1m–10m): show cm with decimals
-      final cm = mm / mmPerCm;
-      return '${cm.toStringAsFixed(1)}cm';
-    } else {
-      // 10000mm and above (10m+): show m with decimals
-      final m = mm / 1000;
-      return '${m.toStringAsFixed(1)}m';
     }
+    final m = mm / 1000;
+    var text = m.toStringAsFixed(2);
+    // Trim trailing zeros: 5.10 -> 5.1, 8.00 -> 8.
+    if (text.contains('.')) {
+      text = text.replaceFirst(RegExp(r'\.?0+$'), '');
+    }
+    return '${text}m';
   }
 
   /// Format area in square millimeters to a human-readable string.

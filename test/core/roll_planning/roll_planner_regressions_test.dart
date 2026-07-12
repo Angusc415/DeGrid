@@ -1,24 +1,43 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:degrid/core/export/csv.dart';
 import 'package:degrid/core/geometry/carpet_product.dart';
+import 'package:degrid/core/geometry/opening.dart';
 import 'package:degrid/core/geometry/room.dart';
 import 'package:degrid/core/roll_planning/carpet_layout_options.dart';
+import 'package:degrid/core/roll_planning/roll_plan_models.dart';
 import 'package:degrid/core/roll_planning/roll_planner.dart';
+import 'package:degrid/core/roll_planning/room_opening_extension.dart';
 import 'package:degrid/core/roll_planning/room_strip_layout.dart';
 import 'package:degrid/core/units/unit_converter.dart';
 
 void main() {
   group('imperial formatting carries inches into feet', () {
     test('values just under a whole foot round to the next foot', () {
-      // 1826 mm = 71.89" -> 6', never 5' 12".
-      expect(UnitConverter.formatDistance(1826, useImperial: true), "6'");
-      expect(UnitConverter.formatDistance(3652, useImperial: true), "12'");
+      // 1828 mm = 71.97" -> 6', never 5' 12".
+      expect(UnitConverter.formatDistance(1828, useImperial: true), "6'");
+      expect(UnitConverter.formatDistance(3657.6, useImperial: true), "12'");
     });
 
-    test('normal feet-and-inches values are unchanged', () {
+    test('quarter-inch precision for cut lengths', () {
       expect(UnitConverter.formatDistance(1905, useImperial: true), "6' 3\"");
       expect(UnitConverter.formatDistance(254, useImperial: true), '10"');
+      // 1911 mm = 75.24" -> 6' 3 1/4".
+      expect(
+        UnitConverter.formatDistance(1911, useImperial: true),
+        "6' 3 1/4\"",
+      );
+    });
+  });
+
+  group('metric formatting uses metres above 1m', () {
+    test('trade-style metres, mm below 1m', () {
+      expect(UnitConverter.formatDistance(5150), '5.15m');
+      expect(UnitConverter.formatDistance(8000), '8m');
+      expect(UnitConverter.formatDistance(5100), '5.1m');
+      expect(UnitConverter.formatDistance(950), '950mm');
     });
   });
 
@@ -150,6 +169,136 @@ void main() {
         expect(p % 800, closeTo(0, 0.001), reason: 'piece $p not on repeat');
         expect(p, lessThanOrEqualTo(4000));
       }
+    });
+  });
+
+  group('doorway extension', () {
+    // 4000x3000 room, door (900 wide) on the right wall. Carpet must run
+    // through the doorway to under the closed door.
+    Room rect() => Room(vertices: const [
+          Offset(0, 0),
+          Offset(4000, 0),
+          Offset(4000, 3000),
+          Offset(0, 3000),
+        ]);
+    Opening door() => Opening(
+          roomIndex: 0,
+          edgeIndex: 1, // (4000,0) -> (4000,3000)
+          offsetMm: 1000,
+          widthMm: 900,
+        );
+
+    test('extendRoomThroughOpenings adds an outward tab', () {
+      final extended =
+          extendRoomThroughOpenings(rect(), [door()], 0, 35);
+      expect(extended.vertices.length, rect().vertices.length + 4);
+      final maxX = extended.vertices.map((v) => v.dx).reduce(math.max);
+      expect(maxX, closeTo(4035, 0.001));
+    });
+
+    test('single-piece cut length includes the extension', () {
+      final layout = RollPlanner.computeLayout(
+        rect(),
+        3600,
+        CarpetLayoutOptions(
+          trimAllowanceMm: 75,
+          openings: [door()],
+          roomIndex: 0,
+          doorwayExtensionMm: 35,
+        ),
+      );
+      expect(layout.isSinglePiece, isTrue);
+      // 4000 room + 35 doorway + 2x75 trim.
+      expect(layout.stripLengthsMm.single, closeTo(4035 + 150, 0.5));
+    });
+
+    test('only the strip containing the door gets longer', () {
+      final room = Room(vertices: const [
+        Offset(0, 0),
+        Offset(5000, 0),
+        Offset(5000, 4000),
+        Offset(0, 4000),
+      ]);
+      final layout = RollPlanner.computeLayout(
+        room,
+        3600,
+        CarpetLayoutOptions(
+          layDirectionDeg: 0,
+          trimAllowanceMm: 75,
+          openings: [
+            Opening(roomIndex: 0, edgeIndex: 1, offsetMm: 500, widthMm: 900),
+          ],
+          roomIndex: 0,
+          doorwayExtensionMm: 35,
+        ),
+      );
+      expect(layout.numStrips, 2);
+      // Door spans y 500..1400 -> band 1 only.
+      expect(layout.stripLengthsMm[0], closeTo(5035 + 150, 0.5));
+      expect(layout.stripLengthsMm[1], closeTo(5000 + 150, 0.5));
+    });
+
+    test('extension off (0) leaves the layout unchanged', () {
+      final layout = RollPlanner.computeLayout(
+        rect(),
+        3600,
+        CarpetLayoutOptions(
+          trimAllowanceMm: 75,
+          openings: [door()],
+          roomIndex: 0,
+        ),
+      );
+      expect(layout.stripLengthsMm.single, closeTo(4000 + 150, 0.5));
+    });
+  });
+
+  group('seam width allowance', () {
+    test('grid boundaries step by usable width, not roll width', () {
+      final room = Room(vertices: const [
+        Offset(0, 0),
+        Offset(5000, 0),
+        Offset(5000, 7000),
+        Offset(0, 7000),
+      ]);
+      final layout = RollPlanner.computeLayout(
+        room,
+        3600,
+        const CarpetLayoutOptions(
+          layDirectionDeg: 0,
+          trimAllowanceMm: 0,
+          seamWidthAllowanceMm: 50,
+        ),
+      );
+      // First strip covers rollWidth - allowance = 3550.
+      expect(layout.seamPositionsFromReferenceMm, [3550.0]);
+      expect(layout.stripWidthsMm[0], closeTo(3550, 0.001));
+      expect(layout.stripWidthsMm[1], closeTo(3450, 0.001));
+    });
+
+    test('allowance 0 keeps the raw roll-width grid', () {
+      final room = Room(vertices: const [
+        Offset(0, 0),
+        Offset(5000, 0),
+        Offset(5000, 7000),
+        Offset(0, 7000),
+      ]);
+      final layout = RollPlanner.computeLayout(
+        room,
+        3600,
+        const CarpetLayoutOptions(layDirectionDeg: 0, trimAllowanceMm: 0),
+      );
+      expect(layout.seamPositionsFromReferenceMm, [3600.0]);
+    });
+  });
+
+  group('room letters', () {
+    test('extend past Z spreadsheet-style', () {
+      expect(roomLetterForIndex(0), 'A');
+      expect(roomLetterForIndex(25), 'Z');
+      expect(roomLetterForIndex(26), 'AA');
+      expect(roomLetterForIndex(27), 'AB');
+      expect(roomLetterForIndex(51), 'AZ');
+      expect(roomLetterForIndex(52), 'BA');
     });
   });
 
