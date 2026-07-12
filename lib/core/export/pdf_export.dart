@@ -480,12 +480,30 @@ class PdfExportService {
       // Only draw if wall is long enough to display measurement
       final screenDistance = (endScreen - startScreen).distance;
       if (screenDistance < 30 * pixelsPerPoint) continue; // Skip very short walls
-      
-      _drawDimensionOnCanvas(canvas, startScreen, endScreen, distanceMm, useImperial, pixelsPerPoint);
+
+      _drawDimensionOnCanvas(canvas, startScreen, endScreen, distanceMm, useImperial, pixelsPerPoint, uniqueScreenPoints);
     }
   }
-  
+
+  /// Ray-cast point-in-polygon test in screen coordinates.
+  static bool _pointInScreenPolygon(Offset p, List<Offset> verts) {
+    if (verts.length < 3) return false;
+    var inside = false;
+    for (var i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      final vi = verts[i];
+      final vj = verts[j];
+      final intersects = ((vi.dy > p.dy) != (vj.dy > p.dy)) &&
+          (p.dx < (vj.dx - vi.dx) * (p.dy - vi.dy) / (vj.dy - vi.dy) + vi.dx);
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
+
   /// Draw a dimension line with measurement text for a wall segment.
+  ///
+  /// Standard dimensioning: the dimension line runs parallel to the wall,
+  /// offset perpendicular to the outside of the room, with an extension line
+  /// from each wall endpoint out to the dimension line.
   static void _drawDimensionOnCanvas(
     Canvas canvas,
     Offset start,
@@ -493,39 +511,45 @@ class PdfExportService {
     double distanceMm,
     bool useImperial,
     double pixelsPerPoint,
+    List<Offset> polygonScreenPoints,
   ) {
-    // Calculate midpoint and perpendicular offset for dimension line
     final midpoint = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
     final wallVector = end - start;
     final wallLength = wallVector.distance;
     if (wallLength == 0) return;
-    
-    // Perpendicular direction (rotate 90 degrees)
-    final perp = Offset(-wallVector.dy / wallLength, wallVector.dx / wallLength);
-    
-    // Offset distance from wall (scaled for PDF quality)
+
+    // Perpendicular direction (rotate 90 degrees), flipped to point outside
+    // the room so dimensions don't overlap the floor area.
+    var perp = Offset(-wallVector.dy / wallLength, wallVector.dx / wallLength);
     final offsetDistance = 20.0 * pixelsPerPoint;
-    final dimensionLineStart = midpoint + perp * offsetDistance;
-    final dimensionLineEnd = midpoint - perp * offsetDistance;
-    
-    // Draw dimension line (perpendicular to wall)
+    if (_pointInScreenPolygon(
+      midpoint + perp * offsetDistance,
+      polygonScreenPoints,
+    )) {
+      perp = -perp;
+    }
+
+    final dimensionLineStart = start + perp * offsetDistance;
+    final dimensionLineEnd = end + perp * offsetDistance;
+
+    // Dimension line parallel to the wall
     final dimLinePaint = Paint()
       ..color = const Color(0xFF757575)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawLine(dimensionLineStart, dimensionLineEnd, dimLinePaint);
-    
-    // Draw extension lines (from wall to dimension line)
+
+    // Extension lines from each wall endpoint to the dimension line
     final extLinePaint = Paint()
       ..color = const Color(0xFFBDBDBD)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
     canvas.drawLine(start, dimensionLineStart, extLinePaint);
-    canvas.drawLine(end, dimensionLineStart, extLinePaint);
-    
+    canvas.drawLine(end, dimensionLineEnd, extLinePaint);
+
     // Format measurement text
     final measurementText = UnitConverter.formatDistance(distanceMm, useImperial: useImperial);
-    
+
     // Draw measurement text
     final textPainter = TextPainter(
       text: TextSpan(
@@ -540,15 +564,19 @@ class PdfExportService {
       textDirection: TextDirection.ltr,
       textAlign: TextAlign.center,
     );
-    
+
     textPainter.layout();
-    
-    // Position text at dimension line, rotated to match wall angle
+
+    // Text centered on the dimension line, rotated to match the wall angle,
+    // nudged a little further out so it sits beside the line, not on it.
+    final textAnchor = Offset(
+      (dimensionLineStart.dx + dimensionLineEnd.dx) / 2,
+      (dimensionLineStart.dy + dimensionLineEnd.dy) / 2,
+    ) + perp * (8.0 * pixelsPerPoint);
     final wallAngle = math.atan2(wallVector.dy, wallVector.dx);
-    final textOffset = dimensionLineStart - Offset(textPainter.width / 2, textPainter.height / 2);
-    
+
     canvas.save();
-    canvas.translate(textOffset.dx + textPainter.width / 2, textOffset.dy + textPainter.height / 2);
+    canvas.translate(textAnchor.dx, textAnchor.dy);
     canvas.rotate(wallAngle);
     textPainter.paint(canvas, Offset(-textPainter.width / 2, -textPainter.height / 2));
     canvas.restore();

@@ -1248,7 +1248,7 @@ class PlanCanvasState extends State<PlanCanvas> {
       for (int stri = 0; stri < layout.numStrips; stri++) {
         final pieces = layout.pieceLengthsForStrip(stri);
         if (pieces.length < 2) continue;
-        double cum = 0.0;
+        double cum = layout.stripAlongStartAt(stri);
         for (int ai = 0; ai < pieces.length - 1; ai++) {
           cum += pieces[ai];
           Offset p1World;
@@ -1256,9 +1256,7 @@ class PlanCanvasState extends State<PlanCanvas> {
           final stripWidth = stri < layout.stripWidthsMm.length
               ? layout.stripWidthsMm[stri]
               : (layout.rollWidthMm > 0 ? layout.rollWidthMm : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth));
-          final stripStart = stri == 0 ? 0.0 : (stri < layout.stripWidthsMm.length
-              ? layout.stripWidthsMm.sublist(0, stri).fold<double>(0.0, (a, b) => a + b)
-              : stri * (layout.rollWidthMm > 0 ? layout.rollWidthMm : stripWidth));
+          final stripStart = layout.stripPerpStartAt(stri);
           final stripEnd = stripStart + stripWidth;
           if (layout.layAlongX) {
             final x = layout.bboxMinX + cum;
@@ -1618,7 +1616,25 @@ class PlanCanvasState extends State<PlanCanvas> {
                       final override = _roomCarpetStripPieceLengthsOverrideMm[ri]!;
                       final stripPieces = List<double>.from(override[stri]);
                       if (ai >= 0 && ai < stripPieces.length - 1) {
-                        stripPieces[ai] = stripPieces[ai] + stripPieces[ai + 1];
+                        // Each split junction added 2x trim (one per new cut
+                        // end); merging removes the junction, so take that
+                        // material back out or the merged cut over-orders.
+                        final productIndex = _roomCarpetAssignments[ri];
+                        final trimMm = productIndex != null &&
+                                productIndex >= 0 &&
+                                productIndex < _carpetProducts.length
+                            ? (_carpetProducts[productIndex].trimAllowanceMm ??
+                                75)
+                            : 75.0;
+                        final merged = (stripPieces[ai] +
+                                stripPieces[ai + 1] -
+                                2 * trimMm)
+                            .clamp(
+                              math.max(stripPieces[ai], stripPieces[ai + 1]),
+                              double.infinity,
+                            )
+                            .toDouble();
+                        stripPieces[ai] = merged;
                         stripPieces.removeAt(ai + 1);
                         override[stri] = stripPieces;
                         _draggingAlongSeamRoomIndex = null;

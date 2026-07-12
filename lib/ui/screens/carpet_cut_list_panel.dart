@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/export/csv.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
@@ -276,8 +277,8 @@ class CarpetCutListPanel extends StatelessWidget {
         settings: carpetPlanningSettings,
       );
       if (layout == null || layout.numStrips == 0) continue;
-      final roomName = room.name ?? 'Room ${roomIndex + 1}';
-      final productName = product.name.replaceAll(',', ' ');
+      final roomName = csvField(room.name ?? 'Room ${roomIndex + 1}');
+      final productName = csvField(product.name);
       for (var i = 0; i < layout.stripLengthsMm.length; i++) {
         final pieces = layout.pieceLengthsForStrip(i);
         for (var pi = 0; pi < pieces.length; pi++) {

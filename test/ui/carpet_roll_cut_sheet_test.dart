@@ -83,7 +83,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // No pieces split yet -> rows are labelled per strip only.
-    expect(find.text('1-1'), findsNothing);
+    expect(find.text('A1-1'), findsNothing);
 
     // Strip lengths are 5000 + 2*75 trim = 5150 mm; split strip 1 into two
     // pieces (user dragged an along-run seam), strip 2 stays whole.
@@ -97,8 +97,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('1-1'), findsOneWidget);
-    expect(find.text('1-2'), findsOneWidget);
+    expect(find.text('A1-1'), findsOneWidget);
+    expect(find.text('A1-2'), findsOneWidget);
     expect(find.textContaining('4 pieces'), findsNothing); // 3 pieces total
     expect(find.textContaining('3 pieces'), findsOneWidget);
     expect(

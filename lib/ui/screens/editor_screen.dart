@@ -119,6 +119,21 @@ class _EditorScreenState extends State<EditorScreen> {
                   kEnableCarpetFeatures ? state.roomCarpetAssignments : const {},
               onCarpetAssigned:
                   kEnableCarpetFeatures ? _editorController.setRoomCarpet : null,
+              openings: kEnableCarpetFeatures ? state.openings : const [],
+              roomCarpetSeamOverrides: kEnableCarpetFeatures
+                  ? state.roomCarpetSeamOverrides
+                  : const {},
+              roomCarpetSeamLayDirectionDeg: kEnableCarpetFeatures
+                  ? state.roomCarpetSeamLayDirectionDeg
+                  : const {},
+              roomCarpetLayoutVariantIndex: kEnableCarpetFeatures
+                  ? state.roomCarpetLayoutVariantIndex
+                  : const {},
+              stripSplitStrategy: state.stripSplitStrategy,
+              roomCarpetStripPieceLengthsOverrideMm: kEnableCarpetFeatures
+                  ? state.roomCarpetStripPieceLengthsOverrideMm
+                  : const {},
+              carpetPlanningSettings: state.carpetPlanningSettings,
             ),
           ),
         ],

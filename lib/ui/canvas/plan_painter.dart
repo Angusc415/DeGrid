@@ -718,16 +718,11 @@ class PlanPainter extends CustomPainter {
     for (int stri = 0; stri < layout.numStrips; stri++) {
       final pieces = layout.pieceLengthsForStrip(stri);
       if (pieces.length < 2) continue;
-      double stripStartPerp = 0.0;
-      for (int i = 0; i < stri; i++) {
-        stripStartPerp += i < layout.stripWidthsMm.length
-            ? layout.stripWidthsMm[i]
-            : layout.rollWidthMm;
-      }
+      final stripStartPerp = layout.stripPerpStartAt(stri);
       final stripWidth = stri < layout.stripWidthsMm.length
           ? layout.stripWidthsMm[stri]
           : (layout.layAlongX ? layout.bboxHeight : layout.bboxWidth);
-      double cum = 0.0;
+      double cum = layout.stripAlongStartAt(stri);
       for (int ai = 0; ai < pieces.length - 1; ai++) {
         cum += pieces[ai];
         Offset p1World;

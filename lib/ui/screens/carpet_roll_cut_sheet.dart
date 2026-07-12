@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:share_plus/share_plus.dart';
+import '../../core/export/csv.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
@@ -556,10 +557,11 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
     // (roll length minus total cut length), and greedily assign the longest
     // cuts that fit within this length as "from offcut". This is a planning
     // hint only (no offcut inventory is tracked); placements remain unchanged.
-    final availableOffcutLength = (lane.rollLengthMm - totalLinear).clamp(
-      0.0,
-      double.infinity,
-    );
+    // Only meaningful when the product has a physical roll length — otherwise
+    // the lane length is fabricated (totalLinear * 1.2) and the "tail" is fake.
+    final availableOffcutLength = lane.hasRealRollLength
+        ? (lane.rollLengthMm - totalLinear).clamp(0.0, double.infinity)
+        : 0.0;
     final cutsSorted = List<RollCutPiece>.from(allCuts)
       ..sort((a, b) => b.lengthMm.compareTo(a.lengthMm));
     final fromOffcutIds = <String>{};
@@ -923,7 +925,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
           ? 'Offcut${c.sourceOffcutRollIndex != null ? ' (lane ${c.sourceOffcutRollIndex})' : ''}'
           : 'Roll';
       sb.writeln(
-        '${c.cutId},${c.roomName},${c.lengthMm / 1000},${pos != null ? pos.dx / 1000 : ""},${pos != null ? pos.dy / 1000 : ""},$roll,$source',
+        '${csvField(c.cutId)},${csvField(c.roomName)},${csvMetres(c.lengthMm)},${pos != null ? csvMetres(pos.dx) : ""},${pos != null ? csvMetres(pos.dy) : ""},${csvField(roll)},${csvField(source)}',
       );
     }
     final offcuts = plan.offcuts();
@@ -932,7 +934,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       sb.writeln('Offcut,Lane,Length (m),Breadth (m),Start along (m)');
       for (final o in offcuts) {
         sb.writeln(
-          'Remaining,${o.rollIndex},${o.lengthMm / 1000},${o.breadthMm / 1000},${o.startAlongMm / 1000}',
+          'Remaining,${o.rollIndex},${csvMetres(o.lengthMm)},${csvMetres(o.breadthMm)},${csvMetres(o.startAlongMm)}',
         );
       }
     }
@@ -1044,13 +1046,17 @@ class _SummaryBar extends StatelessWidget {
     final placed = plan.placements.length;
     final totalCuts = plan.allCuts.length;
     final overlaps = plan.overlapCount;
-    final wastePct = total > 0 && plan.lanes.isNotEmpty
+    // Waste is only meaningful against a physical roll length; without one the
+    // lane length is fabricated and the figure would be noise.
+    final hasRealRolls = plan.lanes.isNotEmpty &&
+        plan.lanes.every((l) => l.hasRealRollLength);
+    final wastePct = hasRealRolls && total > 0
         ? (plan.lanes
                   .map((l) => plan.wasteMmForLane(l.rollIndex))
                   .fold<double>(0, (a, b) => a + b) /
               total *
               100)
-        : 0.0;
+        : null;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: SingleChildScrollView(
@@ -1071,11 +1077,13 @@ class _SummaryBar extends StatelessWidget {
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
-            const SizedBox(width: 16),
-            Text(
-              'Waste: ${wastePct.toStringAsFixed(1)}%',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            if (wastePct != null) ...[
+              const SizedBox(width: 16),
+              Text(
+                'Waste: ${wastePct.toStringAsFixed(1)}%',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             const SizedBox(width: 16),
             Text(
               'Placed: $placed/$totalCuts',

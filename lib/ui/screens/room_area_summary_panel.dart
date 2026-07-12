@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
+import '../../core/geometry/opening.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_planner.dart';
+import '../../core/roll_planning/room_strip_layout.dart';
 import '../../core/units/unit_converter.dart';
 
 /// A panel that displays a summary of all rooms with their areas.
@@ -23,6 +25,16 @@ class RoomAreaSummaryPanel extends StatefulWidget {
   final Map<int, int> roomCarpetAssignments;
   final void Function(int roomIndex, int? productIndex)? onCarpetAssigned;
 
+  /// Layout-relevant state shared with the canvas/cut list so the strip
+  /// summary here always matches them (see [computeRoomStripLayout]).
+  final List<Opening> openings;
+  final Map<int, List<double>> roomCarpetSeamOverrides;
+  final Map<int, double> roomCarpetSeamLayDirectionDeg;
+  final Map<int, int> roomCarpetLayoutVariantIndex;
+  final StripSplitStrategy stripSplitStrategy;
+  final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+  final CarpetPlanningSettings carpetPlanningSettings;
+
   const RoomAreaSummaryPanel({
     super.key,
     required this.rooms,
@@ -33,6 +45,13 @@ class RoomAreaSummaryPanel extends StatefulWidget {
     this.carpetProducts = const [],
     this.roomCarpetAssignments = const {},
     this.onCarpetAssigned,
+    this.openings = const [],
+    this.roomCarpetSeamOverrides = const {},
+    this.roomCarpetSeamLayDirectionDeg = const {},
+    this.roomCarpetLayoutVariantIndex = const {},
+    this.stripSplitStrategy = StripSplitStrategy.auto,
+    this.roomCarpetStripPieceLengthsOverrideMm = const {},
+    this.carpetPlanningSettings = const CarpetPlanningSettings(),
   });
 
   @override
@@ -262,6 +281,7 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
                         onDelete: () => widget.onRoomDeleted?.call(roomIndex),
                         carpetProducts: widget.carpetProducts,
                         assignedProductIndex: widget.roomCarpetAssignments[roomIndex],
+                        stripLayout: _stripLayoutForRoom(roomIndex, room),
                         onCarpetAssigned: widget.onCarpetAssigned != null
                             ? (int? productIndex) => widget.onCarpetAssigned!(roomIndex, productIndex)
                             : null,
@@ -271,6 +291,33 @@ class _RoomAreaSummaryPanelState extends State<RoomAreaSummaryPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Strip layout via the shared entry point so this panel's "N strips ·
+  /// X linear" always matches the canvas, cut list and roll cut sheet.
+  StripLayout? _stripLayoutForRoom(int roomIndex, Room room) {
+    final productIndex = widget.roomCarpetAssignments[roomIndex];
+    if (productIndex == null ||
+        productIndex < 0 ||
+        productIndex >= widget.carpetProducts.length) {
+      return null;
+    }
+    final product = widget.carpetProducts[productIndex];
+    if (product.rollWidthMm <= 0) return null;
+    final variantIndex = widget.roomCarpetLayoutVariantIndex[roomIndex] ?? 0;
+    return computeRoomStripLayout(
+      room: room,
+      roomIndex: roomIndex,
+      product: product,
+      openings: widget.openings,
+      seamOverrides: widget.roomCarpetSeamOverrides[roomIndex],
+      layDirectionDeg: widget.roomCarpetSeamLayDirectionDeg[roomIndex] ??
+          layDirectionDegFromVariant(variantIndex),
+      stripSplitStrategy: widget.stripSplitStrategy,
+      stripPieceLengthsOverride:
+          widget.roomCarpetStripPieceLengthsOverrideMm[roomIndex],
+      settings: widget.carpetPlanningSettings,
     );
   }
 
@@ -323,6 +370,7 @@ class _RoomListItem extends StatelessWidget {
   final VoidCallback? onDelete;
   final List<CarpetProduct> carpetProducts;
   final int? assignedProductIndex;
+  final StripLayout? stripLayout;
   final void Function(int? productIndex)? onCarpetAssigned;
 
   const _RoomListItem({
@@ -334,6 +382,7 @@ class _RoomListItem extends StatelessWidget {
     this.onDelete,
     this.carpetProducts = const [],
     this.assignedProductIndex,
+    this.stripLayout,
     this.onCarpetAssigned,
   });
 
@@ -396,18 +445,7 @@ class _RoomListItem extends StatelessWidget {
         ? carpetProducts[assignedProductIndex!]
         : null;
     final carpetLabel = product?.name ?? 'None';
-    StripLayout? stripLayout;
-    if (product != null && product.rollWidthMm > 0) {
-      final opts = CarpetLayoutOptions.forRoom(
-        roomIndex: roomIndex,
-        minStripWidthMm: product.minStripWidthMm ?? 100,
-        trimAllowanceMm: product.trimAllowanceMm ?? 75,
-        patternRepeatMm: product.patternRepeatMm ?? 0,
-        wasteAllowancePercent: 5,
-        maxSinglePieceLengthMm: product.rollLengthM != null ? product.rollLengthM! * 1000 : null,
-      );
-      stripLayout = RollPlanner.computeLayout(room, product.rollWidthMm, opts);
-    }
+    final stripLayout = this.stripLayout;
 
     return InkWell(
       onTap: onTap,
