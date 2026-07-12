@@ -16,6 +16,7 @@ void _bindEditorController(
     setUseImperial: state.setUseImperial,
     setShowGrid: state.setShowGrid,
     setCarpetPlanningSettings: state.setCarpetPlanningSettings,
+    setQuoteRates: state.setQuoteRates,
     selectCut: state.selectCut,
   );
 }
@@ -54,6 +55,7 @@ void _publishEditorControllerState(PlanCanvasState state) {
         ),
       ),
       carpetPlanningSettings: state._carpetPlanningSettings,
+      quoteRates: state._quoteRates,
     ),
   );
 }
@@ -98,6 +100,15 @@ extension PlanCanvasEditorSettingsAccessors on PlanCanvasState {
   void setCarpetPlanningSettings(CarpetPlanningSettings value) {
     setState(() {
       _carpetPlanningSettings = value;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  QuoteRates get quoteRates => _quoteRates;
+
+  void setQuoteRates(QuoteRates value) {
+    setState(() {
+      _quoteRates = value;
       _hasUnsavedChanges = true;
     });
   }

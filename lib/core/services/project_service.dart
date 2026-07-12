@@ -6,6 +6,7 @@ import '../geometry/room.dart';
 import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
 import '../models/project.dart';
+import '../quote/quote_rates.dart';
 import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -294,6 +295,15 @@ class ProjectService {
       });
     }
 
+    var quoteRates = const QuoteRates();
+    if (project.quoteRatesJson != null && project.quoteRatesJson!.isNotEmpty) {
+      quoteRates = _parseUserData(project, 'quote rates', () {
+        return QuoteRates.fromJson(
+          jsonDecode(project.quoteRatesJson!) as Map<String, dynamic>,
+        );
+      });
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -311,6 +321,7 @@ class ProjectService {
           roomCarpetStripPieceLengthsOverrideMm,
       carpetWasteAllowancePercent: project.carpetWasteAllowancePercent,
       carpetPlanningSettings: carpetPlanningSettings,
+      quoteRates: quoteRates,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -379,6 +390,7 @@ class ProjectService {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
+    QuoteRates? quoteRates,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -433,6 +445,9 @@ class ProjectService {
           : const Value.absent(),
       carpetPlanningSettingsJson: carpetPlanningSettings != null
           ? Value(jsonEncode(carpetPlanningSettings.toJson()))
+          : const Value.absent(),
+      quoteRatesJson: quoteRates != null
+          ? Value(jsonEncode(quoteRates.toJson()))
           : const Value.absent(),
       stripSplitStrategy: carpetPlanningSettings != null
           ? Value(carpetPlanningSettings.stripSplitStrategy.index)
@@ -489,6 +504,7 @@ class ProjectService {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
+    QuoteRates? quoteRates,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -522,7 +538,8 @@ class ProjectService {
             (roomCarpetLayoutVariantIndex != null && roomCarpetLayoutVariantIndex.isNotEmpty) ||
             (roomCarpetStripPieceLengthsOverrideMm != null && roomCarpetStripPieceLengthsOverrideMm.isNotEmpty) ||
             carpetWasteAllowancePercent != null ||
-            carpetPlanningSettings != null) {
+            carpetPlanningSettings != null ||
+            quoteRates != null) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
@@ -537,6 +554,7 @@ class ProjectService {
                 roomCarpetStripPieceLengthsOverrideMm,
             carpetWasteAllowancePercent: carpetWasteAllowancePercent,
             carpetPlanningSettings: carpetPlanningSettings,
+            quoteRates: quoteRates,
           wallWidthMm: wallWidthMm,
           doorThicknessMm: doorThicknessMm,
           );
@@ -558,6 +576,7 @@ class ProjectService {
               roomCarpetStripPieceLengthsOverrideMm,
           carpetWasteAllowancePercent: carpetWasteAllowancePercent,
           carpetPlanningSettings: carpetPlanningSettings,
+          quoteRates: quoteRates,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
 import '../../core/geometry/room.dart';
+import '../../core/quote/quote_rates.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 
 @immutable
@@ -21,6 +22,7 @@ class EditorViewState {
   final Map<int, int> roomCarpetLayoutVariantIndex;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
   final CarpetPlanningSettings carpetPlanningSettings;
+  final QuoteRates quoteRates;
   final String? selectedCutId;
 
   const EditorViewState({
@@ -39,6 +41,7 @@ class EditorViewState {
     this.roomCarpetLayoutVariantIndex = const {},
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
+    this.quoteRates = const QuoteRates(),
   });
 }
 
@@ -57,6 +60,7 @@ class EditorController extends ChangeNotifier {
   void Function(bool value)? _setUseImperial;
   void Function(bool value)? _setShowGrid;
   void Function(CarpetPlanningSettings value)? _setCarpetPlanningSettings;
+  void Function(QuoteRates value)? _setQuoteRates;
   void Function(String? cutId, {int? roomIndex})? _selectCut;
 
   EditorViewState get state => _state;
@@ -74,6 +78,7 @@ class EditorController extends ChangeNotifier {
     required void Function(bool value) setUseImperial,
     required void Function(bool value) setShowGrid,
     void Function(CarpetPlanningSettings value)? setCarpetPlanningSettings,
+    void Function(QuoteRates value)? setQuoteRates,
     void Function(String? cutId, {int? roomIndex})? selectCut,
   }) {
     _selectRoom = selectRoom;
@@ -87,6 +92,7 @@ class EditorController extends ChangeNotifier {
     _setUseImperial = setUseImperial;
     _setShowGrid = setShowGrid;
     _setCarpetPlanningSettings = setCarpetPlanningSettings;
+    _setQuoteRates = setQuoteRates;
     _selectCut = selectCut;
   }
 
@@ -102,6 +108,7 @@ class EditorController extends ChangeNotifier {
     _setUseImperial = null;
     _setShowGrid = null;
     _setCarpetPlanningSettings = null;
+    _setQuoteRates = null;
     _selectCut = null;
   }
 
@@ -137,6 +144,8 @@ class EditorController extends ChangeNotifier {
 
   void setCarpetPlanningSettings(CarpetPlanningSettings value) =>
       _setCarpetPlanningSettings?.call(value);
+
+  void setQuoteRates(QuoteRates value) => _setQuoteRates?.call(value);
 
   void selectCut(String? cutId, {int? roomIndex}) =>
       _selectCut?.call(cutId, roomIndex: roomIndex);

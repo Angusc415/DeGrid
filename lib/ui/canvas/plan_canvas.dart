@@ -15,6 +15,7 @@ import '../../core/geometry/opening.dart';
 import '../../core/geometry/opening_geometry.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/room_transform.dart';
+import '../../core/quote/quote_rates.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
@@ -120,6 +121,7 @@ class PlanCanvasState extends State<PlanCanvas> {
   /// User-adjustable planning settings (waste %, seam penalties). Waste % is persisted per project.
   CarpetPlanningSettings _carpetPlanningSettings =
       const CarpetPlanningSettings();
+  QuoteRates _quoteRates = const QuoteRates();
 
   /// Per-room override of piece lengths per strip (user merged pieces by dragging along-seams out).
   /// Key = roomIndex. Value = list of piece-length lists per strip; when set, replaces planner's stripPieceLengthsMm.

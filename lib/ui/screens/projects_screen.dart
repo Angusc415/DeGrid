@@ -5,6 +5,7 @@ import 'package:pdf/pdf.dart';
 import '../../core/database/database.dart';
 import '../../core/services/project_service.dart';
 import '../../core/export/cut_sheet_entries.dart';
+import '../../core/quote/job_quote.dart';
 import '../../core/export/pdf_export.dart';
 import '../canvas/viewport.dart';
 import 'editor_screen.dart';
@@ -797,8 +798,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         return;
       }
 
-      // Generate PDF (includes a carpet cut sheet page when the project has
-      // carpet assignments)
+      // Generate PDF (includes carpet cut sheet + job quote pages when the
+      // project has carpet assignments)
       final cutSheetData = buildPdfCutSheetData(projectModel);
       final pdfBytes = await PdfExportService.exportToPdf(
         rooms: projectModel.rooms,
@@ -808,6 +809,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         includeGrid: false, // Can be made configurable later
         carpetCuts: cutSheetData.cuts,
         carpetOffcuts: cutSheetData.offcuts,
+        quote: buildJobQuote(projectModel),
       );
 
       if (!mounted) return;

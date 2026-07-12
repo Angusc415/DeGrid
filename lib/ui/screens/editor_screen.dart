@@ -59,7 +59,7 @@ class _EditorScreenState extends State<EditorScreen> {
   void _showProjectSettingsSheet(EditorViewState state) {
     showModalBottomSheet<void>(
       context: context,
-      isScrollControlled: false,
+      isScrollControlled: true,
       useSafeArea: true,
       builder: (ctx) {
         return ProjectSettingsSheet(
@@ -71,6 +71,9 @@ class _EditorScreenState extends State<EditorScreen> {
           initialShowGrid: state.showGrid,
           onUseImperialChanged: _editorController.setUseImperial,
           onShowGridChanged: _editorController.setShowGrid,
+          initialQuoteRates: state.quoteRates,
+          onQuoteRatesChanged:
+              kEnableCarpetFeatures ? _editorController.setQuoteRates : null,
         );
       },
     );

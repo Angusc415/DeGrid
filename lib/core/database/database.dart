@@ -45,6 +45,8 @@ class Projects extends Table {
   /// default 0 = auto). Legacy column kept in sync with
   /// [carpetPlanningSettingsJson] for older builds.
   IntColumn get stripSplitStrategy => integer().withDefault(const Constant(0))();
+  /// Quote pricing rates as JSON (underlay, gripper, door bars, labour, GST).
+  TextColumn get quoteRatesJson => text().nullable()();
   TextColumn get roomCarpetSeamLayDirectionDegJson => text().nullable()(); // JSON: { "roomIndex": deg, ... }
   TextColumn get roomCarpetLayoutVariantIndexJson => text().nullable()(); // JSON: { "roomIndex": variant, ... }
   TextColumn get roomCarpetStripPieceLengthsJson => text().nullable()(); // JSON: { "roomIndex": [[mm,...], ...], ... }
@@ -78,7 +80,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration {
@@ -130,6 +132,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 14) {
           await _addColumnIfNotExists(m, projects, projects.carpetPlanningSettingsJson);
+        }
+        if (from < 15) {
+          await _addColumnIfNotExists(m, projects, projects.quoteRatesJson);
         }
       },
     );

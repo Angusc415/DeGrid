@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../geometry/room.dart';
+import '../quote/job_quote.dart';
 import '../units/unit_converter.dart';
 import '../../ui/canvas/viewport.dart';
 import 'cut_sheet_entries.dart';
@@ -44,6 +45,7 @@ class PdfExportService {
   /// [includeGrid] - Whether to include grid lines
   /// [carpetCuts] - Carpet cut-sheet rows; when non-empty a cut sheet page is added
   /// [carpetOffcuts] - Estimated side offcuts listed under the cut sheet
+  /// [quote] - Job quote; when non-empty a quote page is added
   ///
   /// Returns PDF document as bytes.
   static Future<Uint8List> exportToPdf({
@@ -54,6 +56,7 @@ class PdfExportService {
     bool includeGrid = false,
     List<PdfCutSheetEntry> carpetCuts = const [],
     List<PdfOffcutEntry> carpetOffcuts = const [],
+    JobQuote? quote,
   }) async {
     if (rooms.isEmpty) {
       // Empty project - create a simple PDF with message
@@ -137,6 +140,35 @@ class PdfExportService {
       );
     }
 
+    // Page: job quote, when rates produce any lines.
+    if (quote != null && !quote.isEmpty) {
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) => [
+            pw.Text(
+              projectName,
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Text(
+              'Quote',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+            ),
+            pw.SizedBox(height: 16),
+            _buildQuoteTable(quote),
+            if (!quote.fullyPriced) ...[
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Lines marked "not priced" have no rate set; the total is a partial sum.',
+                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
     // Extra pages: one page per room for readability (handles rooms far apart)
     if (rooms.length > 1) {
       for (int i = 0; i < rooms.length; i++) {
@@ -205,6 +237,79 @@ class PdfExportService {
               cell(c.note.isEmpty ? '-' : c.note),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Quote table: item, detail, amount, then subtotal / GST / total.
+  static pw.Widget _buildQuoteTable(JobQuote quote) {
+    pw.Widget cell(String text, {bool bold = false, bool right = false}) =>
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          child: pw.Text(
+            text,
+            textAlign: right ? pw.TextAlign.right : pw.TextAlign.left,
+            style: pw.TextStyle(
+              fontSize: 10,
+              fontWeight: bold ? pw.FontWeight.bold : null,
+            ),
+          ),
+        );
+
+    String money(double v) => '\$${v.toStringAsFixed(2)}';
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: {
+        0: const pw.FlexColumnWidth(1.6),
+        1: const pw.FlexColumnWidth(2.6),
+        2: const pw.FlexColumnWidth(0.9),
+      },
+      children: [
+        pw.TableRow(
+          decoration:
+              const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE0E0E0)),
+          children: [
+            cell('Item', bold: true),
+            cell('Detail', bold: true),
+            cell('Amount', bold: true, right: true),
+          ],
+        ),
+        ...quote.lines.map(
+          (l) => pw.TableRow(
+            children: [
+              cell(l.label),
+              cell(l.detail),
+              cell(l.amount != null ? money(l.amount!) : '—', right: true),
+            ],
+          ),
+        ),
+        pw.TableRow(
+          decoration:
+              const pw.BoxDecoration(color: PdfColor.fromInt(0xFFF5F5F5)),
+          children: [
+            cell('Subtotal', bold: true),
+            cell(''),
+            cell(money(quote.subtotal), bold: true, right: true),
+          ],
+        ),
+        if (quote.gstAmount > 0)
+          pw.TableRow(
+            children: [
+              cell('GST (${quote.gstPercent.toStringAsFixed(0)}%)'),
+              cell(''),
+              cell(money(quote.gstAmount), right: true),
+            ],
+          ),
+        pw.TableRow(
+          decoration:
+              const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE0E0E0)),
+          children: [
+            cell('Total', bold: true),
+            cell(''),
+            cell(money(quote.total), bold: true, right: true),
+          ],
         ),
       ],
     );

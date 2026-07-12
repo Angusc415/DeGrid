@@ -2,6 +2,7 @@ import 'dart:ui';
 import '../geometry/room.dart';
 import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
+import '../quote/quote_rates.dart';
 import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -31,6 +32,8 @@ class ProjectModel {
   /// Full carpet planning settings (waste %, seam penalties, doorway
   /// extension, seam width allowance).
   final CarpetPlanningSettings carpetPlanningSettings;
+  /// Pricing rates for the job quote (underlay, gripper, door bars, labour).
+  final QuoteRates quoteRates;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -55,6 +58,7 @@ class ProjectModel {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     this.carpetWasteAllowancePercent = 5.0,
     CarpetPlanningSettings? carpetPlanningSettings,
+    this.quoteRates = const QuoteRates(),
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
@@ -92,6 +96,7 @@ class ProjectModel {
     Map<int, List<List<double>>>? roomCarpetStripPieceLengthsOverrideMm,
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
+    QuoteRates? quoteRates,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -120,6 +125,7 @@ class ProjectModel {
           carpetWasteAllowancePercent ?? this.carpetWasteAllowancePercent,
       carpetPlanningSettings:
           carpetPlanningSettings ?? this.carpetPlanningSettings,
+      quoteRates: quoteRates ?? this.quoteRates,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,
