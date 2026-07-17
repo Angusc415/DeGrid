@@ -12,6 +12,7 @@ import '../../core/geometry/opening.dart';
 import '../../core/models/project.dart';
 import '../../core/quote/job_quote.dart';
 import '../../core/quote/quote_rates.dart';
+import '../../core/quote/staircase.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
@@ -41,6 +42,9 @@ class CarpetRollCutSheet extends StatefulWidget {
   /// Pricing rates for the live Quote tab. When [QuoteRates.hasAnyRates] is
   /// false, the tab prompts the user to set rates in project settings.
   final QuoteRates quoteRates;
+
+  /// Carpeted staircases priced into the live Quote tab.
+  final List<Staircase> staircases;
   final bool useImperial;
   final void Function(int roomIndex)? onResetSeamsForRoom;
 
@@ -74,6 +78,7 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.onCarpetPlanningSettingsChanged,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
     this.quoteRates = const QuoteRates(),
+    this.staircases = const [],
     this.useImperial = false,
     this.onResetSeamsForRoom,
     this.selectedRoomIndex,
@@ -970,6 +975,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
             widget.roomCarpetStripPieceLengthsOverrideMm,
         carpetPlanningSettings: widget.carpetPlanningSettings,
         quoteRates: widget.quoteRates,
+        staircases: widget.staircases,
       ),
     );
     return _QuotePanel(

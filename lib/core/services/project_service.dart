@@ -7,6 +7,7 @@ import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
 import '../models/project.dart';
 import '../quote/quote_rates.dart';
+import '../quote/staircase.dart';
 import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -304,6 +305,15 @@ class ProjectService {
       });
     }
 
+    var staircases = const <Staircase>[];
+    if (project.staircasesJson != null && project.staircasesJson!.isNotEmpty) {
+      staircases = _parseUserData(project, 'staircases', () {
+        return Staircase.listFromJson(
+          jsonDecode(project.staircasesJson!) as List<dynamic>,
+        );
+      });
+    }
+
     return ProjectModel(
       id: project.id,
       name: project.name,
@@ -322,6 +332,7 @@ class ProjectService {
       carpetWasteAllowancePercent: project.carpetWasteAllowancePercent,
       carpetPlanningSettings: carpetPlanningSettings,
       quoteRates: quoteRates,
+      staircases: staircases,
       viewportState: viewportState,
       backgroundImagePath: project.backgroundImagePath,
       backgroundImageState: backgroundImageState,
@@ -391,6 +402,7 @@ class ProjectService {
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
     QuoteRates? quoteRates,
+    List<Staircase>? staircases,
     PlanViewport? viewport,
     bool? useImperial,
     String? backgroundImagePath,
@@ -449,6 +461,9 @@ class ProjectService {
       quoteRatesJson: quoteRates != null
           ? Value(jsonEncode(quoteRates.toJson()))
           : const Value.absent(),
+      staircasesJson: staircases != null
+          ? Value(jsonEncode(Staircase.listToJson(staircases)))
+          : const Value.absent(),
       stripSplitStrategy: carpetPlanningSettings != null
           ? Value(carpetPlanningSettings.stripSplitStrategy.index)
           : const Value.absent(),
@@ -505,6 +520,7 @@ class ProjectService {
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
     QuoteRates? quoteRates,
+    List<Staircase>? staircases,
     required PlanViewport viewport,
     bool useImperial = false,
     int? folderId,
@@ -539,7 +555,8 @@ class ProjectService {
             (roomCarpetStripPieceLengthsOverrideMm != null && roomCarpetStripPieceLengthsOverrideMm.isNotEmpty) ||
             carpetWasteAllowancePercent != null ||
             carpetPlanningSettings != null ||
-            quoteRates != null) {
+            quoteRates != null ||
+            (staircases != null && staircases.isNotEmpty)) {
           await updateProject(
             id: projectId,
             backgroundImagePath: backgroundImagePath,
@@ -555,6 +572,7 @@ class ProjectService {
             carpetWasteAllowancePercent: carpetWasteAllowancePercent,
             carpetPlanningSettings: carpetPlanningSettings,
             quoteRates: quoteRates,
+            staircases: staircases,
           wallWidthMm: wallWidthMm,
           doorThicknessMm: doorThicknessMm,
           );
@@ -577,6 +595,7 @@ class ProjectService {
           carpetWasteAllowancePercent: carpetWasteAllowancePercent,
           carpetPlanningSettings: carpetPlanningSettings,
           quoteRates: quoteRates,
+          staircases: staircases,
           viewport: viewport,
           useImperial: useImperial,
           backgroundImagePath: backgroundImagePath,

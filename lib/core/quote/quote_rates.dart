@@ -16,6 +16,9 @@ class QuoteRates {
   /// Installation labour per m² of carpeted floor area.
   final double? labourCostPerSqm;
 
+  /// Installation labour per stair step.
+  final double? stairLabourPerStep;
+
   /// GST percent applied to the subtotal (default 10, AU).
   final double gstPercent;
 
@@ -27,6 +30,7 @@ class QuoteRates {
     this.gripperCostPerM,
     this.doorBarCostEach,
     this.labourCostPerSqm,
+    this.stairLabourPerStep,
     this.gstPercent = 10.0,
     this.includeGst = true,
   });
@@ -36,13 +40,15 @@ class QuoteRates {
       underlayCostPerSqm != null ||
       gripperCostPerM != null ||
       doorBarCostEach != null ||
-      labourCostPerSqm != null;
+      labourCostPerSqm != null ||
+      stairLabourPerStep != null;
 
   Map<String, dynamic> toJson() => {
         'underlayCostPerSqm': underlayCostPerSqm,
         'gripperCostPerM': gripperCostPerM,
         'doorBarCostEach': doorBarCostEach,
         'labourCostPerSqm': labourCostPerSqm,
+        'stairLabourPerStep': stairLabourPerStep,
         'gstPercent': gstPercent,
         'includeGst': includeGst,
       };
@@ -54,6 +60,7 @@ class QuoteRates {
       gripperCostPerM: (json['gripperCostPerM'] as num?)?.toDouble(),
       doorBarCostEach: (json['doorBarCostEach'] as num?)?.toDouble(),
       labourCostPerSqm: (json['labourCostPerSqm'] as num?)?.toDouble(),
+      stairLabourPerStep: (json['stairLabourPerStep'] as num?)?.toDouble(),
       gstPercent:
           (json['gstPercent'] as num?)?.toDouble() ?? defaults.gstPercent,
       includeGst: json['includeGst'] as bool? ?? defaults.includeGst,
@@ -72,6 +79,8 @@ class QuoteRates {
     bool clearDoorBarCostEach = false,
     double? labourCostPerSqm,
     bool clearLabourCostPerSqm = false,
+    double? stairLabourPerStep,
+    bool clearStairLabourPerStep = false,
     double? gstPercent,
     bool? includeGst,
   }) {
@@ -86,6 +95,9 @@ class QuoteRates {
       labourCostPerSqm: clearLabourCostPerSqm
           ? null
           : (labourCostPerSqm ?? this.labourCostPerSqm),
+      stairLabourPerStep: clearStairLabourPerStep
+          ? null
+          : (stairLabourPerStep ?? this.stairLabourPerStep),
       gstPercent: gstPercent ?? this.gstPercent,
       includeGst: includeGst ?? this.includeGst,
     );
@@ -98,6 +110,7 @@ class QuoteRates {
         other.gripperCostPerM == gripperCostPerM &&
         other.doorBarCostEach == doorBarCostEach &&
         other.labourCostPerSqm == labourCostPerSqm &&
+        other.stairLabourPerStep == stairLabourPerStep &&
         other.gstPercent == gstPercent &&
         other.includeGst == includeGst;
   }
@@ -108,6 +121,7 @@ class QuoteRates {
         gripperCostPerM,
         doorBarCostEach,
         labourCostPerSqm,
+        stairLabourPerStep,
         gstPercent,
         includeGst,
       );

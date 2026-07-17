@@ -89,7 +89,7 @@ JobQuote buildJobQuote(ProjectModel project) {
       layouts[ri] = layout;
     }
   }
-  if (layouts.isEmpty) {
+  if (layouts.isEmpty && project.staircases.isEmpty) {
     return const JobQuote(
       lines: [],
       subtotal: 0,
@@ -146,6 +146,7 @@ JobQuote buildJobQuote(ProjectModel project) {
     double? globalRate,
     double? Function(CarpetProduct) productRate,
   ) {
+    if (areaByProduct.isEmpty) return; // no carpeted rooms — stairs-only job
     final anyOverride = areaByProduct.keys
         .any((pi) => productRate(project.carpetProducts[pi]) != null);
     if (!anyOverride) {
@@ -200,7 +201,7 @@ JobQuote buildJobQuote(ProjectModel project) {
     }
     gripperM += math.max(0, perimeterMm - openingMm) / 1000;
   }
-  {
+  if (layouts.isNotEmpty) {
     final rate = rates.gripperCostPerM;
     if (rate == null) fullyPriced = false;
     lines.add(
@@ -240,6 +241,42 @@ JobQuote buildJobQuote(ProjectModel project) {
 
   // --- Labour. ---
   addAreaLines('Installation', rates.labourCostPerSqm, (p) => p.labourCostPerSqm);
+
+  // --- Stairs: carpet (area x product cost, incl. waste) + labour per step. ---
+  final wasteFactor = 1 + project.carpetPlanningSettings.wasteAllowancePercent / 100;
+  var totalStairSteps = 0;
+  for (final stair in project.staircases) {
+    if (stair.steps <= 0) continue;
+    totalStairSteps += stair.steps;
+    final areaSqm = stair.carpetAreaSqm;
+    final pi = stair.carpetProductIndex;
+    final product = (pi != null && pi >= 0 && pi < project.carpetProducts.length)
+        ? project.carpetProducts[pi]
+        : null;
+    final costPerSqm = product?.costPerSqm;
+    if (costPerSqm == null) fullyPriced = false;
+    lines.add(
+      QuoteLine(
+        label: 'Stairs — ${stair.name}',
+        detail: '${stair.steps} steps · ${_qty(areaSqm * wasteFactor, 'm²')}'
+            '${product != null ? ' ${product.name}' : ''}'
+            '${costPerSqm != null ? ' @ \$${_money(costPerSqm)}/m²' : ' (no carpet rate)'}',
+        amount: costPerSqm != null ? areaSqm * wasteFactor * costPerSqm : null,
+      ),
+    );
+  }
+  if (totalStairSteps > 0) {
+    final rate = rates.stairLabourPerStep;
+    if (rate == null) fullyPriced = false;
+    lines.add(
+      QuoteLine(
+        label: 'Stairs — installation',
+        detail: '$totalStairSteps step${totalStairSteps == 1 ? '' : 's'}'
+            '${rate != null ? ' @ \$${_money(rate)}/step' : ' (no rate set)'}',
+        amount: rate != null ? totalStairSteps * rate : null,
+      ),
+    );
+  }
 
   final subtotal = lines.fold<double>(0, (s, l) => s + (l.amount ?? 0));
   final gstAmount =

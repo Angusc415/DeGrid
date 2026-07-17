@@ -45,6 +45,7 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
   late final TextEditingController _gripperController;
   late final TextEditingController _doorBarController;
   late final TextEditingController _labourController;
+  late final TextEditingController _stairLabourController;
   late final TextEditingController _gstController;
   late bool _includeGst;
 
@@ -68,6 +69,8 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
         TextEditingController(text: _rateText(rates.doorBarCostEach));
     _labourController =
         TextEditingController(text: _rateText(rates.labourCostPerSqm));
+    _stairLabourController =
+        TextEditingController(text: _rateText(rates.stairLabourPerStep));
     _gstController = TextEditingController(text: _rateText(rates.gstPercent));
     _includeGst = rates.includeGst;
   }
@@ -78,6 +81,7 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
     _gripperController.dispose();
     _doorBarController.dispose();
     _labourController.dispose();
+    _stairLabourController.dispose();
     _gstController.dispose();
     super.dispose();
   }
@@ -94,6 +98,7 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
       gripperCostPerM: parse(_gripperController),
       doorBarCostEach: parse(_doorBarController),
       labourCostPerSqm: parse(_labourController),
+      stairLabourPerStep: parse(_stairLabourController),
       gstPercent:
           parse(_gstController) ?? widget.initialQuoteRates.gstPercent,
       includeGst: _includeGst,
@@ -263,6 +268,8 @@ class _ProjectSettingsSheetState extends State<ProjectSettingsSheet> {
             _rateField(_doorBarController, 'Door bar (\$ each)'),
             const SizedBox(height: 12),
             _rateField(_labourController, 'Installation labour (\$/m²)'),
+            const SizedBox(height: 12),
+            _rateField(_stairLabourController, 'Stair labour (\$/step)'),
             const SizedBox(height: 12),
             Row(
               children: [

@@ -17,6 +17,7 @@ void _bindEditorController(
     setShowGrid: state.setShowGrid,
     setCarpetPlanningSettings: state.setCarpetPlanningSettings,
     setQuoteRates: state.setQuoteRates,
+    setStaircases: state.setStaircases,
     selectCut: state.selectCut,
   );
 }
@@ -56,6 +57,7 @@ void _publishEditorControllerState(PlanCanvasState state) {
       ),
       carpetPlanningSettings: state._carpetPlanningSettings,
       quoteRates: state._quoteRates,
+      staircases: state._staircases,
     ),
   );
 }
@@ -109,6 +111,15 @@ extension PlanCanvasEditorSettingsAccessors on PlanCanvasState {
   void setQuoteRates(QuoteRates value) {
     setState(() {
       _quoteRates = value;
+      _hasUnsavedChanges = true;
+    });
+  }
+
+  List<Staircase> get staircases => _staircases;
+
+  void setStaircases(List<Staircase> value) {
+    setState(() {
+      _staircases = value;
       _hasUnsavedChanges = true;
     });
   }

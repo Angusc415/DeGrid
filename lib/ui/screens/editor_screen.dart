@@ -5,6 +5,7 @@ import '../../core/config/feature_flags.dart';
 import '../canvas/plan_canvas.dart';
 import '../editor/editor_controller.dart';
 import 'carpet_products_screen.dart';
+import 'stairs_screen.dart';
 import 'carpet_roll_cut_sheet.dart';
 import 'project_settings_sheet.dart';
 import 'room_area_summary_panel.dart';
@@ -91,6 +92,19 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  void _openStairs(EditorViewState state) {
+    if (!kEnableCarpetFeatures) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => StairsScreen(
+          initialStaircases: state.staircases,
+          carpetProducts: state.carpetProducts,
+          onStaircasesChanged: _editorController.setStaircases,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidePanel(EditorViewState state) {
     return Container(
       width: 320,
@@ -168,6 +182,12 @@ class _EditorScreenState extends State<EditorScreen> {
                   tooltip: 'Carpet products',
                   onPressed: () => _openCarpetProducts(state),
                 ),
+              if (kEnableCarpetFeatures)
+                IconButton(
+                  icon: const Icon(Icons.stairs),
+                  tooltip: 'Stairs',
+                  onPressed: () => _openStairs(state),
+                ),
               Builder(
                 builder: (context) => IconButton(
                   icon: const Icon(Icons.view_list),
@@ -217,6 +237,7 @@ class _EditorScreenState extends State<EditorScreen> {
                     roomCarpetStripPieceLengthsOverrideMm:
                         state.roomCarpetStripPieceLengthsOverrideMm,
                     quoteRates: state.quoteRates,
+                    staircases: state.staircases,
                     useImperial: state.useImperial,
                     onResetSeamsForRoom:
                         _editorController.clearSeamOverridesForRoom,

@@ -3,6 +3,7 @@ import '../geometry/room.dart';
 import '../geometry/opening.dart';
 import '../geometry/carpet_product.dart';
 import '../quote/quote_rates.dart';
+import '../quote/staircase.dart';
 import '../roll_planning/carpet_layout_options.dart';
 import '../../ui/canvas/viewport.dart';
 
@@ -34,6 +35,8 @@ class ProjectModel {
   final CarpetPlanningSettings carpetPlanningSettings;
   /// Pricing rates for the job quote (underlay, gripper, door bars, labour).
   final QuoteRates quoteRates;
+  /// Carpeted staircases (priced into the job quote).
+  final List<Staircase> staircases;
   final PlanViewportState? viewportState;
   final String? backgroundImagePath;
   final BackgroundImageState? backgroundImageState;
@@ -59,6 +62,7 @@ class ProjectModel {
     this.carpetWasteAllowancePercent = 5.0,
     CarpetPlanningSettings? carpetPlanningSettings,
     this.quoteRates = const QuoteRates(),
+    List<Staircase>? staircases,
     this.viewportState,
     this.backgroundImagePath,
     this.backgroundImageState,
@@ -68,6 +72,7 @@ class ProjectModel {
             CarpetPlanningSettings(
               wasteAllowancePercent: carpetWasteAllowancePercent,
             ),
+        staircases = staircases ?? const [],
         openings = openings ?? const [],
         carpetProducts = carpetProducts ?? const [],
         roomCarpetAssignments = roomCarpetAssignments ?? const {},
@@ -97,6 +102,7 @@ class ProjectModel {
     double? carpetWasteAllowancePercent,
     CarpetPlanningSettings? carpetPlanningSettings,
     QuoteRates? quoteRates,
+    List<Staircase>? staircases,
     PlanViewportState? viewportState,
     String? backgroundImagePath,
     BackgroundImageState? backgroundImageState,
@@ -126,6 +132,7 @@ class ProjectModel {
       carpetPlanningSettings:
           carpetPlanningSettings ?? this.carpetPlanningSettings,
       quoteRates: quoteRates ?? this.quoteRates,
+      staircases: staircases ?? this.staircases,
       viewportState: viewportState ?? this.viewportState,
       backgroundImagePath: backgroundImagePath ?? this.backgroundImagePath,
       backgroundImageState: backgroundImageState ?? this.backgroundImageState,
