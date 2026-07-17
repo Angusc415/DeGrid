@@ -1,5 +1,6 @@
 import 'package:degrid/core/geometry/carpet_product.dart';
 import 'package:degrid/core/geometry/room.dart';
+import 'package:degrid/core/quote/quote_rates.dart';
 import 'package:degrid/core/units/unit_converter.dart';
 import 'package:degrid/ui/screens/carpet_roll_cut_sheet.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +31,7 @@ void main() {
     Map<int, List<double>> seamOverrides = const {},
     Map<int, double> seamLayDirectionDeg = const {},
     Map<int, List<List<double>>> pieceLengthsOverride = const {},
+    QuoteRates quoteRates = const QuoteRates(),
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -41,6 +43,7 @@ void main() {
           roomCarpetSeamOverrides: seamOverrides,
           roomCarpetSeamLayDirectionDeg: seamLayDirectionDeg,
           roomCarpetStripPieceLengthsOverrideMm: pieceLengthsOverride,
+          quoteRates: quoteRates,
         ),
       ),
     );
@@ -132,5 +135,35 @@ void main() {
 
     expect(find.textContaining('Seam 1: $expected'), findsOneWidget);
     expect(find.textContaining('2 strips'), findsOneWidget);
+  });
+
+  testWidgets('Quote tab prices the job when rates are set', (tester) async {
+    await tester.pumpWidget(buildSheet(
+      quoteRates: const QuoteRates(
+        underlayCostPerSqm: 8,
+        labourCostPerSqm: 12,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Quote'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Underlay'), findsOneWidget);
+    expect(find.text('Installation'), findsOneWidget);
+    expect(find.text('Total'), findsOneWidget);
+    // 5x3.5m room = 17.5 m²; underlay 17.5*8 + labour 17.5*12 = 350.
+    expect(find.textContaining('Total'), findsOneWidget);
+  });
+
+  testWidgets('Quote tab prompts for rates when none are set', (tester) async {
+    await tester.pumpWidget(buildSheet());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Quote'));
+    await tester.pumpAndSettle();
+
+    // Carpet has no cost/m² and no rates -> quantities-only banner shown.
+    expect(find.textContaining('Project settings'), findsWidgets);
   });
 }

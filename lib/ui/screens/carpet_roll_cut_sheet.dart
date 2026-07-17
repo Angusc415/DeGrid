@@ -9,6 +9,9 @@ import '../../core/export/csv.dart';
 import '../../core/geometry/room.dart';
 import '../../core/geometry/carpet_product.dart';
 import '../../core/geometry/opening.dart';
+import '../../core/models/project.dart';
+import '../../core/quote/job_quote.dart';
+import '../../core/quote/quote_rates.dart';
 import '../../core/roll_planning/carpet_layout_options.dart';
 import '../../core/roll_planning/roll_plan_models.dart';
 import '../../core/roll_planning/roll_planner.dart';
@@ -34,6 +37,10 @@ class CarpetRollCutSheet extends StatefulWidget {
   final CarpetPlanningSettings carpetPlanningSettings;
   final void Function(CarpetPlanningSettings)? onCarpetPlanningSettingsChanged;
   final Map<int, List<List<double>>> roomCarpetStripPieceLengthsOverrideMm;
+
+  /// Pricing rates for the live Quote tab. When [QuoteRates.hasAnyRates] is
+  /// false, the tab prompts the user to set rates in project settings.
+  final QuoteRates quoteRates;
   final bool useImperial;
   final void Function(int roomIndex)? onResetSeamsForRoom;
 
@@ -66,6 +73,7 @@ class CarpetRollCutSheet extends StatefulWidget {
     this.carpetPlanningSettings = const CarpetPlanningSettings(),
     this.onCarpetPlanningSettingsChanged,
     this.roomCarpetStripPieceLengthsOverrideMm = const {},
+    this.quoteRates = const QuoteRates(),
     this.useImperial = false,
     this.onResetSeamsForRoom,
     this.selectedRoomIndex,
@@ -808,9 +816,12 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
             _buildHandle(context),
             TabBar(
               labelColor: Theme.of(context).colorScheme.primary,
+              isScrollable: true,
+              tabAlignment: TabAlignment.center,
               tabs: const [
                 Tab(text: 'Cut list'),
                 Tab(text: 'Roll cut'),
+                Tab(text: 'Quote'),
               ],
             ),
             if (widget.onCarpetPlanningSettingsChanged != null)
@@ -874,7 +885,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
         // If there's not enough height for the tab content, just show the header.
         if (constraints.maxHeight < 140) {
           return DefaultTabController(
-            length: 2,
+            length: 3,
             initialIndex: 0,
             child: SingleChildScrollView(child: header),
           );
@@ -882,7 +893,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 
         // Normal case: header + TabBarView filling remaining space.
         return DefaultTabController(
-          length: 2,
+          length: 3,
           initialIndex: 0,
           child: Column(
             mainAxisSize: MainAxisSize.max,
@@ -895,6 +906,7 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
                   children: [
                     _buildCutListTab(context),
                     _buildRollCutTab(context),
+                    _buildQuoteTab(context),
                   ],
                 ),
               ),
@@ -934,6 +946,36 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
       carpetPlanningSettings: widget.carpetPlanningSettings,
       selectedCutId: widget.selectedCutId,
       onSelectCut: widget.onSelectedCutChanged,
+    );
+  }
+
+  /// Tab 2: Quote — live pricing for the whole job (all rooms/products).
+  ///
+  /// Builds a lightweight in-memory [ProjectModel] from the sheet's live state
+  /// so [buildJobQuote] runs the same path it does for the PDF export.
+  Widget _buildQuoteTab(BuildContext context) {
+    final quote = buildJobQuote(
+      ProjectModel(
+        name: '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        rooms: widget.rooms,
+        openings: widget.openings,
+        carpetProducts: widget.carpetProducts,
+        roomCarpetAssignments: widget.roomCarpetAssignments,
+        roomCarpetSeamOverrides: widget.roomCarpetSeamOverrides,
+        roomCarpetSeamLayDirectionDeg: widget.roomCarpetSeamLayDirectionDeg,
+        roomCarpetLayoutVariantIndex: _layoutVariantIndex,
+        roomCarpetStripPieceLengthsOverrideMm:
+            widget.roomCarpetStripPieceLengthsOverrideMm,
+        carpetPlanningSettings: widget.carpetPlanningSettings,
+        quoteRates: widget.quoteRates,
+      ),
+    );
+    return _QuotePanel(
+      quote: quote,
+      hasRates: widget.quoteRates.hasAnyRates,
+      useImperial: widget.useImperial,
     );
   }
 
@@ -1111,6 +1153,144 @@ class _CarpetRollCutSheetState extends State<CarpetRollCutSheet> {
 }
 
 // --- Redesigned panels ---
+
+/// Live job-quote panel: one row per line, then subtotal / GST / total.
+/// Prompts for rates when none are set. Unpriced lines show their quantity
+/// with an em dash in the amount column.
+class _QuotePanel extends StatelessWidget {
+  final JobQuote quote;
+  final bool hasRates;
+  final bool useImperial;
+
+  const _QuotePanel({
+    required this.quote,
+    required this.hasRates,
+    required this.useImperial,
+  });
+
+  String _money(double v) => '\$${v.toStringAsFixed(2)}';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (quote.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            hasRates
+                ? 'No rooms with carpet assigned to quote.'
+                : 'No rooms with carpet assigned to quote.\n'
+                    'Set prices in Project settings (gear icon) to price the job.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.hintColor),
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!hasRates)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondaryContainer.withAlpha(120),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 18, color: theme.colorScheme.onSecondaryContainer),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Quantities only — set prices in Project settings (gear icon) to see a total.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          for (final line in quote.lines)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          line.label,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          line.detail,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.textTheme.bodySmall?.color
+                                ?.withAlpha(179),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    line.amount != null ? _money(line.amount!) : '—',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: line.amount == null ? theme.hintColor : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const Divider(height: 20),
+          _totalRow(context, 'Subtotal', _money(quote.subtotal),
+              bold: quote.gstAmount == 0),
+          if (quote.gstAmount > 0) ...[
+            const SizedBox(height: 4),
+            _totalRow(context, 'GST (${quote.gstPercent.toStringAsFixed(0)}%)',
+                _money(quote.gstAmount)),
+          ],
+          const SizedBox(height: 6),
+          _totalRow(context, 'Total', _money(quote.total),
+              bold: true, large: true),
+          if (!quote.fullyPriced) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Some lines have no rate set — this total is a partial sum.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _totalRow(BuildContext context, String label, String value,
+      {bool bold = false, bool large = false}) {
+    final theme = Theme.of(context);
+    final style = (large ? theme.textTheme.titleMedium : theme.textTheme.bodyMedium)
+        ?.copyWith(fontWeight: bold ? FontWeight.bold : FontWeight.w500);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: style),
+        Text(value, style: style),
+      ],
+    );
+  }
+}
 
 class _SummaryBar extends StatelessWidget {
   final RollPlanState plan;

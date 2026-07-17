@@ -216,6 +216,7 @@ class _EditorScreenState extends State<EditorScreen> {
                         _editorController.setCarpetPlanningSettings,
                     roomCarpetStripPieceLengthsOverrideMm:
                         state.roomCarpetStripPieceLengthsOverrideMm,
+                    quoteRates: state.quoteRates,
                     useImperial: state.useImperial,
                     onResetSeamsForRoom:
                         _editorController.clearSeamOverridesForRoom,
