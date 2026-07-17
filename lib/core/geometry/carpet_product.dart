@@ -13,6 +13,12 @@ class CarpetProduct {
   final double? minStripWidthMm;
   /// Trim allowance per cut end in mm (e.g. 75–150mm each end).
   final double? trimAllowanceMm;
+  /// Optional per-product underlay cost per m², overriding the project's
+  /// global underlay rate for rooms using this product. Null = use global.
+  final double? underlayCostPerSqm;
+  /// Optional per-product installation labour cost per m², overriding the
+  /// project's global labour rate for rooms using this product. Null = global.
+  final double? labourCostPerSqm;
 
   CarpetProduct({
     required this.name,
@@ -22,6 +28,8 @@ class CarpetProduct {
     this.patternRepeatMm,
     this.minStripWidthMm,
     this.trimAllowanceMm,
+    this.underlayCostPerSqm,
+    this.labourCostPerSqm,
   });
 
   /// Estimated cost of ordering [linearMm] of this roll: linear metres x roll
@@ -40,6 +48,8 @@ class CarpetProduct {
         'patternRepeatMm': patternRepeatMm,
         'minStripWidthMm': minStripWidthMm,
         'trimAllowanceMm': trimAllowanceMm,
+        'underlayCostPerSqm': underlayCostPerSqm,
+        'labourCostPerSqm': labourCostPerSqm,
       };
 
   factory CarpetProduct.fromJson(Map<String, dynamic> json) {
@@ -51,6 +61,8 @@ class CarpetProduct {
       patternRepeatMm: (json['patternRepeatMm'] as num?)?.toDouble(),
       minStripWidthMm: (json['minStripWidthMm'] as num?)?.toDouble(),
       trimAllowanceMm: (json['trimAllowanceMm'] as num?)?.toDouble(),
+      underlayCostPerSqm: (json['underlayCostPerSqm'] as num?)?.toDouble(),
+      labourCostPerSqm: (json['labourCostPerSqm'] as num?)?.toDouble(),
     );
   }
 
@@ -73,6 +85,8 @@ class CarpetProduct {
     double? patternRepeatMm,
     double? minStripWidthMm,
     double? trimAllowanceMm,
+    double? underlayCostPerSqm,
+    double? labourCostPerSqm,
   }) {
     return CarpetProduct(
       name: name ?? this.name,
@@ -82,6 +96,8 @@ class CarpetProduct {
       patternRepeatMm: patternRepeatMm ?? this.patternRepeatMm,
       minStripWidthMm: minStripWidthMm ?? this.minStripWidthMm,
       trimAllowanceMm: trimAllowanceMm ?? this.trimAllowanceMm,
+      underlayCostPerSqm: underlayCostPerSqm ?? this.underlayCostPerSqm,
+      labourCostPerSqm: labourCostPerSqm ?? this.labourCostPerSqm,
     );
   }
 }

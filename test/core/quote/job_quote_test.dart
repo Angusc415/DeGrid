@@ -160,5 +160,71 @@ void main() {
       );
       expect(buildJobQuote(empty).isEmpty, isTrue);
     });
+
+    test('per-product underlay/labour overrides split the area lines', () {
+      // Two products; Wool overrides underlay + labour, Synthetic uses global.
+      final proj = ProjectModel(
+        name: 'Two products',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+        rooms: [
+          Room(name: 'A', vertices: const [
+            Offset(0, 0),
+            Offset(5000, 0),
+            Offset(5000, 4000),
+            Offset(0, 4000),
+          ]),
+          Room(name: 'B', vertices: const [
+            Offset(6000, 0),
+            Offset(10000, 0),
+            Offset(10000, 3000),
+            Offset(6000, 3000),
+          ]),
+        ],
+        carpetProducts: [
+          CarpetProduct(
+            name: 'Wool',
+            rollWidthMm: 3600,
+            costPerSqm: 50,
+            underlayCostPerSqm: 15,
+            labourCostPerSqm: 20,
+          ),
+          CarpetProduct(name: 'Synthetic', rollWidthMm: 3600, costPerSqm: 25),
+        ],
+        roomCarpetAssignments: const {0: 0, 1: 1},
+        carpetPlanningSettings:
+            const CarpetPlanningSettings(doorwayExtensionMm: 0),
+        quoteRates: const QuoteRates(
+          underlayCostPerSqm: 8,
+          labourCostPerSqm: 12,
+          includeGst: false,
+        ),
+      );
+      final quote = buildJobQuote(proj);
+      final byLabel = {for (final l in quote.lines) l.label: l};
+
+      // Room A = 20 m² (Wool override), Room B = 12 m² (global).
+      expect(byLabel['Underlay — Wool']!.amount, closeTo(20 * 15, 0.01));
+      expect(byLabel['Underlay — Wool']!.detail, contains('product rate'));
+      expect(byLabel['Underlay — Synthetic']!.amount, closeTo(12 * 8, 0.01));
+      expect(byLabel['Installation — Wool']!.amount, closeTo(20 * 20, 0.01));
+      expect(byLabel['Installation — Synthetic']!.amount, closeTo(12 * 12, 0.01));
+      // No aggregate lines when split.
+      expect(byLabel.containsKey('Underlay'), isFalse);
+    });
+  });
+
+  group('CarpetProduct override JSON', () {
+    test('underlay/labour overrides round-trip', () {
+      final p = CarpetProduct(
+        name: 'Wool',
+        rollWidthMm: 3600,
+        underlayCostPerSqm: 15,
+        labourCostPerSqm: 20,
+      );
+      final restored = CarpetProduct.fromJson(p.toJson());
+      expect(restored.underlayCostPerSqm, 15);
+      expect(restored.labourCostPerSqm, 20);
+    });
   });
 }

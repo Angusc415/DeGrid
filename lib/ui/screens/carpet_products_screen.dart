@@ -91,6 +91,12 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
     final trimController = TextEditingController(
       text: initial?.trimAllowanceMm?.round().toString() ?? '',
     );
+    final underlayController = TextEditingController(
+      text: initial?.underlayCostPerSqm?.toString() ?? '',
+    );
+    final labourController = TextEditingController(
+      text: initial?.labourCostPerSqm?.toString() ?? '',
+    );
 
     return showDialog<CarpetProduct>(
       context: context,
@@ -148,6 +154,26 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: underlayController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Underlay \$/m² – optional override',
+                  hintText: 'blank = use project rate',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: labourController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Labour \$/m² – optional override',
+                  hintText: 'blank = use project rate',
+                  border: OutlineInputBorder(),
+                ),
+              ),
             ],
           ),
         ),
@@ -165,6 +191,8 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
               final lengthM = double.tryParse(lengthController.text.trim());
               final costPerSqm = double.tryParse(costController.text.trim());
               final trimMm = double.tryParse(trimController.text.trim());
+              final underlay = double.tryParse(underlayController.text.trim());
+              final labour = double.tryParse(labourController.text.trim());
               Navigator.pop(
                 context,
                 CarpetProduct(
@@ -174,6 +202,14 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
                   costPerSqm: costPerSqm != null && costPerSqm.isFinite ? costPerSqm : null,
                   trimAllowanceMm:
                       trimMm != null && trimMm.isFinite && trimMm >= 0 ? trimMm : null,
+                  underlayCostPerSqm:
+                      underlay != null && underlay.isFinite && underlay >= 0
+                          ? underlay
+                          : null,
+                  labourCostPerSqm:
+                      labour != null && labour.isFinite && labour >= 0
+                          ? labour
+                          : null,
                   // Preserve fields not edited in this dialog.
                   patternRepeatMm: initial?.patternRepeatMm,
                   minStripWidthMm: initial?.minStripWidthMm,
@@ -239,7 +275,9 @@ class _CarpetProductsScreenState extends State<CarpetProductsScreen> {
                   subtitle: Text(
                     '${p.rollWidthMm.round()} mm wide'
                     '${p.rollLengthM != null ? ' · ${p.rollLengthM} m roll' : ''}'
-                    '${p.costPerSqm != null ? ' · ${p.costPerSqm!.toStringAsFixed(2)}/m²' : ''}',
+                    '${p.costPerSqm != null ? ' · ${p.costPerSqm!.toStringAsFixed(2)}/m²' : ''}'
+                    '${p.underlayCostPerSqm != null ? ' · underlay ${p.underlayCostPerSqm!.toStringAsFixed(2)}' : ''}'
+                    '${p.labourCostPerSqm != null ? ' · labour ${p.labourCostPerSqm!.toStringAsFixed(2)}' : ''}',
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,

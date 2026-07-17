@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../geometry/carpet_product.dart';
 import '../models/project.dart';
 import '../roll_planning/roll_planner.dart';
 import '../roll_planning/room_strip_layout.dart';
@@ -125,23 +126,58 @@ JobQuote buildJobQuote(ProjectModel project) {
     );
   }
 
-  // --- Underlay and labour: carpeted floor area. ---
+  // --- Underlay and labour: carpeted floor area, per product so a product
+  // can override the global rate. ---
   final carpetedAreaSqm = layouts.keys
           .map((ri) => project.rooms[ri].areaMm2)
           .fold<double>(0, (a, b) => a + b) /
       1e6;
-  {
-    final rate = rates.underlayCostPerSqm;
-    if (rate == null) fullyPriced = false;
-    lines.add(
-      QuoteLine(
-        label: 'Underlay',
-        detail: '${_qty(carpetedAreaSqm, 'm²')}'
-            '${rate != null ? ' @ \$${_money(rate)}/m²' : ' (no rate set)'}',
-        amount: rate != null ? carpetedAreaSqm * rate : null,
-      ),
-    );
+  final areaByProduct = <int, double>{};
+  for (final ri in layouts.keys) {
+    final pi = project.roomCarpetAssignments[ri]!;
+    areaByProduct[pi] =
+        (areaByProduct[pi] ?? 0) + project.rooms[ri].areaMm2 / 1e6;
   }
+
+  // Emits either one aggregate area line (no product override in play) or one
+  // line per product (when any assigned product overrides [globalRate]).
+  void addAreaLines(
+    String label,
+    double? globalRate,
+    double? Function(CarpetProduct) productRate,
+  ) {
+    final anyOverride = areaByProduct.keys
+        .any((pi) => productRate(project.carpetProducts[pi]) != null);
+    if (!anyOverride) {
+      if (globalRate == null) fullyPriced = false;
+      lines.add(
+        QuoteLine(
+          label: label,
+          detail: '${_qty(carpetedAreaSqm, 'm²')}'
+              '${globalRate != null ? ' @ \$${_money(globalRate)}/m²' : ' (no rate set)'}',
+          amount: globalRate != null ? carpetedAreaSqm * globalRate : null,
+        ),
+      );
+      return;
+    }
+    for (final entry in areaByProduct.entries) {
+      final product = project.carpetProducts[entry.key];
+      final override = productRate(product);
+      final rate = override ?? globalRate;
+      if (rate == null) fullyPriced = false;
+      lines.add(
+        QuoteLine(
+          label: '$label — ${product.name}',
+          detail: '${_qty(entry.value, 'm²')}'
+              '${rate != null ? ' @ \$${_money(rate)}/m²' : ' (no rate set)'}'
+              '${override != null ? ' (product rate)' : ''}',
+          amount: rate != null ? entry.value * rate : null,
+        ),
+      );
+    }
+  }
+
+  addAreaLines('Underlay', rates.underlayCostPerSqm, (p) => p.underlayCostPerSqm);
 
   // --- Gripper: perimeter of carpeted rooms minus doorway openings. ---
   var gripperM = 0.0;
@@ -203,18 +239,7 @@ JobQuote buildJobQuote(ProjectModel project) {
   }
 
   // --- Labour. ---
-  {
-    final rate = rates.labourCostPerSqm;
-    if (rate == null) fullyPriced = false;
-    lines.add(
-      QuoteLine(
-        label: 'Installation',
-        detail: '${_qty(carpetedAreaSqm, 'm²')}'
-            '${rate != null ? ' @ \$${_money(rate)}/m²' : ' (no rate set)'}',
-        amount: rate != null ? carpetedAreaSqm * rate : null,
-      ),
-    );
-  }
+  addAreaLines('Installation', rates.labourCostPerSqm, (p) => p.labourCostPerSqm);
 
   final subtotal = lines.fold<double>(0, (s, l) => s + (l.amount ?? 0));
   final gstAmount =
